@@ -1,0 +1,283 @@
+{% extends 'base.html' %}
+
+{% block title %}Gastos Mensuales - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Control de Gastos{% endblock %}
+
+{% block content %}
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+    <div class="flex flex-wrap gap-3">
+        <div class="relative">
+            <select id="year-select" class="appearance-none bg-slate-800 border border-slate-700 text-white text-sm rounded-xl focus:ring-emerald-500 focus:border-emerald-500 block w-full p-2.5 pr-8 transition-all">
+                {% for year in years %}
+                    <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>{{ year }}</option>
+                {% endfor %}
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
+                <i class="fas fa-chevron-down text-xs"></i>
+            </div>
+        </div>
+        
+        <div class="relative">
+            <select id="month-select" class="appearance-none bg-slate-800 border border-slate-700 text-white text-sm rounded-xl focus:ring-emerald-500 focus:border-emerald-500 block w-full p-2.5 pr-8 transition-all">
+                <option value="1" {% if current_month == 1 %}selected{% endif %}>Enero</option>
+                <option value="2" {% if current_month == 2 %}selected{% endif %}>Febrero</option>
+                <option value="3" {% if current_month == 3 %}selected{% endif %}>Marzo</option>
+                <option value="4" {% if current_month == 4 %}selected{% endif %}>Abril</option>
+                <option value="5" {% if current_month == 5 %}selected{% endif %}>Mayo</option>
+                <option value="6" {% if current_month == 6 %}selected{% endif %}>Junio</option>
+                <option value="7" {% if current_month == 7 %}selected{% endif %}>Julio</option>
+                <option value="8" {% if current_month == 8 %}selected{% endif %}>Agosto</option>
+                <option value="9" {% if current_month == 9 %}selected{% endif %}>Septiembre</option>
+                <option value="10" {% if current_month == 10 %}selected{% endif %}>Octubre</option>
+                <option value="11" {% if current_month == 11 %}selected{% endif %}>Noviembre</option>
+                <option value="12" {% if current_month == 12 %}selected{% endif %}>Diciembre</option>
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
+                <i class="fas fa-chevron-down text-xs"></i>
+            </div>
+        </div>
+        
+        <button onclick="loadMonthData()" class="btn-premium flex items-center">
+            <i class="fas fa-filter mr-2 text-xs"></i>Aplicar
+        </button>
+    </div>
+    
+    <button onclick="exportToExcel()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center">
+        <i class="fas fa-file-export mr-2 text-xs text-sky-400"></i>Exportar Excel
+    </button>
+</div>
+
+<!-- Monthly Summary -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+    <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Ingresos Totales</span>
+            <i class="fas fa-arrow-trend-up text-emerald-500 text-sm"></i>
+        </div>
+        <p class="text-2xl font-bold text-white">
+            $<span id="total-ingresos">0</span>
+        </p>
+    </div>
+    <div class="glass p-6 rounded-2xl border-t-4 border-rose-500">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Gastos del Mes</span>
+            <i class="fas fa-arrow-trend-down text-rose-500 text-sm"></i>
+        </div>
+        <p class="text-2xl font-bold text-white">
+            $<span id="total-gastos">0</span>
+        </p>
+    </div>
+    <div class="glass p-6 rounded-2xl border-t-4 border-sky-500">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Balance Neto</span>
+            <i class="fas fa-scale-balanced text-sky-500 text-sm"></i>
+        </div>
+        <p class="text-2xl font-bold text-white">
+            $<span id="total-neto">0</span>
+        </p>
+    </div>
+</div>
+
+<!-- Gastos Table -->
+<div class="glass rounded-2xl overflow-hidden mb-8">
+    <div class="p-6 border-b border-slate-800/50">
+        <h3 class="font-bold text-white flex items-center">
+            <i class="fas fa-list-ul mr-3 text-emerald-400"></i>
+            Desglose Transaccional
+        </h3>
+    </div>
+    
+    <div class="overflow-x-auto p-4">
+        <table class="table-modern">
+            <thead>
+                <tr>
+                    <th class="text-left">Categoría</th>
+                    <th class="text-left">Subcategoría</th>
+                    <th class="text-right">Monto (CLP)</th>
+                    <th class="text-center">Moneda</th>
+                    <th class="text-center">Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="gastos-tbody">
+                <tr class="text-center">
+                    <td colspan="5" class="py-12">
+                        <div class="flex flex-col items-center text-slate-500">
+                            <i class="fas fa-circle-notch fa-spin text-2xl mb-4"></i>
+                            <p>Sincronizando datos con la red...</p>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+            <tfoot class="font-bold border-t border-slate-800">
+                <tr>
+                    <td colspan="2" class="text-slate-400 uppercase tracking-widest text-xs">Total Parcial</td>
+                    <td class="text-right text-emerald-400 text-lg" id="footer-total">$0</td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Annual & Quarterly Expenses -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
+    <!-- Gastos Anuales -->
+    <div class="glass rounded-2xl overflow-hidden shadow-xl">
+        <div class="p-6 bg-orange-500/5 border-b border-slate-800/50 flex justify-between items-center">
+            <h3 class="font-bold text-white flex items-center">
+                <i class="fas fa-calendar-check mr-3 text-orange-400"></i>
+                Previsión Anual
+            </h3>
+            <div class="px-3 py-1 bg-orange-500/10 rounded-full text-[10px] font-bold text-orange-400 uppercase tracking-wider">
+                Resumen 2026
+            </div>
+        </div>
+        <div class="p-6 space-y-3">
+            {% for gasto in gastos_anuales %}
+            <div class="flex justify-between items-center p-4 rounded-xl bg-slate-800/20 border border-slate-700/30 hover:bg-slate-800/40 transition-colors">
+                <div>
+                    <p class="font-bold text-slate-200">{{ gasto.nombre }}</p>
+                    <p class="text-[10px] uppercase font-bold text-slate-500">Mes de Cobro: {{ gasto.mes_cobro }}</p>
+                </div>
+                <div class="text-right">
+                    <p class="font-bold text-white">${{ gasto.monto|floatformat:0 }}</p>
+                    <p class="text-[10px] text-orange-400 font-bold tracking-tight">${{ gasto.ahorro_mensual|floatformat:0 }}/mes</p>
+                </div>
+            </div>
+            {% endfor %}
+            <div class="mt-6 p-4 rounded-xl bg-gradient-to-r from-orange-500/10 to-transparent border-l-4 border-orange-500">
+                <p class="text-xs text-slate-400 font-bold uppercase tracking-widest mb-1">Ahorro Mensual Recomendado</p>
+                <p class="text-3xl font-black text-white">${{ total_ahorro_anual|floatformat:0 }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gastos Trimestrales -->
+    <div class="glass rounded-2xl overflow-hidden shadow-xl">
+        <div class="p-6 bg-indigo-500/5 border-b border-slate-800/50 flex justify-between items-center">
+            <h3 class="font-bold text-white flex items-center">
+                <i class="fas fa-calendar-alt mr-3 text-indigo-400"></i>
+                Gastos Periódicos
+            </h3>
+            <div class="px-3 py-1 bg-indigo-500/10 rounded-full text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
+                Trimestral
+            </div>
+        </div>
+        <div class="p-6 space-y-3">
+            {% for gasto in gastos_trimestrales %}
+            <div class="flex justify-between items-center p-4 rounded-xl bg-slate-800/20 border border-slate-700/30 hover:bg-slate-800/40 transition-colors">
+                <div>
+                    <p class="font-bold text-slate-200">{{ gasto.nombre }}</p>
+                    <p class="text-[10px] uppercase font-bold text-slate-500">Próximo: Q{{ gasto.trimestre }}</p>
+                </div>
+                <div class="text-right">
+                    <p class="font-bold text-white">${{ gasto.monto|floatformat:0 }}</p>
+                    <p class="text-[10px] text-indigo-400 font-bold tracking-tight">${{ gasto.ahorro_mensual|floatformat:0 }}/mes</p>
+                </div>
+            </div>
+            {% endfor %}
+            <div class="mt-6 p-4 rounded-xl bg-gradient-to-r from-indigo-500/10 to-transparent border-l-4 border-indigo-500">
+                <p class="text-xs text-slate-400 font-bold uppercase tracking-widest mb-1">Impacto Mensual</p>
+                <p class="text-3xl font-black text-white">${{ total_ahorro_trimestral|floatformat:0 }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function loadMonthData() {
+    const year = document.getElementById('year-select').value;
+    const month = document.getElementById('month-select').value;
+    
+    fetch(`/api/gastos/registros/by_month/?year=${year}&mes=${month}`)
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('gastos-tbody');
+            tbody.innerHTML = '';
+            
+            let totalCLP = 0;
+            
+            if (!data.registros || Object.keys(data.registros).length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="py-12 text-slate-500">No hay registros para este período</td></tr>';
+            } else {
+                Object.entries(data.registros).forEach(([tipo, items]) => {
+                    items.forEach((item, idx) => {
+                        const monto = parseFloat(item.monto);
+                        if (item.moneda === 'CLP') totalCLP += monto;
+                        
+                        const row = document.createElement('tr');
+                        row.className = 'group';
+                        row.innerHTML = `
+                            <td><span class="font-bold text-white">${tipo}</span></td>
+                            <td><span class="text-slate-400 text-sm">${item.categoria}</span></td>
+                            <td class="text-right font-mono font-bold text-slate-200">$${monto.toLocaleString()}</td>
+                            <td class="text-center"><span class="badge ${item.moneda === 'CLP' ? 'badge-primary' : 'badge-secondary'}">${item.moneda}</span></td>
+                            <td class="text-center">
+                                <button onclick="editGasto(${item.id})" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all">
+                                    <i class="fas fa-pen-to-square text-xs"></i>
+                                </button>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                });
+            }
+            
+            document.getElementById('total-ingresos').textContent = 
+                (data.totales['Ingreso']?.clp || 0).toLocaleString();
+            
+            let totalGastos = 0;
+            Object.entries(data.totales).forEach(([tipo, valores]) => {
+                if (tipo !== 'Ingreso') {
+                    totalGastos += parseFloat(valores.clp || 0);
+                }
+            });
+            
+            document.getElementById('total-gastos').textContent = totalGastos.toLocaleString();
+            document.getElementById('total-neto').textContent = 
+                (parseFloat(data.totales['Ingreso']?.clp || 0) - totalGastos).toLocaleString();
+            document.getElementById('footer-total').textContent = `$${totalCLP.toLocaleString()}`;
+        });
+}
+
+function editGasto(id) {
+    const newMonto = prompt('Ingrese el nuevo monto para este registro:');
+    if (newMonto && !isNaN(newMonto)) {
+        fetch(`/api/gastos/registros/${id}/`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ monto: newMonto })
+        }).then(() => {
+            // Animación de éxito o recarga
+            loadMonthData();
+        });
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function exportToExcel() {
+    // Implementar si existe el endpoint
+    window.location.href = `/api/gastos/registros/export_excel/?year=${document.getElementById('year-select').value}&mes=${document.getElementById('month-select').value}`;
+}
+
+// Initial load
+loadMonthData();
+</script>
+{% endblock %}

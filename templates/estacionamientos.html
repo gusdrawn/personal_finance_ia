@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+
+{% block title %}Estacionamientos - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Gestión de Estacionamientos{% endblock %}
+
+{% block content %}
+<div class="glass p-8 rounded-2xl mb-8">
+    <div class="flex items-center justify-between mb-8">
+        <h3 class="text-xl font-bold text-white flex items-center">
+            <i class="fas fa-parking mr-4 text-blue-400"></i>
+            Control de Espacios
+        </h3>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for est in estacionamientos %}
+        <div class="p-6 rounded-2xl bg-slate-800/40 border border-slate-700/50 hover:bg-slate-800/60 transition-all group">
+            <div class="flex justify-between items-start mb-4">
+                <div>
+                    <p class="text-xs font-black text-blue-400 uppercase tracking-widest">Nº {{ est.numero }}</p>
+                    <h4 class="text-lg font-bold text-white">{{ est.departamento.codigo }}</h4>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
+                    <i class="fas fa-car"></i>
+                </div>
+            </div>
+            
+            <div class="space-y-4">
+                <div class="flex items-center justify-between text-sm">
+                    <span class="text-slate-400">Estado:</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-black uppercase {% if est.asignado_a_arrendatario %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20{% else %}bg-slate-700 text-slate-400{% endif %}">
+                        {% if est.asignado_a_arrendatario %}Asignado{% else %}Libre{% endif %}
+                    </span>
+                </div>
+                
+                <div class="flex items-center justify-between text-sm">
+                    <span class="text-slate-400">Residente:</span>
+                    <span class="text-white font-bold">{{ est.arrendatario.nombre|default:"N/A" }}</span>
+                </div>
+
+                <button onclick="openEditModal({{ est.id }}, {{ est.numero }}, '{{ est.departamento.codigo }}', {{ est.asignado_a_arrendatario|yesno:'true,false' }}, '{{ est.notas|escapejs }}', '{{ est.arrendatario.id|default:'' }}')" 
+                        class="w-full mt-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-bold transition-colors">
+                    Editar Espacio
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div id="modal-edit-estacionamiento" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center backdrop-blur-sm">
+    <div class="glass p-8 rounded-2xl w-full max-w-md border border-slate-700">
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-xl font-bold text-white" id="modal-title">Editar Estacionamiento</h3>
+            <button onclick="document.getElementById('modal-edit-estacionamiento').classList.add('hidden')" class="text-slate-400 hover:text-white">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <form action="{% url 'estacionamientos' %}" method="POST" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="id" id="edit-id">
+            
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Arrendatario</label>
+                <select name="arrendatario" id="edit-arrendatario" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                    <option value="">Ninguno (Libre)</option>
+                    {% for arr in arrendatarios %}
+                    <option value="{{ arr.id }}">{{ arr.nombre }} ({{ arr.departamento.codigo }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="flex items-center space-x-3 py-2">
+                <input type="checkbox" name="asignado" id="edit-asignado" class="w-4 h-4 rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-blue-500/20">
+                <label class="text-sm font-bold text-slate-300">Espacio Asignado</label>
+            </div>
+            
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Notas</label>
+                <textarea name="notas" id="edit-notas" rows="3" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"></textarea>
+            </div>
+            
+            <button type="submit" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-lg mt-4 transition-colors">Guardar Cambios</button>
+        </form>
+    </div>
+</div>
+
+<script>
+function openEditModal(id, numero, depto, asignado, notas, arrendatarioId) {
+    document.getElementById('edit-id').value = id;
+    document.getElementById('edit-asignado').checked = asignado;
+    document.getElementById('edit-notas').value = notas;
+    document.getElementById('edit-arrendatario').value = arrendatarioId;
+    document.getElementById('modal-title').innerText = `Editar Est. ${numero} (${depto})`;
+    document.getElementById('modal-edit-estacionamiento').classList.remove('hidden');
+}
+</script>
+{% endblock %}

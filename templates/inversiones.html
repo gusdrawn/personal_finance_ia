@@ -1,0 +1,179 @@
+{% extends 'base.html' %}
+
+{% block title %}Inversiones - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Investment Portfolio{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+    <div class="glass p-6 rounded-2xl border-t-4 border-amber-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Total AUM</span>
+            <i class="fas fa-sack-dollar text-amber-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">
+            ${{ total_invertido|floatformat:0|default:"0" }}
+        </p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Assets Under Management</p>
+    </div>
+    
+    <div class="glass p-6 rounded-2xl border-t-4 border-sky-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Activos</span>
+            <i class="fas fa-layer-group text-sky-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">{{ inversiones|length }}</p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Inversiones Activas</p>
+    </div>
+    
+    <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Allocation</span>
+            <i class="fas fa-chart-pie text-emerald-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">
+            {{ diversificacion_pct|floatformat:1|default:"0" }}%
+        </p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Capacidad de Inversión</p>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+    <!-- Inversiones List -->
+    <div class="glass p-8 rounded-2xl">
+        <div class="flex items-center justify-between mb-8">
+            <h3 class="text-xl font-bold text-white flex items-center">
+                <i class="fas fa-coins mr-4 text-emerald-400"></i>
+                Mis Inversiones
+            </h3>
+            <button class="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 p-2 rounded-xl transition-all">
+                <i class="fas fa-plus text-xs"></i>
+            </button>
+        </div>
+        
+        <div class="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+            {% for inversion in inversiones %}
+            <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ inversion.nombre }}</p>
+                        <p class="text-[10px] uppercase font-bold text-slate-500 mt-1">{{ inversion.get_tipo_display }}</p>
+                    </div>
+                    <span class="px-2 py-1 bg-emerald-500/10 text-emerald-400 text-[10px] font-black rounded-lg border border-emerald-500/20">
+                        {{ inversion.porcentaje_cartera|floatformat:1 }}%
+                    </span>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="p-3 rounded-lg bg-slate-900/40 border border-slate-800/50">
+                        <p class="text-[9px] uppercase font-bold text-slate-600 mb-1">Monto CLP</p>
+                        <p class="font-black text-white text-sm">${{ inversion.monto_clp|floatformat:0 }}</p>
+                    </div>
+                    {% if inversion.monto_usd > 0 %}
+                    <div class="p-3 rounded-lg bg-slate-900/40 border border-slate-800/50">
+                        <p class="text-[9px] uppercase font-bold text-slate-600 mb-1">Monto USD</p>
+                        <p class="font-black text-white text-sm">US${{ inversion.monto_usd|floatformat:0 }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Portfolio Composition -->
+    <div class="glass p-8 rounded-2xl">
+        <h3 class="text-xl font-bold text-white flex items-center mb-8">
+            <i class="fas fa-chart-pie mr-4 text-sky-400"></i>
+            Asset Allocation
+        </h3>
+        <div class="relative aspect-square max-h-[450px] mx-auto">
+            <canvas id="portfolioChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Historico -->
+<div class="glass p-8 rounded-2xl mb-8">
+    <div class="flex items-center justify-between mb-8">
+        <h3 class="text-xl font-bold text-white flex items-center">
+            <i class="fas fa-chart-line mr-4 text-indigo-400"></i>
+            Evolución del Portafolio
+        </h3>
+        <div class="bg-indigo-500/10 px-4 py-2 rounded-xl text-xs font-bold text-indigo-400">
+            Last 12 Months
+        </div>
+    </div>
+    
+    <div class="h-[300px] w-full">
+        {% if historico %}
+        <canvas id="evolucionChart"></canvas>
+        {% else %}
+        <div class="flex flex-col items-center justify-center h-full text-slate-500">
+            <i class="fas fa-clock-rotate-left text-3xl mb-4 opacity-20"></i>
+            <p class="font-medium tracking-tight">Recopilando datos de mercado...</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    // Asset Allocation Chart
+    const portfolioCtx = document.getElementById('portfolioChart').getContext('2d');
+    new Chart(portfolioCtx, {
+        type: 'doughnut',
+        data: {
+            labels: [{% for inv in inversiones %}'{{ inv.nombre }}',{% endfor %}],
+            datasets: [{
+                data: [{% for inv in inversiones %}{{ inv.monto_clp|floatformat:0 }},{% endfor %}],
+                backgroundColor: [
+                    '#10b981', // emerald-500
+                    '#3b82f6', // blue-500
+                    '#8b5cf6', // violet-500
+                    '#f59e0b', // amber-500
+                    '#6366f1', // indigo-500
+                    '#ec4899', // pink-500
+                    '#f43f5e', // rose-500
+                    '#06b6d4', // cyan-500
+                    '#84cc16', // lime-500
+                    '#fb923c', // orange-400
+                    '#a855f7', // purple-500
+                    '#14b8a6', // teal-500
+                ],
+                hoverOffset: 20,
+                borderWidth: 0,
+                spacing: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '75%',
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        color: '#94a3b8',
+                        padding: 20,
+                        usePointStyle: true,
+                        pointStyle: 'rectRounded',
+                        font: {
+                            family: 'Outfit',
+                            size: 11,
+                            weight: '600'
+                        }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                    titleFont: { family: 'Outfit', size: 14, weight: 'bold' },
+                    bodyFont: { family: 'Inter', size: 12 },
+                    padding: 12,
+                    displayColors: true,
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 1
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

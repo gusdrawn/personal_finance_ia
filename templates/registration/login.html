@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+
+{% block title %}Login - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Acceso al Sistema{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-[60vh]">
+    <div class="glass p-10 rounded-3xl w-full max-w-md shadow-2xl">
+        <div class="text-center mb-10">
+            <div class="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20 mx-auto mb-6">
+                <i class="fas fa-lock text-white text-3xl"></i>
+            </div>
+            <h3 class="text-2xl font-bold text-white mb-2">Bienvenido de nuevo</h3>
+            <p class="text-slate-400 text-sm">Gestiona tus finanzas con inteligencia</p>
+        </div>
+
+        <form method="post" class="space-y-6">
+            {% csrf_token %}
+            {% if form.errors %}
+                <div class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold flex items-center space-x-3 mb-6">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span>Tus credenciales no son correctas.</span>
+                </div>
+            {% endif %}
+
+            <div class="space-y-2">
+                <label for="id_username" class="text-[10px] uppercase font-black text-slate-500 ml-1">Usuario</label>
+                <div class="relative">
+                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-500">
+                        <i class="fas fa-user text-xs"></i>
+                    </div>
+                    <input type="text" name="username" id="id_username" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl py-3 pl-10 pr-4 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all" placeholder="Enter your username">
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <label for="id_password" class="text-[10px] uppercase font-black text-slate-500 ml-1">Contraseña</label>
+                <div class="relative">
+                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-500">
+                        <i class="fas fa-key text-xs"></i>
+                    </div>
+                    <input type="password" name="password" id="id_password" class="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl py-3 pl-10 pr-4 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all" placeholder="Enter your password">
+                </div>
+            </div>
+
+            <button type="submit" class="w-full btn-premium flex items-center justify-center py-4 rounded-xl shadow-lg shadow-emerald-500/10 mt-8">
+                <i class="fas fa-sign-in-alt mr-3"></i>Iniciar Sesión
+            </button>
+            
+            <input type="hidden" name="next" value="{{ next }}">
+        </form>
+
+        <div class="mt-10 text-center">
+            <p class="text-[10px] text-slate-600 font-bold uppercase tracking-widest">Antigravity Financial Intelligence © 2026</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
