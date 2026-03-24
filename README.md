@@ -31,6 +31,7 @@ Open your browser and navigate to: [http://localhost:8000/dashboard/](http://loc
 | **Patrimonio** | Asset and liability management with multi-currency support (CLP, USD, UF). |
 | **Departamentos** | Rental property ROI analysis, mortgage amortization, and tenant tracking. |
 | **Inversiones** | Portfolio management for stocks, crypto, and mutual funds. |
+| **Préstamos** | Gestión de bicicletas personales y de terceros con cálculo de intereses. |
 | **Configuración** | Centralized management for banks, products, categories, and exchange rates. |
 
 ---
@@ -70,6 +71,7 @@ Open your browser and navigate to: [http://localhost:8000/dashboard/](http://loc
 - `patrimonio/`: Asset/liability tracking and net worth snapshots.
 - `departamentos/`: Rental properties, mortgages, and ROI calculations.
 - `inversiones/`: Investment portfolio and historical tracking.
+- `prestamos/`: Módulo de "Bicicletas" (préstamos personales y de terceros).
 - `configuracion/`: Global settings, banks, products, and exchange rates.
 - `templates/`: Modern HTML layout using Tailwind CSS, HTMX, and Alpine.js.
 

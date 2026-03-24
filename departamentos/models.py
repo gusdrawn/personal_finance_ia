@@ -1,6 +1,7 @@
 from django.db import models
 from decimal import Decimal
 from django.db.models import Q
+from datetime import date
 
 
 class Departamento(models.Model):
@@ -16,6 +17,9 @@ class Departamento(models.Model):
     numero_bodegas = models.IntegerField(default=0)
     activo = models.BooleanField(default=True)
     notas = models.TextField(blank=True)
+    fecha_inicio = models.DateField(null=True, blank=True, help_text="Fecha de inicio del pago")
+    fecha_ultima_cuota = models.DateField(null=True, blank=True, help_text="Fecha de la última cuota")
+    plazo_anos = models.IntegerField(null=True, blank=True, help_text="Plazo en años (opcional si hay fecha_ultima_cuota)")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -39,6 +43,39 @@ class Departamento(models.Model):
         if self.valor_compra_uf == 0:
             return Decimal('0')
         return (self.ganancia_capital_uf / self.valor_compra_uf) * 100
+
+    @property
+    def progreso_pago(self):
+        """Calculates payment progress percentage based on dates"""
+        if not self.fecha_inicio:
+            return 0.0
+            
+        today = date.today()
+        if today < self.fecha_inicio:
+            return 0.0
+            
+        if self.fecha_ultima_cuota:
+            fin = self.fecha_ultima_cuota
+        elif self.plazo_anos:
+            # Approximate end date
+            try:
+                fin = self.fecha_inicio.replace(year=self.fecha_inicio.year + self.plazo_anos)
+            except ValueError:
+                # Handle leap year Feb 29
+                fin = self.fecha_inicio.replace(year=self.fecha_inicio.year + self.plazo_anos, day=28)
+        else:
+            return 0.0
+
+        if today >= fin:
+            return 100.0
+
+        total_days = (fin - self.fecha_inicio).days
+        passed_days = (today - self.fecha_inicio).days
+        
+        if total_days <= 0:
+            return 100.0
+            
+        return round((passed_days / total_days) * 100.0, 2)
 
 
 class Arrendatario(models.Model):

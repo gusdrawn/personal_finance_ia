@@ -24,4 +24,9 @@ urlpatterns = [
     path('gastos/bulk/', views.bulk_gastos, name='bulk_gastos'),
     path('gastos/categoria-stats/<int:cat_pk>/', views.get_category_data, name='categoria_stats'),
     path('configuracion/crear-categoria/', views.crear_categoria, name='crear_categoria'),
+    path('configuracion/editar-categoria/<int:pk>/', views.editar_categoria, name='editar_categoria'),
+    path('configuracion/borrar-categoria/<int:pk>/', views.borrar_categoria, name='borrar_categoria'),
+    path('configuracion/crear-banco/', views.crear_banco, name='crear_banco'),
+    path('configuracion/editar-banco/<int:pk>/', views.editar_banco, name='editar_banco'),
+    path('configuracion/borrar-banco/<int:pk>/', views.borrar_banco, name='borrar_banco'),
 ]

@@ -276,16 +276,25 @@ function loadMonthData() {
             if (!data.registros || Object.keys(data.registros).length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" class="py-12 text-slate-500">No hay registros para este período</td></tr>';
             } else {
-                Object.entries(data.registros).forEach(([tipo, items]) => {
+                const typeOrder = {'Ingreso': 0, 'Gasto Fijo': 1, 'Gasto': 2, 'Tarjeta de Crédito': 3, 'Suscripción': 4, 'Cobro de Banco': 5, 'Seguro': 6};
+                const sortedEntries = Object.entries(data.registros).sort((a,b) => (typeOrder[a[0]]||99) - (typeOrder[b[0]]||99));
+                
+                sortedEntries.forEach(([tipo, items]) => {
                     items.forEach((item, idx) => {
                         const monto = parseFloat(item.monto);
-                        if (item.moneda === 'CLP') totalCLP += monto;
+                        // No sumar si 'contabilizar' es False
+                        if (item.moneda === 'CLP' && item.contabilizar !== false) {
+                            totalCLP += monto;
+                        }
                         
                         const row = document.createElement('tr');
                         row.className = 'group';
                         row.innerHTML = `
                             <td><span class="font-bold text-white">${tipo}</span></td>
-                            <td><span class="text-slate-400 text-sm">${item.categoria}</span></td>
+                            <td>
+                                <span class="text-slate-400 text-sm">${item.categoria}</span>
+                                ${item.contabilizar === false ? '<span class="ml-2 text-[9px] text-slate-500 bg-slate-800 px-1 rounded">No Contabilizado</span>' : ''}
+                            </td>
                             <td class="text-right font-mono font-bold text-slate-200">${formatCLP(monto)}</td>
                             <td class="text-center"><span class="badge ${item.moneda === 'CLP' ? 'badge-primary' : 'badge-secondary'}">${item.moneda}</span></td>
                             <td class="text-center">

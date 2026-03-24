@@ -7,6 +7,11 @@ class Banco(models.Model):
     logo = models.ImageField(upload_to='bancos/', null=True, blank=True)
     orden = models.IntegerField(default=0)
     activo = models.BooleanField(default=True)
+    notas = models.TextField(blank=True, help_text="Datos de transferencia e información relevante")
+    mostrar_en_carga_masiva = models.BooleanField(
+        default=True, 
+        help_text="Mostrar inputs de esta entidad en la carga masiva (ej. comisiones)"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

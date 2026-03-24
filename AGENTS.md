@@ -9,3 +9,61 @@ Haz una bitacora de los cambios que hagas en el proyecto en el archivo AGENTS.md
 Genera un mapa mental del proyecto tambien en AGENTS.md, asi como sus cambios.
 
 Y nunca olvidar actualizar README.md si aplica.
+
+---
+
+## 📝 Bitácora de Cambios (Changelog)
+
+### [2026-03] Actualización Masiva (Bicicletas, Categorías, y Departamentos)
+- **Modelos Actualizados**: 
+  - `CategoriaIngreso` incluye `contabilizar` y `moneda_defecto`.
+  - `Departamento` ahora rastrea `fecha_inicio`, `fecha_ultima_cuota`, y `plazo_anos` con la propiedad automática `progreso_pago`.
+  - `Banco` incluye `notas` y `mostrar_en_carga_masiva`.
+  - `RegistroMensual` agregó `monto_contable_clp`.
+- **Nuevo Módulo**: Creada app `prestamos` para gestionar "Bicicletas" (Préstamos Personales y a Terceros).
+- **Vistas y Dashboard**:
+  - Incorporada deducción automática de préstamos activos a terceros desde los gastos de tarjetas de crédito en el Dashboard.
+  - CRUD completo integrado para Bancos y Categorías en Configuración.
+  - Orden personalizado de carga masiva (Ingresos primero) con enlaces de ancla (anchor links).
+  - Vistas de gastos mensuales ahora operan por defecto con el mes inmediatamente anterior.
+- **Templates Mejorados**: Modificados `gastos_table.html`, `bulk_gastos_modal.html`, `departamentos.html` y creación de `prestamos/index.html`.
+
+---
+
+## 🧠 Mapa Mental del Proyecto (Actualizado)
+
+```mermaid
+mindmap
+  root((FinanzasPersonalesIA))
+    core[core App]
+      ::icon(fa fa-shield)
+      Profiles
+      Periodos
+      Dashboard
+    gastos[gastos App]
+      ::icon(fa fa-receipt)
+      Categorias (Ingreso/Gasto)
+      Registros Mensuales
+      Gastos Fijos/Anuales
+    patrimonio[patrimonio App]
+      ::icon(fa fa-vault)
+      Activos Liquidos/Iliquidos
+      Pasivos (Deudas)
+    departamentos[departamentos App]
+      ::icon(fa fa-building)
+      Propiedades
+      Credito Hipotecario
+      Arrendatarios
+    inversiones[inversiones App]
+      ::icon(fa fa-chart-line)
+      Criptomonedas / Acciones
+      Fondos Mutuos / Brokerage
+    prestamos[prestamos App *NUEVO*]
+      ::icon(fa fa-bicycle)
+      Bicicletas Personales
+      Bicicletas de Terceros
+    configuracion[configuracion App]
+      ::icon(fa fa-cogs)
+      Bancos (Entidades)
+      Divisas / Tasas Cambio
+```

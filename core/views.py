@@ -64,6 +64,20 @@ def dashboard(request):
     gastos_fijos = gastos_qs.filter(categoria__nombre__icontains='Fijo').aggregate(total=Sum('monto'))['total'] or 0
     suscripciones = gastos_qs.filter(categoria__nombre__icontains='Suscripción').aggregate(total=Sum('monto'))['total'] or 0
     tarjetas = gastos_qs.filter(categoria__nombre__icontains='Tarjeta').aggregate(total=Sum('monto'))['total'] or 0
+    
+    # Deduct TERCEROS loans from CC expenses
+    try:
+        from prestamos.models import Prestamo
+        prestamos_terceros_activos = Prestamo.objects.filter(user=user, tipo='TERCEROS', activo=True).aggregate(t=Sum('monto_total'))['t'] or 0
+        if tarjetas >= prestamos_terceros_activos:
+            tarjetas -= prestamos_terceros_activos
+            total_gastos -= prestamos_terceros_activos
+        else:
+            total_gastos -= tarjetas
+            tarjetas = 0
+    except Exception:
+        pass
+        
     otros = total_gastos - (gastos_fijos + suscripciones + tarjetas)
     
     # Get departments and investments
@@ -94,8 +108,9 @@ def gastos_table(request):
     """Monthly expenses table view"""
     user = request.user
     today = date.today()
+    last_month_date = today.replace(day=1) - timedelta(days=1)
     
-    years = range(today.year - 2, today.year + 1)
+    years = range(today.year - 2, today.year + 2)
     categorias = CategoriaIngreso.objects.filter(user=user)
     gastos_anuales = GastoAnual.objects.filter(user=user, activo=True)
     gastos_trimestrales = GastoTrimestral.objects.filter(user=user, activo=True)
@@ -105,8 +120,8 @@ def gastos_table(request):
     total_ahorro_trimestral = sum(g.ahorro_mensual for g in gastos_trimestrales)
     
     context = {
-        'current_year': today.year,
-        'current_month': today.month,
+        'current_year': last_month_date.year,
+        'current_month': last_month_date.month,
         'years': years,
         'categorias': categorias,
         'gastos_anuales': gastos_anuales,
@@ -475,12 +490,29 @@ def bulk_gastos(request):
     today = date.today()
     last_month_date = today.replace(day=1) - timedelta(days=1)
     
-    categorias = CategoriaIngreso.objects.filter(user=user)
+    categorias = CategoriaIngreso.objects.filter(
+        user=user
+    ).exclude(
+        banco_defecto__mostrar_en_carga_masiva=False
+    ).select_related('banco_defecto')
+    
+    # Group categories for the UI
+    grouped_categorias = {}
+    for cat in categorias:
+        tipo = cat.get_tipo_display()
+        if tipo not in grouped_categorias:
+            grouped_categorias[tipo] = []
+        grouped_categorias[tipo].append(cat)
+        
+    # Sort with "Ingreso" first
+    tipo_order = {'Ingreso': 0, 'Gasto': 1, 'Gasto Fijo': 2, 'Tarjeta de Crédito': 3}
+    grouped_sorted = dict(sorted(grouped_categorias.items(), key=lambda x: tipo_order.get(x[0], 99)))
+    
     context = {
         'years': range(today.year - 2, today.year + 2),
         'default_year': last_month_date.year,
         'default_month': last_month_date.month,
-        'categorias': categorias,
+        'grouped_categorias': grouped_sorted,
     }
     return render(request, 'bulk_gastos_modal.html', context)
 
@@ -507,14 +539,71 @@ def crear_categoria(request):
     """Simple view to create a category"""
     nombre = request.POST.get('nombre')
     tipo = request.POST.get('tipo', 'GASTO')
+    contabilizar = request.POST.get('contabilizar') == 'on'
+    moneda_defecto = request.POST.get('moneda_defecto', 'CLP')
+    
     if nombre:
         CategoriaIngreso.objects.create(
             user=request.user,
             nombre=nombre,
             tipo=tipo,
+            contabilizar=contabilizar,
+            moneda_defecto=moneda_defecto,
             activo=True
         )
     # Redirect back to previous page
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
+
+@require_http_methods(["POST"])
+@login_required
+def editar_categoria(request, pk):
+    cat = CategoriaIngreso.objects.get(pk=pk, user=request.user)
+    cat.nombre = request.POST.get('nombre', cat.nombre)
+    cat.tipo = request.POST.get('tipo', cat.tipo)
+    cat.contabilizar = request.POST.get('contabilizar') == 'on'
+    cat.moneda_defecto = request.POST.get('moneda_defecto', 'CLP')
+    cat.save()
+    next_url = request.POST.get('next', 'configuracion')
+    return redirect(next_url)
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_categoria(request, pk):
+    cat = CategoriaIngreso.objects.get(pk=pk, user=request.user)
+    cat.delete()
+    next_url = request.POST.get('next', 'configuracion')
+    return redirect(next_url)
+
+@require_http_methods(["POST"])
+@login_required
+def crear_banco(request):
+    nombre = request.POST.get('nombre')
+    notas = request.POST.get('notas', '')
+    mostrar = request.POST.get('mostrar_en_carga_masiva') == 'on'
+    if nombre:
+        Banco.objects.create(
+            nombre=nombre,
+            notas=notas,
+            mostrar_en_carga_masiva=mostrar,
+            activo=True
+        )
+    return redirect('configuracion')
+
+@require_http_methods(["POST"])
+@login_required
+def editar_banco(request, pk):
+    banco = Banco.objects.get(pk=pk)
+    banco.nombre = request.POST.get('nombre', banco.nombre)
+    banco.notas = request.POST.get('notas', banco.notas)
+    banco.mostrar_en_carga_masiva = request.POST.get('mostrar_en_carga_masiva') == 'on'
+    banco.save()
+    return redirect('configuracion')
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_banco(request, pk):
+    banco = Banco.objects.get(pk=pk)
+    banco.delete()
+    return redirect('configuracion')
 

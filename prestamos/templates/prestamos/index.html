@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+
+{% block title %}Bicicletas - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Deuda y Terceros{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <!-- Totals -->
+    <div class="glass p-6 rounded-2xl border-l-4 border-rose-500">
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">Deuda Personal</p>
+        <p class="text-3xl font-black text-rose-500">${{ total_personal|floatformat:0 }}</p>
+        <p class="text-[10px] text-slate-400 mt-2 mt-1">Obligaciones propias con costo</p>
+    </div>
+    
+    <div class="glass p-6 rounded-2xl border-l-4 border-orange-500">
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">Costo Mensual Personal</p>
+        <p class="text-3xl font-black text-white">${{ costo_personal|floatformat:0 }}</p>
+        <p class="text-[10px] text-slate-400 mt-2">Gastos por interés pagado</p>
+    </div>
+
+    <div class="glass p-6 rounded-2xl border-l-4 border-sky-500">
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">Prestado a Terceros</p>
+        <p class="text-3xl font-black text-sky-400">${{ total_terceros|floatformat:0 }}</p>
+        <p class="text-[10px] text-slate-400 mt-2">Dinero por recuperar</p>
+    </div>
+
+    <div class="glass p-6 rounded-2xl border-l-4 border-emerald-500">
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">Beneficio Terceros (Mes)</p>
+        <p class="text-3xl font-black text-emerald-400">${{ beneficio_terceros|floatformat:0 }}</p>
+        <p class="text-[10px] text-slate-400 mt-2">Interés cobrado</p>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+    <div class="lg:col-span-2 glass p-6 rounded-2xl">
+        <div class="flex items-center justify-between mb-6">
+            <h3 class="text-lg font-bold text-white flex items-center">
+                <i class="fas fa-list text-indigo-400 mr-2"></i>
+                Gestión de Bicicletas
+            </h3>
+            <button onclick="document.getElementById('modal-prestamo').classList.remove('hidden')" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 rounded-xl text-white font-bold text-xs transition-colors shadow-lg shadow-indigo-500/20">
+                <i class="fas fa-plus mr-1"></i>Nuevo
+            </button>
+        </div>
+
+        <div class="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            {% for p in prestamos %}
+            <div class="p-4 rounded-xl border {% if p.tipo == 'PERSONAL' %}border-rose-500/20 bg-rose-500/5 hover:border-rose-500/50{% else %}border-sky-500/20 bg-sky-500/5 hover:border-sky-500/50{% endif %} transition-colors group">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <div class="flex items-center space-x-2 mb-1">
+                            <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider {% if p.tipo == 'PERSONAL' %}bg-rose-500/20 text-rose-400{% else %}bg-sky-500/20 text-sky-400{% endif %}">
+                                {{ p.get_tipo_display }}
+                            </span>
+                            {% if not p.activo %}
+                            <span class="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-slate-700 text-slate-400">Inactivo / Pagado</span>
+                            {% endif %}
+                        </div>
+                        <h4 class="text-white font-bold">{{ p.nombre }}</h4>
+                        {% if p.tarjeta_asociada %}
+                        <p class="text-[10px] text-slate-400 mt-1"><i class="fas fa-credit-card mr-1"></i>Tarjeta: {{ p.tarjeta_asociada.nombre }}</p>
+                        {% endif %}
+                        {% if p.notas %}
+                        <p class="text-xs text-slate-500 mt-2">{{ p.notas }}</p>
+                        {% endif %}
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xl font-bold {% if p.tipo == 'PERSONAL' %}text-rose-400{% else %}text-sky-400{% endif %}">${{ p.monto_total|floatformat:0 }}</p>
+                        <p class="text-[10px] text-slate-400 mt-1">{{ p.costo_mensual_porcentaje }}% /mes</p>
+                        <div class="mt-3 opacity-0 group-hover:opacity-100 transition-opacity space-x-2">
+                            <button onclick="editPrestamo({{ p.id }}, '{{ p.nombre|escapejs }}', '{{ p.tipo }}', {{ p.monto_total|stringformat:'f' }}, {{ p.costo_mensual_porcentaje|stringformat:'f' }}, '{{ p.tarjeta_asociada.id|default:'' }}', '{{ p.notas|escapejs }}', {{ p.activo|yesno:'true,false' }})" class="w-7 h-7 rounded bg-slate-800 text-slate-400 hover:text-white transition-colors">
+                                <i class="fas fa-edit text-xs"></i>
+                            </button>
+                            <form action="{% url 'borrar_prestamo' p.id %}" method="POST" class="inline" onsubmit="return confirm('¿Seguro quieres ELIMINAR este registro?');">
+                                {% csrf_token %}
+                                <button type="submit" class="w-7 h-7 rounded bg-slate-800 text-slate-400 hover:text-rose-400 transition-colors">
+                                    <i class="fas fa-trash text-xs"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="p-8 text-center text-slate-500">
+                <i class="fas fa-bicycle text-4xl mb-4 opacity-50"></i>
+                <p>Aún no hay bicicletas registradas.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <div class="space-y-6">
+        <div class="glass p-6 rounded-2xl">
+            <h3 class="text-sm font-bold text-slate-300 mb-4 text-center">Deuda Personal</h3>
+            <div class="relative w-full aspect-square max-w-[250px] mx-auto">
+                <canvas id="chart-personal"></canvas>
+            </div>
+        </div>
+        
+        <div class="glass p-6 rounded-2xl">
+            <h3 class="text-sm font-bold text-slate-300 mb-4 text-center">Deuda Terceros (A favor)</h3>
+            <div class="relative w-full aspect-square max-w-[250px] mx-auto">
+                <canvas id="chart-terceros"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Form -->
+<div id="modal-prestamo" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
+    <div class="glass p-6 rounded-2xl border border-slate-700/50 w-full max-w-md mx-auto max-h-[90vh] overflow-y-auto custom-scrollbar">
+        <h3 id="modal-title" class="text-xl font-bold text-white mb-6 flex items-center">
+            <i class="fas fa-bicycle text-indigo-400 mr-3"></i>Nueva Bicicleta
+        </h3>
+        <form id="form-prestamo" method="POST" action="{% url 'crear_prestamo' %}" class="space-y-4">
+            {% csrf_token %}
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Nombre/Descripción</label>
+                <input type="text" name="nombre" required placeholder="Ej. Préstamo Juan" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-indigo-500/20 outline-none">
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Tipo</label>
+                    <select name="tipo" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none">
+                        <option value="PERSONAL">Personal (Deuda)</option>
+                        <option value="TERCEROS">Terceros (Préstamo)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Monto Total</label>
+                    <input type="number" name="monto_total" step="0.01" required class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-indigo-500/20 outline-none font-bold text-right text-sky-400">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Costo Mensual (%)</label>
+                    <input type="number" name="costo_mensual_porcentaje" step="0.01" value="0" required class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-indigo-500/20 outline-none text-right">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Tarjeta Asociada</label>
+                    <select name="tarjeta_asociada" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none text-xs">
+                        <option value="">-- Ninguna --</option>
+                        {% for t in tarjetas %}
+                        <option value="{{ t.id }}">{{ t.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Notas</label>
+                <textarea name="notas" rows="2" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none text-sm"></textarea>
+            </div>
+            <div class="flex items-center pt-2" id="div-activo">
+                <label class="flex items-center space-x-3 cursor-pointer">
+                    <input type="checkbox" name="activo" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
+                    <span class="text-xs font-bold text-slate-300">Activa (En curso)</span>
+                </label>
+            </div>
+            <div class="pt-4 flex space-x-3">
+                <button type="button" onclick="document.getElementById('modal-prestamo').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
+                    Cancelar
+                </button>
+                <button type="submit" class="flex-1 py-3 px-4 rounded-xl bg-indigo-500 text-white font-bold shadow-lg shadow-indigo-500/20">
+                    Guardar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function editPrestamo(id, nombre, tipo, monto, costo, tarjeta, notas, activo) {
+        const modal = document.getElementById('modal-prestamo');
+        const form = document.getElementById('form-prestamo');
+        
+        form.action = `/prestamos/editar/${id}/`;
+        form.querySelector('[name="nombre"]').value = nombre;
+        form.querySelector('[name="tipo"]').value = tipo;
+        form.querySelector('[name="monto_total"]').value = monto;
+        form.querySelector('[name="costo_mensual_porcentaje"]').value = costo;
+        form.querySelector('[name="tarjeta_asociada"]').value = tarjeta;
+        form.querySelector('[name="notas"]').value = notas;
+        form.querySelector('[name="activo"]').checked = activo;
+        
+        document.getElementById('modal-title').innerHTML = '<i class="fas fa-edit text-indigo-400 mr-3"></i>Editar Bicicleta';
+        modal.classList.remove('hidden');
+    }
+
+    // Chart.js Configuration
+    Chart.defaults.color = '#94a3b8';
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    
+    const commonOptions = {
+        responsive: true,
+        cutout: '75%',
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: {
+                    usePointStyle: true,
+                    padding: 20,
+                    font: { size: 11, weight: 'bold' }
+                }
+            }
+        }
+    };
+
+    // Personal Chart
+    const ctxPersonal = document.getElementById('chart-personal').getContext('2d');
+    const dataPersonal = {{ montos_personal|safe }};
+    if (dataPersonal.length > 0) {
+        new Chart(ctxPersonal, {
+            type: 'doughnut',
+            data: {
+                labels: {{ nombres_personal|safe }},
+                datasets: [{
+                    data: dataPersonal,
+                    backgroundColor: ['#f43f5e', '#fb923c', '#fbbf24', '#a78bfa', '#ec4899'],
+                    borderWidth: 0,
+                    hoverOffset: 4
+                }]
+            },
+            options: commonOptions
+        });
+    }
+
+    // Terceros Chart
+    const ctxTerceros = document.getElementById('chart-terceros').getContext('2d');
+    const dataTerceros = {{ montos_terc|safe }};
+    if (dataTerceros.length > 0) {
+        new Chart(ctxTerceros, {
+            type: 'doughnut',
+            data: {
+                labels: {{ nombres_terc|safe }},
+                datasets: [{
+                    data: dataTerceros,
+                    backgroundColor: ['#38bdf8', '#34d399', '#818cf8', '#2dd4bf', '#60a5fa'],
+                    borderWidth: 0,
+                    hoverOffset: 4
+                }]
+            },
+            options: commonOptions
+        });
+    }
+</script>
+{% endblock %}

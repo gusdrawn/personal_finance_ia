@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'departamentos',
     'inversiones',
     'configuracion',
+    'prestamos',
     
     'django.contrib.humanize',
 ]

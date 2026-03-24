@@ -17,6 +17,7 @@ urlpatterns = [
     path('accounts/', include('django.contrib.auth.urls')),
     path('api/auth/', include('rest_framework.urls')),
     path('api/gastos/', include('gastos.urls')),
+    path('prestamos/', include('prestamos.urls')),
 ]
 
 if settings.DEBUG:

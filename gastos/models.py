@@ -1,6 +1,12 @@
 from django.db import models
 from decimal import Decimal
 
+MONEDA_CHOICES = [
+    ('CLP', 'Chilean Peso'),
+    ('USD', 'US Dollar'),
+    ('UF', 'Unidad de Fomento'),
+]
+
 
 class CategoriaIngreso(models.Model):
     """Income and expense categories (dynamic and editable)"""
@@ -25,6 +31,15 @@ class CategoriaIngreso(models.Model):
         on_delete=models.SET_NULL,
         related_name='categorias_ingresos'
     )
+    contabilizar = models.BooleanField(
+        default=True, 
+        help_text="Si es Falso, no suma al gasto total (ej. ya pagado en TDC)"
+    )
+    moneda_defecto = models.CharField(
+        max_length=3, 
+        choices=MONEDA_CHOICES, 
+        default='CLP'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -48,18 +63,16 @@ class RegistroMensual(models.Model):
         ('TDC', 'Tarjeta de Crédito'),
         ('COBRO_BANCO', 'Cobro de Banco'),
     ]
-    
-    MONEDA_CHOICES = [
-        ('CLP', 'Chilean Peso'),
-        ('USD', 'US Dollar'),
-        ('UF', 'Unidad de Fomento'),
-    ]
 
     user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='registros_mensuales')
     year = models.IntegerField()
     mes = models.IntegerField(choices=[(i, f'Month {i}') for i in range(1, 13)])
     categoria = models.ForeignKey(CategoriaIngreso, on_delete=models.PROTECT, related_name='registros')
     monto = models.DecimalField(max_digits=15, decimal_places=2)
+    monto_contable_clp = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Valor fijo convertido a CLP al momento de crearse si moneda es USD/UF"
+    )
     moneda = models.CharField(max_length=3, choices=MONEDA_CHOICES, default='CLP')
     tipo = models.CharField(max_length=20, choices=TIPO_REGISTRO)
     notas = models.TextField(blank=True)
