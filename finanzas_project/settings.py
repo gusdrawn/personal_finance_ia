@@ -53,6 +53,8 @@ INSTALLED_APPS = [
     'departamentos',
     'inversiones',
     'configuracion',
+    
+    'django.contrib.humanize',
 ]
 
 MIDDLEWARE = [
@@ -138,6 +140,12 @@ STATICFILES_DIRS = [
     BASE_DIR / 'static',
 ]
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Number formatting for Chile (Disabled global for safety, use |intcomma in templates)
+USE_THOUSAND_SEPARATOR = False
+THOUSAND_SEPARATOR = '.'
+DECIMAL_SEPARATOR = ','
+NUMBER_GROUPING = 3
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'

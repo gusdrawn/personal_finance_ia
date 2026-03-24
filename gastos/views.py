@@ -66,6 +66,7 @@ class RegistroMensualViewSet(viewsets.ModelViewSet):
                 grouped[tipo] = []
             grouped[tipo].append({
                 'id': registro.id,
+                'categoria_id': registro.categoria.id,
                 'categoria': registro.categoria.nombre,
                 'monto': str(registro.monto),
                 'moneda': registro.moneda,

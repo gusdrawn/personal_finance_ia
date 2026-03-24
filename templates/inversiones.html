@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block title %}Inversiones - FinanzasPersonalesIA{% endblock %}
 {% block page_title %}Investment Portfolio{% endblock %}
@@ -11,11 +12,11 @@
             <i class="fas fa-sack-dollar text-amber-500 text-sm"></i>
         </div>
         <p class="text-3xl font-bold text-white">
-            ${{ total_invertido|floatformat:0|default:"0" }}
+            ${{ total_invertido|floatformat:0|intcomma|default:"0" }}
         </p>
         <p class="text-xs text-slate-500 mt-2 font-medium">Assets Under Management</p>
     </div>
-    
+
     <div class="glass p-6 rounded-2xl border-t-4 border-sky-500 card-stat">
         <div class="flex items-center justify-between mb-2">
             <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Activos</span>
@@ -24,7 +25,7 @@
         <p class="text-3xl font-bold text-white">{{ inversiones|length }}</p>
         <p class="text-xs text-slate-500 mt-2 font-medium">Inversiones Activas</p>
     </div>
-    
+
     <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500 card-stat">
         <div class="flex items-center justify-between mb-2">
             <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Allocation</span>
@@ -49,29 +50,31 @@
                 <i class="fas fa-plus text-xs"></i>
             </button>
         </div>
-        
+
         <div class="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
             {% for inversion in inversiones %}
-            <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
+            <div
+                class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
                 <div class="flex justify-between items-start mb-4">
                     <div>
                         <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ inversion.nombre }}</p>
                         <p class="text-[10px] uppercase font-bold text-slate-500 mt-1">{{ inversion.get_tipo_display }}</p>
                     </div>
-                    <span class="px-2 py-1 bg-emerald-500/10 text-emerald-400 text-[10px] font-black rounded-lg border border-emerald-500/20">
+                    <span
+                        class="px-2 py-1 bg-emerald-500/10 text-emerald-400 text-[10px] font-black rounded-lg border border-emerald-500/20">
                         {{ inversion.porcentaje_cartera|floatformat:1 }}%
                     </span>
                 </div>
-                
+
                 <div class="grid grid-cols-2 gap-4">
                     <div class="p-3 rounded-lg bg-slate-900/40 border border-slate-800/50">
                         <p class="text-[9px] uppercase font-bold text-slate-600 mb-1">Monto CLP</p>
-                        <p class="font-black text-white text-sm">${{ inversion.monto_clp|floatformat:0 }}</p>
+                        <p class="font-black text-white text-sm">${{ inversion.monto_clp|floatformat:0|intcomma }}</p>
                     </div>
                     {% if inversion.monto_usd > 0 %}
                     <div class="p-3 rounded-lg bg-slate-900/40 border border-slate-800/50">
                         <p class="text-[9px] uppercase font-bold text-slate-600 mb-1">Monto USD</p>
-                        <p class="font-black text-white text-sm">US${{ inversion.monto_usd|floatformat:0 }}</p>
+                        <p class="font-black text-white text-sm">US${{ inversion.monto_usd|floatformat:0|intcomma }}</p>
                     </div>
                     {% endif %}
                 </div>
@@ -103,7 +106,7 @@
             Last 12 Months
         </div>
     </div>
-    
+
     <div class="h-[300px] w-full">
         {% if historico %}
         <canvas id="evolucionChart"></canvas>
@@ -123,57 +126,109 @@
         type: 'doughnut',
         data: {
             labels: [{% for inv in inversiones %}'{{ inv.nombre }}',{% endfor %}],
-            datasets: [{
-                data: [{% for inv in inversiones %}{{ inv.monto_clp|floatformat:0 }},{% endfor %}],
-                backgroundColor: [
-                    '#10b981', // emerald-500
-                    '#3b82f6', // blue-500
-                    '#8b5cf6', // violet-500
-                    '#f59e0b', // amber-500
-                    '#6366f1', // indigo-500
-                    '#ec4899', // pink-500
-                    '#f43f5e', // rose-500
-                    '#06b6d4', // cyan-500
-                    '#84cc16', // lime-500
-                    '#fb923c', // orange-400
-                    '#a855f7', // purple-500
-                    '#14b8a6', // teal-500
-                ],
-                hoverOffset: 20,
-                borderWidth: 0,
-                spacing: 8
+        datasets: [{
+            data: [{% for inv in inversiones %}{{ inv.monto_clp|floatformat:0 }},{% endfor %}],
+        backgroundColor: [
+        '#10b981', // emerald-500
+        '#3b82f6', // blue-500
+        '#8b5cf6', // violet-500
+        '#f59e0b', // amber-500
+        '#6366f1', // indigo-500
+        '#ec4899', // pink-500
+        '#f43f5e', // rose-500
+        '#06b6d4', // cyan-500
+        '#84cc16', // lime-500
+        '#fb923c', // orange-400
+        '#a855f7', // purple-500
+        '#14b8a6', // teal-500
+    ],
+        hoverOffset: 20,
+        borderWidth: 0,
+        spacing: 8
             }]
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            cutout: '75%',
-            plugins: {
-                legend: {
-                    position: 'right',
-                    labels: {
-                        color: '#94a3b8',
-                        padding: 20,
-                        usePointStyle: true,
-                        pointStyle: 'rectRounded',
-                        font: {
-                            family: 'Outfit',
-                            size: 11,
-                            weight: '600'
-                        }
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '75%',
+        plugins: {
+            legend: {
+                position: 'right',
+                labels: {
+                    color: '#94a3b8',
+                    padding: 20,
+                    usePointStyle: true,
+                    pointStyle: 'rectRounded',
+                    font: {
+                        family: 'Outfit',
+                        size: 11,
+                        weight: '600'
                     }
-                },
-                tooltip: {
-                    backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                    titleFont: { family: 'Outfit', size: 14, weight: 'bold' },
-                    bodyFont: { family: 'Inter', size: 12 },
-                    padding: 12,
-                    displayColors: true,
-                    borderColor: 'rgba(255, 255, 255, 0.1)',
-                    borderWidth: 1
                 }
+            },
+            tooltip: {
+                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                titleFont: { family: 'Outfit', size: 14, weight: 'bold' },
+                bodyFont: { family: 'Inter', size: 12 },
+                padding: 12,
+                displayColors: true,
+                borderColor: 'rgba(255, 255, 255, 0.1)',
+                borderWidth: 1
             }
         }
+        }
     });
+
+    // Evolución Chart
+    {% if historico %}
+    const evolucionCtx = document.getElementById('evolucionChart').getContext('2d');
+    new Chart(evolucionCtx, {
+        type: 'line',
+        data: {
+            labels: [{% for label in historico.labels %}'{{ label }}',{% endfor %}],
+        datasets: [{
+            label: 'AUM Portafolio',
+            data: [{% for val in historico.values %}{{ val }},{% endfor %}],
+        borderColor: '#6366f1',
+        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+        fill: true,
+        tension: 0.4,
+        borderWidth: 3,
+        pointBackgroundColor: '#6366f1',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointRadius: 4
+            }]
+        },
+        options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                callbacks: {
+                    label: function (context) {
+                        return ' $' + context.parsed.y.toLocaleString('es-CL');
+                    }
+                }
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: false,
+                grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                ticks: {
+                    callback: function (value) {
+                        return '$' + (value / 1000000).toFixed(1) + 'M';
+                    }
+                }
+            },
+            x: {
+                grid: { display: false }
+            }
+        }
+    }
+    });
+    {% endif %}
 </script>
 {% endblock %}

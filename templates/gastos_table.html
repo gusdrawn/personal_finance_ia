@@ -4,6 +4,7 @@
 {% block page_title %}Control de Gastos{% endblock %}
 
 {% block content %}
+{% load humanize %}
 <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
     <div class="flex flex-wrap gap-3">
         <div class="relative">
@@ -42,9 +43,17 @@
         </button>
     </div>
     
-    <button onclick="exportToExcel()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center">
-        <i class="fas fa-file-export mr-2 text-xs text-sky-400"></i>Exportar Excel
-    </button>
+    <div class="flex gap-2">
+        <button onclick="document.getElementById('modal-cat').classList.remove('hidden')" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-xl text-sm font-semibold transition-all flex items-center">
+            <i class="fas fa-plus mr-2 text-xs"></i>Categoría
+        </button>
+        <button onclick="document.getElementById('modal-bulk').classList.remove('hidden')" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold transition-all flex items-center shadow-lg shadow-emerald-600/20">
+            <i class="fas fa-layer-group mr-2 text-xs"></i>Carga Masiva
+        </button>
+        <button onclick="exportToExcel()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center">
+            <i class="fas fa-file-export mr-2 text-xs text-sky-400"></i>Exportar Excel
+        </button>
+    </div>
 </div>
 
 <!-- Monthly Summary -->
@@ -166,7 +175,7 @@
         <div class="p-6 space-y-3">
             {% for gasto in gastos_trimestrales %}
             <div class="flex justify-between items-center p-4 rounded-xl bg-slate-800/20 border border-slate-700/30 hover:bg-slate-800/40 transition-colors">
-                <div>
+                <div class="flex-1 min-w-0">
                     <p class="font-bold text-slate-200">{{ gasto.nombre }}</p>
                     <p class="text-[10px] uppercase font-bold text-slate-500">Próximo: Q{{ gasto.trimestre }}</p>
                 </div>
@@ -184,7 +193,74 @@
     </div>
 </div>
 
+    </div>
+</div>
+
+<!-- Modals -->
+<div id="modal-cat" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
+    <div class="glass p-6 rounded-2xl border border-slate-700/50 w-full max-w-md mx-auto">
+        <h3 class="text-xl font-bold text-white mb-6 flex items-center">
+            <i class="fas fa-tag text-emerald-400 mr-3"></i>Nueva Categoría
+        </h3>
+        <form method="POST" action="{% url 'crear_categoria' %}" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Nombre</label>
+                <input type="text" name="nombre" required placeholder="Ej: Supermercado" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Tipo</label>
+                <select name="tipo" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2">
+                    <option value="GASTO">Gasto Variable</option>
+                    <option value="GASTO_FIJO">Gasto Fijo</option>
+                    <option value="INGRESO">Ingreso</option>
+                </select>
+            </div>
+            <div class="pt-4 flex space-x-3">
+                <button type="button" onclick="document.getElementById('modal-cat').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
+                    Cancelar
+                </button>
+                <button type="submit" class="flex-1 py-3 px-4 rounded-xl bg-sky-500 text-white font-bold shadow-lg shadow-sky-500/20">
+                    Crear
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="modal-bulk" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
+    {% include 'bulk_gastos_modal.html' %}
+</div>
+
+<div id="modal-chart" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
+    <div class="glass p-8 rounded-2xl border border-slate-700/50 w-full max-w-3xl">
+        <div class="flex items-center justify-between mb-8">
+            <h3 class="text-xl font-bold text-white flex items-center">
+                <i class="fas fa-chart-line text-emerald-400 mr-3"></i>
+                Evolución: <span id="chart-cat-name" class="ml-2 text-slate-400">Categoría</span>
+            </h3>
+            <button onclick="document.getElementById('modal-chart').classList.add('hidden')" class="text-slate-500 hover:text-white">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="h-64">
+            <canvas id="categoryHistoryChart"></canvas>
+        </div>
+    </div>
+</div>
+
 <script>
+let historyChart = null;
+
+function formatCLP(value) {
+    return new Intl.NumberFormat('es-CL', {
+        style: 'currency',
+        currency: 'CLP',
+        minimumFractionDigits: 0
+    }).format(value);
+}
+
 function loadMonthData() {
     const year = document.getElementById('year-select').value;
     const month = document.getElementById('month-select').value;
@@ -210,12 +286,17 @@ function loadMonthData() {
                         row.innerHTML = `
                             <td><span class="font-bold text-white">${tipo}</span></td>
                             <td><span class="text-slate-400 text-sm">${item.categoria}</span></td>
-                            <td class="text-right font-mono font-bold text-slate-200">$${monto.toLocaleString()}</td>
+                            <td class="text-right font-mono font-bold text-slate-200">${formatCLP(monto)}</td>
                             <td class="text-center"><span class="badge ${item.moneda === 'CLP' ? 'badge-primary' : 'badge-secondary'}">${item.moneda}</span></td>
                             <td class="text-center">
-                                <button onclick="editGasto(${item.id})" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all">
-                                    <i class="fas fa-pen-to-square text-xs"></i>
-                                </button>
+                                <div class="flex items-center justify-center space-x-2">
+                                    <button onclick="showCategoryChart(${item.categoria_id})" title="Ver Evolución" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-sky-400 hover:bg-sky-500/10 transition-all">
+                                        <i class="fas fa-chart-area text-xs"></i>
+                                    </button>
+                                    <button onclick="editGasto(${item.id})" title="Editar" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all">
+                                        <i class="fas fa-pen-to-square text-xs"></i>
+                                    </button>
+                                </div>
                             </td>
                         `;
                         tbody.appendChild(row);
@@ -223,8 +304,7 @@ function loadMonthData() {
                 });
             }
             
-            document.getElementById('total-ingresos').textContent = 
-                (data.totales['Ingreso']?.clp || 0).toLocaleString();
+            document.getElementById('total-ingresos').textContent = formatCLP(data.totales['Ingreso']?.clp || 0).replace('$', '');
             
             let totalGastos = 0;
             Object.entries(data.totales).forEach(([tipo, valores]) => {
@@ -233,10 +313,70 @@ function loadMonthData() {
                 }
             });
             
-            document.getElementById('total-gastos').textContent = totalGastos.toLocaleString();
-            document.getElementById('total-neto').textContent = 
-                (parseFloat(data.totales['Ingreso']?.clp || 0) - totalGastos).toLocaleString();
-            document.getElementById('footer-total').textContent = `$${totalCLP.toLocaleString()}`;
+            document.getElementById('total-gastos').textContent = formatCLP(totalGastos).replace('$', '');
+            document.getElementById('total-neto').textContent = formatCLP(parseFloat(data.totales['Ingreso']?.clp || 0) - totalGastos).replace('$', '');
+            document.getElementById('footer-total').textContent = formatCLP(totalCLP);
+        });
+}
+
+function showCategoryChart(catId) {
+    document.getElementById('modal-chart').classList.remove('hidden');
+    fetch(`/dashboard/gastos/categoria-stats/${catId}/`)
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('chart-cat-name').textContent = data.name;
+            const ctx = document.getElementById('categoryHistoryChart').getContext('2d');
+            
+            if (historyChart) historyChart.destroy();
+            
+            historyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: 'Gasto Mensual',
+                        data: data.values,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        borderWidth: 3,
+                        pointBackgroundColor: '#10b981',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointRadius: 5,
+                        pointHoverRadius: 7
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return formatCLP(context.raw);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { 
+                                color: '#94a3b8',
+                                callback: function(value) { return formatCLP(value); }
+                            }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
         });
 }
 

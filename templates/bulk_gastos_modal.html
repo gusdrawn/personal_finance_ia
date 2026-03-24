@@ -1,0 +1,70 @@
+<div class="glass p-6 rounded-2xl border border-slate-700/50 max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+        <h3 class="text-xl font-bold text-white flex items-center">
+            <i class="fas fa-layer-group text-emerald-400 mr-3"></i>
+            Carga Masiva de Gastos
+        </h3>
+        <button onclick="document.getElementById('modal-bulk').classList.add('hidden')" class="text-slate-500 hover:text-white">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+
+    <form method="POST" action="{% url 'bulk_gastos' %}" class="space-y-6">
+        {% csrf_token %}
+        
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Año</label>
+                <select name="year" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+                    {% for y in years %}
+                        <option value="{{ y }}" {% if y == default_year %}selected{% endif %}>{{ y }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Mes</label>
+                <select name="month" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+                    <option value="1" {% if default_month == 1 %}selected{% endif %}>Enero</option>
+                    <option value="2" {% if default_month == 2 %}selected{% endif %}>Febrero</option>
+                    <option value="3" {% if default_month == 3 %}selected{% endif %}>Marzo</option>
+                    <option value="4" {% if default_month == 4 %}selected{% endif %}>Abril</option>
+                    <option value="5" {% if default_month == 5 %}selected{% endif %}>Mayo</option>
+                    <option value="6" {% if default_month == 6 %}selected{% endif %}>Junio</option>
+                    <option value="7" {% if default_month == 7 %}selected{% endif %}>Julio</option>
+                    <option value="8" {% if default_month == 8 %}selected{% endif %}>Agosto</option>
+                    <option value="9" {% if default_month == 9 %}selected{% endif %}>Septiembre</option>
+                    <option value="10" {% if default_month == 10 %}selected{% endif %}>Octubre</option>
+                    <option value="11" {% if default_month == 11 %}selected{% endif %}>Noviembre</option>
+                    <option value="12" {% if default_month == 12 %}selected{% endif %}>Diciembre</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="border-t border-slate-800 pt-4 mt-4">
+            <p class="text-xs text-slate-500 mb-4 italic">Ingresa los montos para cada categoría. Deja en blanco para ignorar.</p>
+            <div class="max-h-96 overflow-y-auto pr-2 custom-scrollbar space-y-3">
+                {% for cat in categorias %}
+                <div class="flex items-center justify-between p-3 bg-slate-800/30 rounded-xl border border-slate-800">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-semibold text-slate-300">{{ cat.nombre }}</span>
+                        <span class="text-[10px] text-slate-500 uppercase tracking-tighter">{{ cat.get_tipo_display }}</span>
+                    </div>
+                    <div class="flex items-center bg-slate-900 border border-slate-700 rounded-lg px-3 py-1 group focus-within:border-emerald-500/50">
+                        <span class="text-slate-500 text-sm mr-2">$</span>
+                        <input type="text" name="cat_{{ cat.id }}" placeholder="0" class="bg-transparent border-none outline-none text-right text-emerald-400 font-bold w-24 text-sm">
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="pt-4 flex space-x-3">
+            <button type="button" onclick="document.getElementById('modal-bulk').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
+                Cancelar
+            </button>
+            <button type="submit" class="flex-1 py-3 px-4 rounded-xl bg-emerald-500 text-white font-bold shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
+                Guardar Gastos
+            </button>
+        </div>
+    </form>
+</div>

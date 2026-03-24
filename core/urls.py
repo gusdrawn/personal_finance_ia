@@ -21,4 +21,7 @@ urlpatterns = [
     path('departamentos/borrar/<int:pk>/', views.borrar_departamento, name='borrar_departamento'),
     path('inversiones/editar/<int:pk>/', views.editar_inversion, name='editar_inversion'),
     path('inversiones/borrar/<int:pk>/', views.borrar_inversion, name='borrar_inversion'),
+    path('gastos/bulk/', views.bulk_gastos, name='bulk_gastos'),
+    path('gastos/categoria-stats/<int:cat_pk>/', views.get_category_data, name='categoria_stats'),
+    path('configuracion/crear-categoria/', views.crear_categoria, name='crear_categoria'),
 ]

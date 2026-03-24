@@ -197,6 +197,7 @@ def patrimonio(request):
         'pasivos': pasivos,
         'snapshots': snapshots,
         'tipo_cambio': tipo_cambio,
+        'alert_msg': "Los activos de 'Bienes Raíces' se editan desde la pestaña de Departamentos, y las 'Inversiones' desde la pestaña de Inversiones."
     }
     
     return render(request, 'patrimonio.html', context)
@@ -239,13 +240,36 @@ def inversiones(request):
     """Investments view"""
     user = request.user
     
-    inversiones = Inversion.objects.filter(user=user, activo=True).order_by('tipo', 'nombre')
-    total_invertido = sum(i.monto_clp for i in inversiones)
+    inversiones_qs = Inversion.objects.filter(user=user, activo=True).order_by('tipo', 'nombre')
+    total_invertido = sum(i.monto_clp for i in inversiones_qs)
+    
+    # Calculate portfolio percentages on the fly
+    inversiones = []
+    for inv in inversiones_qs:
+        inv.porcentaje_cartera = (inv.monto_clp / total_invertido * 100) if total_invertido > 0 else 0
+        inversiones.append(inv)
+        
+    # Get portfolio history (sum of all active investments historical records)
+    from django.db.models.functions import TruncMonth
+    from django.db.models import Sum
+    from inversiones.models import HistorialInversion
+    
+    historico_qs = HistorialInversion.objects.filter(
+        inversion__user=user,
+        inversion__activo=True,
+        fecha__gte=date.today() - timedelta(days=365)
+    ).annotate(month=TruncMonth('fecha')).values('month').annotate(total=Sum('monto_clp')).order_by('month')
+    
+    historico = {
+        'labels': [h['month'].strftime('%b %Y') for h in historico_qs],
+        'values': [float(h['total']) for h in historico_qs]
+    }
     
     context = {
         'inversiones': inversiones,
         'total_invertido': total_invertido,
-        'diversificacion_pct': len(inversiones) * 15,  # Simple calculation
+        'historico': historico if historico['labels'] else None,
+        'diversificacion_pct': (len(inversiones) / 10.0 * 100) if len(inversiones) < 10 else 100, # Simple index
     }
     
     return render(request, 'inversiones.html', context)
@@ -414,4 +438,83 @@ def borrar_inversion(request, pk):
     inv = Inversion.objects.get(pk=pk, user=request.user)
     inv.delete()
     return redirect('inversiones')
+
+@login_required
+def bulk_gastos(request):
+    """Bulk update/create monthly expenses for a given month"""
+    user = request.user
+    if request.method == "POST":
+        year = int(request.POST.get('year'))
+        month = int(request.POST.get('month'))
+        
+        # Categories to process
+        for key, value in request.POST.items():
+            if key.startswith('cat_'):
+                cat_id = key.split('_')[1]
+                monto = value.strip()
+                
+                if monto:
+                    decimal_monto = Decimal(monto.replace('.', '').replace(',', '.'))
+                    categoria = CategoriaIngreso.objects.get(id=cat_id, user=user)
+                    
+                    RegistroMensual.objects.update_or_create(
+                        user=user,
+                        year=year,
+                        mes=month,
+                        categoria=categoria,
+                        defaults={
+                            'monto': decimal_monto,
+                            'tipo': categoria.tipo if categoria.tipo != 'GASTO_FIJO' else 'GASTO',
+                            'moneda': 'CLP'
+                        }
+                    )
+        
+        return redirect(f'/dashboard/gastos/?year={year}&month={month}')
+
+    # Default to last month
+    today = date.today()
+    last_month_date = today.replace(day=1) - timedelta(days=1)
+    
+    categorias = CategoriaIngreso.objects.filter(user=user)
+    context = {
+        'years': range(today.year - 2, today.year + 2),
+        'default_year': last_month_date.year,
+        'default_month': last_month_date.month,
+        'categorias': categorias,
+    }
+    return render(request, 'bulk_gastos_modal.html', context)
+
+@login_required
+def get_category_data(request, cat_pk):
+    """Return JSON with history for a category"""
+    from django.http import JsonResponse
+    user = request.user
+    categoria = CategoriaIngreso.objects.get(pk=cat_pk, user=user)
+    history = RegistroMensual.objects.filter(
+        user=user, categoria=categoria
+    ).order_by('year', 'mes')[:12]
+    
+    data = {
+        'labels': [f"{h.mes:02d}-{h.year}" for h in history],
+        'values': [float(h.monto) for h in history],
+        'name': categoria.nombre
+    }
+    return JsonResponse(data)
+
+@require_http_methods(["POST"])
+@login_required
+def crear_categoria(request):
+    """Simple view to create a category"""
+    nombre = request.POST.get('nombre')
+    tipo = request.POST.get('tipo', 'GASTO')
+    if nombre:
+        CategoriaIngreso.objects.create(
+            user=request.user,
+            nombre=nombre,
+            tipo=tipo,
+            activo=True
+        )
+    # Redirect back to previous page
+    next_url = request.POST.get('next', 'configuracion')
+    return redirect(next_url)
 
