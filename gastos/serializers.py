@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CategoriaIngreso, RegistroMensual, GastoAnual, GastoTrimestral
+from .models import CategoriaIngreso, RegistroMensual, GastoProgramado
 
 
 class CategoriaIngresoSerializer(serializers.ModelSerializer):
@@ -18,19 +18,10 @@ class RegistroMensualSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'categoria_nombre']
 
 
-class GastoAnualSerializer(serializers.ModelSerializer):
+class GastoProgramadoSerializer(serializers.ModelSerializer):
     ahorro_mensual = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     
     class Meta:
-        model = GastoAnual
-        fields = ['id', 'nombre', 'monto', 'mes_cobro', 'activo', 'ahorro_mensual', 'notas']
-        read_only_fields = ['id', 'ahorro_mensual']
-
-
-class GastoTrimestralSerializer(serializers.ModelSerializer):
-    ahorro_mensual = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
-    
-    class Meta:
-        model = GastoTrimestral
-        fields = ['id', 'nombre', 'monto', 'trimestre', 'activo', 'ahorro_mensual', 'notas']
+        model = GastoProgramado
+        fields = ['id', 'nombre', 'monto', 'fecha_inicio', 'frecuencia', 'activo', 'ahorro_mensual', 'notas']
         read_only_fields = ['id', 'ahorro_mensual']

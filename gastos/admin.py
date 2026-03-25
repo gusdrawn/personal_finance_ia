@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import CategoriaIngreso, RegistroMensual, GastoAnual, GastoTrimestral
+from .models import CategoriaIngreso, RegistroMensual, GastoProgramado
 
 
 @admin.register(CategoriaIngreso)
@@ -31,19 +31,10 @@ class RegistroMensualAdmin(admin.ModelAdmin):
     date_hierarchy = 'created_at'
 
 
-@admin.register(GastoAnual)
-class GastoAnualAdmin(admin.ModelAdmin):
-    list_display = ['nombre', 'monto', 'mes_cobro', 'ahorro_mensual', 'user', 'activo']
-    list_filter = ['mes_cobro', 'activo', 'user']
-    search_fields = ['nombre', 'user__username']
-    list_editable = ['activo']
-    readonly_fields = ['created_at', 'updated_at', 'ahorro_mensual']
-
-
-@admin.register(GastoTrimestral)
-class GastoTrimestralAdmin(admin.ModelAdmin):
-    list_display = ['nombre', 'monto', 'trimestre', 'ahorro_mensual', 'user', 'activo']
-    list_filter = ['trimestre', 'activo', 'user']
+@admin.register(GastoProgramado)
+class GastoProgramadoAdmin(admin.ModelAdmin):
+    list_display = ['nombre', 'monto', 'fecha_inicio', 'frecuencia', 'ahorro_mensual', 'user', 'activo']
+    list_filter = ['frecuencia', 'activo', 'user']
     search_fields = ['nombre', 'user__username']
     list_editable = ['activo']
     readonly_fields = ['created_at', 'updated_at', 'ahorro_mensual']

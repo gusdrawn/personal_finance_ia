@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% load core_extras %}
+
+{% block title %}Calendario Financiero - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Calendario & Planificación{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Navegación del Calendario -->
+    <div class="glass p-6 rounded-2xl flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+            <h2 class="text-2xl font-black text-white tracking-tight">{{ month_name }} <span class="text-indigo-400">{{ year }}</span></h2>
+        </div>
+        <div class="flex items-center bg-slate-800/50 p-1 rounded-xl border border-slate-700">
+            <a href="?month={{ nav.prev_m }}&year={{ nav.prev_y }}" class="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all">
+                <i class="fas fa-chevron-left"></i>
+            </a>
+            <a href="?month={{ month }}&year={{ year }}" class="px-4 py-2 text-xs font-bold text-slate-200 hover:text-white uppercase tracking-widest">Hoy</a>
+            <a href="?month={{ nav.next_m }}&year={{ nav.next_y }}" class="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all">
+                <i class="fas fa-chevron-right"></i>
+            </a>
+        </div>
+    </div>
+
+    <!-- Grid del Calendario -->
+    <div class="glass rounded-2xl overflow-hidden border border-slate-700/50 shadow-2xl">
+        <div class="grid grid-cols-7 border-b border-slate-700 bg-slate-800/50">
+            {% for day in "D L M M J V S"|split:" " %}
+            <div class="py-3 text-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">{{ day }}</div>
+            {% endfor %}
+        </div>
+        
+        <div class="grid grid-cols-7 bg-slate-900/20">
+            {% for week in month_days %}
+                {% for day in week %}
+                <div class="min-h-[120px] p-2 border-r border-b border-slate-800/50 relative {% if day == 0 %}bg-slate-950/20{% endif %}">
+                    {% if day != 0 %}
+                        <span class="absolute top-2 right-3 text-xs font-bold {% if day == today.day and month == today.month %}text-emerald-400 bg-emerald-500/10 w-6 h-6 flex items-center justify-center rounded-full{% else %}text-slate-600{% endif %}">
+                            {{ day }}
+                        </span>
+                        
+                        <div class="mt-6 space-y-1">
+                            <!-- Categorías Mensuales (de Configuración) -->
+                            {% for cat in categorias %}
+                                {% if cat.dia_cobro == day %}
+                                <div class="px-2 py-1 rounded-md bg-indigo-500/10 border-l-2 border-indigo-500 text-[9px] font-bold text-indigo-300 truncate" title="{{ cat.nombre }}">
+                                    {{ cat.nombre }}
+                                </div>
+                                {% endif %}
+                            {% endfor %}
+
+                            <!-- Gastos Programados (Grid) -->
+                            {% for gp in grid_gastos %}
+                                {% if gp.dia_cobro == day %}
+                                <div class="px-2 py-1 rounded-md bg-sky-500/10 border-l-2 border-sky-500 text-[9px] font-bold text-sky-300 truncate" title="{{ gp.nombre }}">
+                                    📅 {{ gp.nombre }}
+                                </div>
+                                {% endif %}
+                            {% endfor %}
+
+                            <!-- Departamentos (Hipotecarios) -->
+                            {% for depto in departamentos %}
+                                {% if depto.fecha_ultima_cuota.day == day %}
+                                <div class="px-2 py-1 rounded-md bg-orange-500/10 border-l-2 border-orange-500 text-[9px] font-bold text-orange-300 truncate" title="Crédito {{ depto.codigo }}">
+                                    🏠 {{ depto.codigo }}
+                                </div>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Sección de Previsión y Ahorro -->
+    <div class="mt-12 pt-8 border-t border-slate-800">
+        <div class="glass p-6 rounded-2xl border-l-4 border-sky-500">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg font-bold uppercase tracking-widest text-slate-400">Gastos Programados</h3>
+                <button onclick="newGastoProgramado()" class="text-xs bg-sky-500 text-slate-900 font-black px-4 py-2 rounded uppercase tracking-widest hover:bg-sky-400 transition-colors">
+                    <i class="fas fa-plus mr-2"></i>Añadir Gasto
+                </button>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-slate-700/50 text-xs uppercase tracking-widest text-slate-500">
+                            <th class="py-3 px-4 font-bold">Concepto</th>
+                            <th class="py-3 px-4 font-bold">Monto Total</th>
+                            <th class="py-3 px-4 font-bold">Inicio</th>
+                            <th class="py-3 px-4 font-bold">Frecuencia</th>
+                            <th class="py-3 px-4 font-bold">Reserva Mensual</th>
+                            <th class="py-3 px-4 text-center font-bold">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for gasto in gastos_programados %}
+                        <tr class="border-b border-slate-800/30 hover:bg-slate-800/20 transition-colors group">
+                            <td class="py-4 px-4 font-bold text-slate-200">{{ gasto.nombre }}</td>
+                            <td class="py-4 px-4 text-white font-medium">${{ gasto.monto|floatformat:0|intcomma }}</td>
+                            <td class="py-4 px-4 text-slate-400 text-sm">{{ gasto.fecha_inicio|date:"d M Y" }}</td>
+                            <td class="py-4 px-4">
+                                <span class="px-2 py-1 bg-slate-800 rounded text-[10px] font-bold uppercase text-sky-400 tracking-wider">
+                                    {{ gasto.get_frecuencia_display }}
+                                </span>
+                            </td>
+                            <td class="py-4 px-4 text-emerald-400 font-bold tracking-tight">${{ gasto.ahorro_mensual|floatformat:0|intcomma }}</td>
+                            <td class="py-4 px-4 text-center">
+                                <form action="{% url 'borrar_gasto_programado' gasto.id %}" method="POST" class="inline" onsubmit="return confirm('¿Borrar este gasto?');">
+                                    {% csrf_token %}
+                                    <button class="text-slate-600 hover:text-rose-500 transition-colors mx-2"><i class="fas fa-trash-alt"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center py-8 text-slate-500 italic text-sm">No hay gastos programados.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="modal-programado" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass w-full max-w-md rounded-3xl overflow-hidden border border-slate-700 shadow-2xl">
+        <form method="POST" action="{% url 'crear_gasto_programado' %}">
+            {% csrf_token %}
+            <div class="p-6 border-b border-slate-800 bg-slate-900/50">
+                <h3 class="text-xl font-black text-white uppercase tracking-tight">Nuevo Gasto Programado</h3>
+            </div>
+            <div class="p-8 space-y-5">
+                <div>
+                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Nombre del Concepto</label>
+                    <input type="text" name="nombre" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors" placeholder="Ej: Contribuciones Casa">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Monto Fijo</label>
+                    <input type="number" step="0.01" name="monto" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors" placeholder="0">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Fecha Inicio</label>
+                        <input type="date" name="fecha_inicio" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors" style="color-scheme: dark;">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Frecuencia</label>
+                        <select name="frecuencia" class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                            <option value="MENSUAL">Mensual</option>
+                            <option value="BIMESTRAL">Bimestral</option>
+                            <option value="TRIMESTRAL">Trimestral</option>
+                            <option value="SEMESTRAL">Semestral</option>
+                            <option value="ANUAL">Anual</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 bg-slate-900/50 flex space-x-3">
+                <button type="button" onclick="document.getElementById('modal-programado').classList.add('hidden')" class="flex-1 py-4 text-xs font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancelar</button>
+                <button type="submit" class="flex-1 bg-sky-500 text-slate-950 py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-sky-500/20 hover:scale-[1.02] transition-transform">Guardar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function newGastoProgramado() { document.getElementById('modal-programado').classList.remove('hidden'); }
+</script>
+{% endblock %}

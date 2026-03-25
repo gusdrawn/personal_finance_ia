@@ -1,4 +1,6 @@
 from django.db import models
+from django.contrib.auth.models import User
+from django.core.validators import MinValueValidator, MaxValueValidator
 from decimal import Decimal
 
 MONEDA_CHOICES = [
@@ -39,6 +41,10 @@ class CategoriaIngreso(models.Model):
         max_length=3, 
         choices=MONEDA_CHOICES, 
         default='CLP'
+    )
+    dia_cobro = models.IntegerField(
+        null=True, blank=True,
+        help_text="Día del mes (1-31) en que se cobra/paga esta categoría"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -93,51 +99,41 @@ class RegistroMensual(models.Model):
         return f"{self.categoria} - {self.year}-{self.mes:02d}: {self.monto} {self.moneda}"
 
 
-class GastoAnual(models.Model):
-    """Annual expenses to save for (Pro rata savings calculation)"""
-    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='gastos_anuales')
+FRECUENCIA_CHOICES = [
+    ('MENSUAL', 'Mensual'),
+    ('BIMESTRAL', 'Bimestral'),
+    ('TRIMESTRAL', 'Trimestral'),
+    ('SEMESTRAL', 'Semestral'),
+    ('ANUAL', 'Anual'),
+]
+
+class GastoProgramado(models.Model):
+    """Gastos planificados con frecuencia específica (Agenda)"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gastos_programados')
     nombre = models.CharField(max_length=150)
     monto = models.DecimalField(max_digits=15, decimal_places=2)
-    mes_cobro = models.IntegerField(choices=[(i, f'Month {i}') for i in range(1, 13)])
+    fecha_inicio = models.DateField(help_text="Fecha base para calcular próximos cobros")
+    frecuencia = models.CharField(max_length=20, choices=FRECUENCIA_CHOICES, default='MENSUAL')
     activo = models.BooleanField(default=True)
     notas = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = 'Gasto Anual'
-        verbose_name_plural = 'Gastos Anuales'
-        ordering = ['mes_cobro', 'nombre']
+        verbose_name = 'Gasto Programado'
+        verbose_name_plural = 'Gastos Programados'
+        ordering = ['fecha_inicio', 'nombre']
 
     def __str__(self):
-        return f"{self.nombre} (${self.monto}) - Mes {self.mes_cobro}"
+        return f"{self.nombre} ({self.get_frecuencia_display()})"
 
     @property
     def ahorro_mensual(self):
-        """Monthly savings required to cover this annual expense"""
-        return self.monto / 12
+        """Ahorro mensual necesario para cubrir este gasto"""
+        if self.frecuencia == 'MENSUAL': return self.monto
+        elif self.frecuencia == 'BIMESTRAL': return self.monto / Decimal('2.0')
+        elif self.frecuencia == 'TRIMESTRAL': return self.monto / Decimal('3.0')
+        elif self.frecuencia == 'SEMESTRAL': return self.monto / Decimal('6.0')
+        elif self.frecuencia == 'ANUAL': return self.monto / Decimal('12.0')
+        return self.monto
 
-
-class GastoTrimestral(models.Model):
-    """Quarterly expenses to save for (Pro rata savings calculation)"""
-    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='gastos_trimestrales')
-    nombre = models.CharField(max_length=150)
-    monto = models.DecimalField(max_digits=15, decimal_places=2)
-    trimestre = models.IntegerField(choices=[(i, f'Quarter {i}') for i in range(1, 5)])
-    activo = models.BooleanField(default=True)
-    notas = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = 'Gasto Trimestral'
-        verbose_name_plural = 'Gastos Trimestrales'
-        ordering = ['trimestre', 'nombre']
-
-    def __str__(self):
-        return f"{self.nombre} (${self.monto}) - Q{self.trimestre}"
-
-    @property
-    def ahorro_mensual(self):
-        """Monthly savings required to cover this quarterly expense"""
-        return self.monto / 3

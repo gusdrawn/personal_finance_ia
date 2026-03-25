@@ -22,6 +22,15 @@
     <link rel="stylesheet" href="{% static 'css/modern.css' %}">
     
     <style>
+        /* Ocultar flechas de inputs numéricos */
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
         {% block extra_css %}{% endblock %}
     </style>
 </head>
@@ -49,6 +58,10 @@
                 <a href="{% url 'gastos-table' %}" class="sidebar-item {% if 'gastos' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-receipt w-6"></i>
                     <span class="font-medium">Gastos Mensuales</span>
+                </a>
+                <a href="{% url 'calendario' %}" class="sidebar-item {% if 'calendario' in request.resolver_match.url_name %}active{% endif %}">
+                    <i class="far fa-calendar-alt w-6"></i>
+                    <span class="font-medium">Calendario & Previsión</span>
                 </a>
                 <a href="{% url 'patrimonio' %}" class="sidebar-item {% if 'patrimonio' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-vault w-6"></i>

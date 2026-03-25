@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from core.models import UserProfile, Periodo, AuditoriaChange
 from configuracion.models import Banco, Producto, TipoCambio, ConfiguracionGeneral
-from gastos.models import CategoriaIngreso, RegistroMensual, GastoAnual, GastoTrimestral
+from gastos.models import CategoriaIngreso, RegistroMensual, GastoProgramado
 from patrimonio.models import Activo, Pasivo, SnapshotPatrimonio, MiniSesion, LineaMiniSesion
 from departamentos.models import Departamento, Arrendatario, CreditoHipotecario, Estacionamiento
 from inversiones.models import Inversion, HistorialInversion
@@ -296,44 +296,28 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(f'✓ Created monthly records'))
 
-        # Create annual expenses
+        # Create annual expenses as programmed
         annual_expenses = [
-            ('Póliza Seguros Vehículo', Decimal('800000'), 3),
-            ('Patente Auto', Decimal('250000'), 1),
-            ('Revisión Técnica', Decimal('100000'), 2),
+            ('Póliza Seguros Vehículo', Decimal('800000'), 'ANUAL'),
+            ('Patente Auto', Decimal('250000'), 'ANUAL'),
+            ('Revisión Técnica', Decimal('100000'), 'ANUAL'),
+            ('Mantenimiento Edificio', Decimal('2000000'), 'TRIMESTRAL'),
+            ('Revisión Computadores', Decimal('500000'), 'TRIMESTRAL'),
         ]
         
-        for nombre, monto, mes in annual_expenses:
-            GastoAnual.objects.get_or_create(
+        for nombre, monto, frecuencia in annual_expenses:
+            GastoProgramado.objects.get_or_create(
                 user=user,
                 nombre=nombre,
                 defaults={
                     'monto': monto,
-                    'mes_cobro': mes,
+                    'fecha_inicio': today,
+                    'frecuencia': frecuencia,
                     'activo': True
                 }
             )
 
-        self.stdout.write(self.style.SUCCESS(f'✓ Created annual expenses'))
-
-        # Create quarterly expenses
-        quarterly_expenses = [
-            ('Mantenimiento Edificio', Decimal('2000000'), 1),
-            ('Revisión Computadores', Decimal('500000'), 2),
-        ]
-        
-        for nombre, monto, trimestre in quarterly_expenses:
-            GastoTrimestral.objects.get_or_create(
-                user=user,
-                nombre=nombre,
-                defaults={
-                    'monto': monto,
-                    'trimestre': trimestre,
-                    'activo': True
-                }
-            )
-
-        self.stdout.write(self.style.SUCCESS(f'✓ Created quarterly expenses'))
+        self.stdout.write(self.style.SUCCESS(f'✓ Created programmed expenses'))
 
         # Create patrimony snapshot
         total_assets_clp = Decimal('1160000')

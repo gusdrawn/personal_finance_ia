@@ -6,11 +6,11 @@ from django.urls import reverse
 from datetime import date, timedelta
 from decimal import Decimal
 
-from gastos.models import RegistroMensual, GastoAnual, GastoTrimestral, CategoriaIngreso
+from gastos.models import RegistroMensual, GastoProgramado, CategoriaIngreso
 from patrimonio.models import Activo, Pasivo, SnapshotPatrimonio
 from departamentos.models import Departamento, Estacionamiento, Arrendatario
 from inversiones.models import Inversion
-from configuracion.models import TipoCambio, Banco
+from configuracion.models import TipoCambio, Banco, Producto
 
 
 @login_required
@@ -49,21 +49,31 @@ def dashboard(request):
     liquidez_pct = (total_liquidos / total_activos * 100) if total_activos > 0 else 0
     
     # Current month metrics
-    today = date.today()
+    latest_registro = RegistroMensual.objects.filter(user=user).order_by('-year', '-mes').first()
+    if latest_registro:
+        target_year = latest_registro.year
+        target_month = latest_registro.mes
+    else:
+        today = date.today()
+        target_year = today.year
+        target_month = today.month
+        
     ingresos = RegistroMensual.objects.filter(
-        user=user, year=today.year, mes=today.month, tipo='INGRESO'
+        user=user, year=target_year, mes=target_month, tipo='INGRESO',
+        categoria__contabilizar=True
     ).aggregate(total=Sum('monto'))['total'] or 0
     
     gastos_qs = RegistroMensual.objects.filter(
-        user=user, year=today.year, mes=today.month
+        user=user, year=target_year, mes=target_month,
+        categoria__contabilizar=True
     ).exclude(tipo='INGRESO')
     
     total_gastos = gastos_qs.aggregate(total=Sum('monto'))['total'] or 0
     
-    # Breakdown for chart
-    gastos_fijos = gastos_qs.filter(categoria__nombre__icontains='Fijo').aggregate(total=Sum('monto'))['total'] or 0
-    suscripciones = gastos_qs.filter(categoria__nombre__icontains='Suscripción').aggregate(total=Sum('monto'))['total'] or 0
-    tarjetas = gastos_qs.filter(categoria__nombre__icontains='Tarjeta').aggregate(total=Sum('monto'))['total'] or 0
+    # Breakdown for chart - Using actual category types
+    gastos_fijos = gastos_qs.filter(categoria__tipo='GASTO_FIJO').aggregate(total=Sum('monto'))['total'] or 0
+    suscripciones = gastos_qs.filter(categoria__tipo='SUSCRIPCION').aggregate(total=Sum('monto'))['total'] or 0
+    tarjetas = gastos_qs.filter(categoria__tipo='TDC').aggregate(total=Sum('monto'))['total'] or 0
     
     # Deduct TERCEROS loans from CC expenses
     try:
@@ -98,6 +108,8 @@ def dashboard(request):
         'tipo_cambio': tipo_cambio,
         'departamentos': departamentos,
         'inversiones': inversiones,
+        'target_year': target_year,
+        'target_month': target_month,
     }
     
     return render(request, 'dashboard.html', context)
@@ -112,22 +124,19 @@ def gastos_table(request):
     
     years = range(today.year - 2, today.year + 2)
     categorias = CategoriaIngreso.objects.filter(user=user)
-    gastos_anuales = GastoAnual.objects.filter(user=user, activo=True)
-    gastos_trimestrales = GastoTrimestral.objects.filter(user=user, activo=True)
+    gastos_programados = GastoProgramado.objects.filter(user=user, activo=True)
     
     # Calculate total savings needed
-    total_ahorro_anual = sum(g.ahorro_mensual for g in gastos_anuales)
-    total_ahorro_trimestral = sum(g.ahorro_mensual for g in gastos_trimestrales)
+    total_ahorro_programado = sum(g.ahorro_mensual for g in gastos_programados)
     
     context = {
         'current_year': last_month_date.year,
         'current_month': last_month_date.month,
         'years': years,
         'categorias': categorias,
-        'gastos_anuales': gastos_anuales,
-        'gastos_trimestrales': gastos_trimestrales,
-        'total_ahorro_anual': total_ahorro_anual,
-        'total_ahorro_trimestral': total_ahorro_trimestral,
+        'gastos_programados': gastos_programados,
+        'total_ahorro_anual': total_ahorro_programado,
+        'total_ahorro_trimestral': Decimal('0'),
     }
     
     return render(request, 'gastos_table.html', context)
@@ -418,6 +427,18 @@ def borrar_pasivo(request, pk):
 
 @require_http_methods(["POST"])
 @login_required
+def crear_departamento(request):
+    depto = Departamento(user=request.user)
+    depto.codigo = request.POST.get('codigo')
+    depto.piso = request.POST.get('piso')
+    depto.metros_cuadrados = request.POST.get('metros_cuadrados')
+    depto.valor_compra_uf = request.POST.get('valor_compra_uf')
+    depto.valor_actual_uf = request.POST.get('valor_actual_uf')
+    depto.save()
+    return redirect('departamentos')
+
+@require_http_methods(["POST"])
+@login_required
 def editar_departamento(request, pk):
     depto = Departamento.objects.get(pk=pk, user=request.user)
     depto.codigo = request.POST.get('codigo')
@@ -491,9 +512,7 @@ def bulk_gastos(request):
     last_month_date = today.replace(day=1) - timedelta(days=1)
     
     categorias = CategoriaIngreso.objects.filter(
-        user=user
-    ).exclude(
-        banco_defecto__mostrar_en_carga_masiva=False
+        Q(user=user) & (Q(banco_defecto__isnull=True) | Q(banco_defecto__mostrar_en_carga_masiva=True))
     ).select_related('banco_defecto')
     
     # Group categories for the UI
@@ -541,6 +560,11 @@ def crear_categoria(request):
     tipo = request.POST.get('tipo', 'GASTO')
     contabilizar = request.POST.get('contabilizar') == 'on'
     moneda_defecto = request.POST.get('moneda_defecto', 'CLP')
+    dia_cobro = request.POST.get('dia_cobro')
+    if dia_cobro and dia_cobro.isdigit():
+        dia_cobro = int(dia_cobro)
+    else:
+        dia_cobro = None
     
     if nombre:
         CategoriaIngreso.objects.create(
@@ -549,6 +573,7 @@ def crear_categoria(request):
             tipo=tipo,
             contabilizar=contabilizar,
             moneda_defecto=moneda_defecto,
+            dia_cobro=dia_cobro,
             activo=True
         )
     # Redirect back to previous page
@@ -563,6 +588,13 @@ def editar_categoria(request, pk):
     cat.tipo = request.POST.get('tipo', cat.tipo)
     cat.contabilizar = request.POST.get('contabilizar') == 'on'
     cat.moneda_defecto = request.POST.get('moneda_defecto', 'CLP')
+    
+    dia_cobro = request.POST.get('dia_cobro')
+    if dia_cobro and dia_cobro.isdigit():
+        cat.dia_cobro = int(dia_cobro)
+    else:
+        cat.dia_cobro = None
+        
     cat.save()
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
@@ -600,10 +632,143 @@ def editar_banco(request, pk):
     banco.save()
     return redirect('configuracion')
 
+@login_required
+def calendario(request):
+    from gastos.models import CategoriaIngreso, GastoProgramado
+    from departamentos.models import Departamento
+    import calendar
+    from datetime import date
+    
+    # Get current or requested year/month
+    try:
+        year = int(request.GET.get('year', date.today().year))
+        month = int(request.GET.get('month', date.today().month))
+    except (ValueError, TypeError):
+        year = date.today().year
+        month = date.today().month
+
+    # Grid logic
+    cal = calendar.Calendar(firstweekday=6) # Sunday start
+    month_days = cal.monthdayscalendar(year, month)
+    month_name = calendar.month_name[month].capitalize()
+
+    # Data for the calendar
+    categorias = CategoriaIngreso.objects.filter(user=request.user, dia_cobro__isnull=False)
+    departamentos = request.user.departamentos.filter(fecha_ultima_cuota__gte=date(year, month, 1))
+    
+    gastos_programados = GastoProgramado.objects.filter(user=request.user, activo=True)
+    
+    # Find which GastosProgramados fall in this month's grid
+    # We do this logic in Python for simplicity, though could be done in DB depending on DB.
+    # To show them on the right day in the grid, we match `dia_cobro`.
+    grid_gastos = []
+    current_date = date(year, month, 1)
+    
+    for g in gastos_programados:
+        # Calculate month difference
+        if g.fecha_inicio <= current_date:
+            month_diff = (year - g.fecha_inicio.year) * 12 + (month - g.fecha_inicio.month)
+            show = False
+            if g.frecuencia == 'MENSUAL': show = True
+            elif g.frecuencia == 'BIMESTRAL' and month_diff % 2 == 0: show = True
+            elif g.frecuencia == 'TRIMESTRAL' and month_diff % 3 == 0: show = True
+            elif g.frecuencia == 'SEMESTRAL' and month_diff % 6 == 0: show = True
+            elif g.frecuencia == 'ANUAL' and month_diff % 12 == 0: show = True
+            
+            if show:
+                # Add a property dynamically to render it easily
+                g.dia_cobro = g.fecha_inicio.day
+                grid_gastos.append(g)
+
+    # Navigation
+    prev_month = month - 1 if month > 1 else 12
+    prev_year = year if month > 1 else year - 1
+    next_month = month + 1 if month < 12 else 1
+    next_year = year if month < 12 else year + 1
+
+    context = {
+        'year': year,
+        'month': month,
+        'month_name': month_name,
+        'month_days': month_days,
+        'categorias': categorias,
+        'departamentos': departamentos,
+        'gastos_programados': gastos_programados,
+        'grid_gastos': grid_gastos,
+        'nav': {
+            'prev_m': prev_month, 'prev_y': prev_year,
+            'next_m': next_month, 'next_y': next_year
+        }
+    }
+    return render(request, 'calendario.html', context)
+
+@require_http_methods(["POST"])
+@login_required
+def crear_gasto_programado(request):
+    from gastos.models import GastoProgramado
+    GastoProgramado.objects.create(
+        user=request.user,
+        nombre=request.POST.get('nombre'),
+        monto=request.POST.get('monto'),
+        fecha_inicio=request.POST.get('fecha_inicio'),
+        frecuencia=request.POST.get('frecuencia')
+    )
+    return redirect('calendario')
+
+@require_http_methods(["POST"])
+@login_required
+def editar_gasto_programado(request, pk):
+    from gastos.models import GastoProgramado
+    gasto = GastoProgramado.objects.get(pk=pk, user=request.user)
+    gasto.nombre = request.POST.get('nombre', gasto.nombre)
+    gasto.monto = request.POST.get('monto', gasto.monto)
+    gasto.fecha_inicio = request.POST.get('fecha_inicio', gasto.fecha_inicio)
+    gasto.frecuencia = request.POST.get('frecuencia', gasto.frecuencia)
+    gasto.save()
+    return redirect('calendario')
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_gasto_programado(request, pk):
+    from gastos.models import GastoProgramado
+    gasto = GastoProgramado.objects.get(pk=pk, user=request.user)
+    gasto.delete()
+    return redirect('calendario')
+
+
 @require_http_methods(["POST"])
 @login_required
 def borrar_banco(request, pk):
     banco = Banco.objects.get(pk=pk)
     banco.delete()
     return redirect('configuracion')
+
+@require_http_methods(["POST"])
+@login_required
+def crear_producto(request):
+    Producto.objects.create(
+        banco_id=request.POST.get('banco_id'),
+        nombre=request.POST.get('nombre'),
+        tipo=request.POST.get('tipo', 'TDC'),
+        activo=True
+    )
+    return redirect('configuracion')
+
+@require_http_methods(["POST"])
+@login_required
+def editar_producto(request, pk):
+    prod = Producto.objects.get(pk=pk)
+    prod.banco_id = request.POST.get('banco_id', prod.banco_id)
+    prod.nombre = request.POST.get('nombre', prod.nombre)
+    prod.tipo = request.POST.get('tipo', prod.tipo)
+    prod.save()
+    return redirect('configuracion')
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_producto(request, pk):
+    prod = Producto.objects.get(pk=pk)
+    prod.delete()
+    return redirect('configuracion')
+
 

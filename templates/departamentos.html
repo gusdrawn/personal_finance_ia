@@ -33,6 +33,20 @@
         <p class="text-xs text-slate-500 mt-2 font-medium">Valuación estimada actual</p>
     </div>
 </div>
+</div>
+
+<!-- Departamentos Header -->
+<div class="flex items-center justify-between mb-8 mt-4">
+    <h2 class="text-xl font-bold tracking-tight text-white flex items-center">
+        <i class="fas fa-building mr-3 text-sky-500"></i>
+        Portafolio Inmobiliario
+    </h2>
+    <div class="flex gap-4">
+        <button onclick="newDepto()" class="bg-sky-500 text-slate-900 px-5 py-2.5 rounded-xl font-black uppercase text-xs tracking-widest shadow-lg shadow-sky-500/20 hover:scale-[1.02] transition-transform">
+            <i class="fas fa-plus mr-2"></i>Nueva Propiedad
+        </button>
+    </div>
+</div>
 
 <!-- Departamentos Grid -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -48,9 +62,17 @@
                     <span class="text-[10px] uppercase font-bold text-slate-500">Piso {{ depto.piso }} • Edificio Principal</span>
                 </div>
             </div>
-            <a href="/admin/departamentos/departamento/{{ depto.id }}/change/" class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
-                <i class="fas fa-cog text-xs"></i>
-            </a>
+            <div class="flex items-center space-x-2">
+                <button onclick="editDepto('{{ depto.id }}', '{{ depto.codigo }}', '{{ depto.piso }}', '{{ depto.metros_cuadrados|stringformat:'f' }}', '{{ depto.valor_compra_uf|stringformat:'f' }}', '{{ depto.valor_actual_uf|stringformat:'f' }}')" class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-sky-400 transition-colors">
+                    <i class="fas fa-cog text-xs"></i>
+                </button>
+                <form action="{% url 'borrar_departamento' depto.id %}" method="POST" class="inline" onsubmit="return confirm('¿Borrar departamento {{ depto.codigo }}?');">
+                    {% csrf_token %}
+                    <button type="submit" class="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-rose-500 transition-colors">
+                        <i class="fas fa-trash-alt text-xs"></i>
+                    </button>
+                </form>
+            </div>
         </div>
 
         <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -159,7 +181,7 @@
                     <td><span class="font-bold text-slate-100">{{ depto.codigo }}</span></td>
                     <td class="text-right text-emerald-400 font-bold">
                         {% if depto.arrendatario %}
-                            {{ depto.arrendatario.monto_arriendo_clp|multiply:12|divide:depto.valor_actual_uf|multiply:tipo_cambio|multiply:100|floatformat:2 }}%
+                            {{ depto.arrendatario.monto_arriendo_clp|multiply:12|divide:tipo_cambio|divide:depto.valor_actual_uf|multiply:100|floatformat:2 }}%
                         {% else %}
                             0.00%
                         {% endif %}
@@ -182,5 +204,79 @@
             </tbody>
         </table>
     </div>
+    </div>
 </div>
+
+<!-- Modals -->
+<div id="modal-depto" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass w-full max-w-lg rounded-3xl overflow-hidden border border-slate-700 shadow-2xl">
+        <form id="depto-form" method="POST" action="{% url 'crear_departamento' %}">
+            {% csrf_token %}
+            <div class="p-6 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
+                <h3 id="modal-depto-title" class="text-xl font-black text-white uppercase tracking-tight">Nuevo Departamento</h3>
+                <button type="button" onclick="closeModalDepto()" class="text-slate-500 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-8 space-y-5">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Código (Ej. E107)</label>
+                        <input type="text" id="depto-codigo" name="codigo" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Piso</label>
+                        <input type="text" id="depto-piso" name="piso" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+                
+                <div>
+                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Superficie (m²)</label>
+                    <input type="number" step="0.01" id="depto-metros" name="metros_cuadrados" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Valor Compra (UF)</label>
+                        <input type="number" step="0.01" id="depto-compra" name="valor_compra_uf" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Valor Actual (UF)</label>
+                        <input type="number" step="0.01" id="depto-actual" name="valor_actual_uf" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 bg-slate-900/50 flex space-x-3">
+                <button type="button" onclick="closeModalDepto()" class="flex-1 py-4 text-xs font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancelar</button>
+                <button type="submit" class="flex-1 bg-sky-500 text-slate-950 py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-sky-500/20 hover:scale-[1.02] transition-transform">Guardar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function closeModalDepto() {
+    document.getElementById('modal-depto').classList.add('hidden');
+}
+
+function newDepto() {
+    document.getElementById('modal-depto-title').innerText = 'Nuevo Departamento';
+    document.getElementById('depto-form').action = '{% url "crear_departamento" %}';
+    document.getElementById('depto-codigo').value = '';
+    document.getElementById('depto-piso').value = '';
+    document.getElementById('depto-metros').value = '';
+    document.getElementById('depto-compra').value = '';
+    document.getElementById('depto-actual').value = '';
+    document.getElementById('modal-depto').classList.remove('hidden');
+}
+
+function editDepto(id, codigo, piso, metros, compra, actual) {
+    document.getElementById('modal-depto-title').innerText = 'Editar Departamento';
+    document.getElementById('depto-form').action = '/departamentos/editar/' + id + '/';
+    document.getElementById('depto-codigo').value = codigo;
+    document.getElementById('depto-piso').value = piso;
+    document.getElementById('depto-metros').value = metros.replace(',', '.');
+    document.getElementById('depto-compra').value = compra.replace(',', '.');
+    document.getElementById('depto-actual').value = actual.replace(',', '.');
+    document.getElementById('modal-depto').classList.remove('hidden');
+}
+</script>
 {% endblock %}

@@ -6,10 +6,10 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from decimal import Decimal
 
-from .models import CategoriaIngreso, RegistroMensual, GastoAnual, GastoTrimestral
+from .models import CategoriaIngreso, RegistroMensual, GastoProgramado
 from .serializers import (
     CategoriaIngresoSerializer, RegistroMensualSerializer,
-    GastoAnualSerializer, GastoTrimestralSerializer
+    GastoProgramadoSerializer
 )
 
 
@@ -70,14 +70,35 @@ class RegistroMensualViewSet(viewsets.ModelViewSet):
                 'categoria': registro.categoria.nombre,
                 'monto': str(registro.monto),
                 'moneda': registro.moneda,
-                'tipo': registro.tipo
+                'tipo': registro.tipo,
+                'contabilizar': getattr(registro.categoria, 'contabilizar', True)
             })
+            
+        # Inject third-party loan deductions
+        try:
+            from prestamos.models import Prestamo
+            from django.db.models import Sum
+            terceros = Prestamo.objects.filter(user=request.user, tipo='TERCEROS', activo=True).aggregate(t=Sum('monto_total'))['t'] or 0
+            if terceros > 0:
+                if 'Tarjeta de Crédito' not in grouped:
+                    grouped['Tarjeta de Crédito'] = []
+                grouped['Tarjeta de Crédito'].append({
+                    'id': 'deduccion_terceros',
+                    'categoria_id': 0,
+                    'categoria': 'Abono Automático (Préstamos a Terceros)',
+                    'monto': str(-terceros),
+                    'moneda': 'CLP',
+                    'tipo': 'GASTO',
+                    'contabilizar': True
+                })
+        except Exception:
+            pass
         
         # Calculate totals
         totales = {}
         for tipo, items in grouped.items():
-            total_clp = sum(Decimal(item['monto']) for item in items if item['moneda'] == 'CLP')
-            total_usd = sum(Decimal(item['monto']) for item in items if item['moneda'] == 'USD')
+            total_clp = sum(Decimal(item['monto']) for item in items if item['moneda'] == 'CLP' and item.get('contabilizar', True))
+            total_usd = sum(Decimal(item['monto']) for item in items if item['moneda'] == 'USD' and item.get('contabilizar', True))
             totales[tipo] = {'clp': str(total_clp), 'usd': str(total_usd)}
         
         return Response({
@@ -106,49 +127,25 @@ class RegistroMensualViewSet(viewsets.ModelViewSet):
         return Response({'status': 'updated', 'count': len(updates)})
 
 
-class GastoAnualViewSet(viewsets.ModelViewSet):
-    """API for annual expenses"""
-    serializer_class = GastoAnualSerializer
+class GastoProgramadoViewSet(viewsets.ModelViewSet):
+    """API for programado expenses"""
+    serializer_class = GastoProgramadoSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['nombre']
-    ordering_fields = ['mes_cobro', 'nombre']
-    ordering = ['mes_cobro']
+    ordering_fields = ['fecha_inicio', 'nombre']
+    ordering = ['fecha_inicio']
 
     def get_queryset(self):
-        return GastoAnual.objects.filter(user=self.request.user)
+        return GastoProgramado.objects.filter(user=self.request.user)
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['get'])
     def total_ahorro_mensual(self, request):
-        """Calculate total monthly savings needed for annual expenses"""
+        """Calculate total monthly savings needed for programado expenses"""
         total = sum(
-            g.ahorro_mensual for g in GastoAnual.objects.filter(user=request.user, activo=True)
-        )
-        return Response({'total_ahorro_mensual_clp': str(total)})
-
-
-class GastoTrimestralViewSet(viewsets.ModelViewSet):
-    """API for quarterly expenses"""
-    serializer_class = GastoTrimestralSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['nombre']
-    ordering_fields = ['trimestre', 'nombre']
-    ordering = ['trimestre']
-
-    def get_queryset(self):
-        return GastoTrimestral.objects.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-
-    @action(detail=False, methods=['get'])
-    def total_ahorro_mensual(self, request):
-        """Calculate total monthly savings needed for quarterly expenses"""
-        total = sum(
-            g.ahorro_mensual for g in GastoTrimestral.objects.filter(user=request.user, activo=True)
+            g.ahorro_mensual for g in GastoProgramado.objects.filter(user=request.user, activo=True)
         )
         return Response({'total_ahorro_mensual_clp': str(total)})

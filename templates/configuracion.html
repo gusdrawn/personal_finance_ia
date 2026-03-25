@@ -82,6 +82,22 @@
                     </form>
                 </div>
             </div>
+            <!-- Sublist Productos -->
+            <div class="px-8 pb-4 space-y-2 relative border-l-2 border-slate-800 ml-4 mt-2">
+                {% for prod in banco.productos.all %}
+                <div class="flex justify-between items-center text-[10px] bg-slate-800/30 p-2 rounded">
+                    <span><i class="fas fa-credit-card text-slate-500 mr-2"></i>{{ prod.nombre }} <span class="text-slate-500">({{ prod.get_tipo_display }})</span></span>
+                    <div>
+                        <button type="button" onclick="editProducto({{ prod.id }}, {{ banco.id }}, '{{ prod.nombre|escapejs }}', '{{ prod.tipo }}')" class="text-slate-400 hover:text-sky-400 mr-2"><i class="fas fa-edit"></i></button>
+                        <form action="{% url 'borrar_producto' prod.id %}" method="POST" class="inline" onsubmit="return confirm('¿Borrar producto?');">
+                            {% csrf_token %}
+                            <button type="submit" class="text-slate-400 hover:text-rose-400"><i class="fas fa-trash"></i></button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+                <button type="button" onclick="newProducto({{ banco.id }})" class="text-[9px] uppercase tracking-wider text-indigo-400 hover:bg-indigo-500/10 px-2 py-1 rounded transition-colors"><i class="fas fa-plus mr-1"></i>Añadir Producto</button>
+            </div>
             {% endfor %}
         </div>
     </div>
@@ -107,7 +123,7 @@
             {% for categoria in categorias %}
             <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:border-orange-500/20 transition-all group relative">
                 <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1">
-                    <button type="button" onclick="editCategoria({{ categoria.id }}, '{{ categoria.nombre|escapejs }}', '{{ categoria.tipo }}', {{ categoria.contabilizar|yesno:'true,false' }}, '{{ categoria.moneda_defecto }}')" class="text-slate-400 hover:text-sky-400"><i class="fas fa-edit text-[10px]"></i></button>
+                    <button type="button" onclick="editCategoria({{ categoria.id }}, '{{ categoria.nombre|escapejs }}', '{{ categoria.tipo }}', {{ categoria.contabilizar|yesno:'true,false' }}, '{{ categoria.moneda_defecto }}', '{{ categoria.dia_cobro|default:'' }}')" class="text-slate-400 hover:text-sky-400"><i class="fas fa-edit text-[10px]"></i></button>
                     <form action="{% url 'borrar_categoria' categoria.id %}" method="POST" class="inline" onsubmit="return confirm('¿Seguro quieres borrar esta categoría?');">
                         {% csrf_token %}
                         <button type="submit" class="text-slate-400 hover:text-rose-400"><i class="fas fa-trash text-[10px]"></i></button>
@@ -117,8 +133,11 @@
                 <div class="flex items-center space-x-1 mt-1">
                     <span class="text-[9px] uppercase font-black text-slate-600">{{ categoria.get_tipo_display }}</span>
                     <span class="text-[9px] uppercase font-black text-emerald-600 border border-emerald-900 px-1 rounded">{{ categoria.moneda_defecto }}</span>
+                    {% if categoria.dia_cobro %}
+                    <span class="text-[9px] uppercase font-black text-indigo-400 border border-indigo-900 px-1 rounded"><i class="far fa-calendar-alt break-all"></i> {{ categoria.dia_cobro }}</span>
+                    {% endif %}
                     {% if not categoria.contabilizar %}
-                    <span class="text-[8px] uppercase font-black text-rose-500 border border-rose-900 px-1 rounded">No Contabiliza</span>
+                    <span class="text-[8px] uppercase font-black text-rose-500 border border-rose-900 px-1 rounded">No Cont.</span>
                     {% endif %}
                 </div>
                 <div class="mt-3 flex items-center space-x-2">
@@ -242,12 +261,16 @@
                         <option value="USD">USD (Dólares)</option>
                     </select>
                 </div>
-                <div class="flex items-center mt-6">
-                    <label class="flex items-center space-x-3 cursor-pointer">
-                        <input type="checkbox" name="contabilizar" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
-                        <span class="text-xs font-bold text-slate-300">Contabilizar en total</span>
-                    </label>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Día de Cobro</label>
+                    <input type="number" name="dia_cobro" min="1" max="31" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none" placeholder="1-31">
                 </div>
+            </div>
+            <div class="flex items-center">
+                <label class="flex items-center space-x-3 cursor-pointer">
+                    <input type="checkbox" name="contabilizar" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
+                    <span class="text-xs font-bold text-slate-300">Contabilizar en total</span>
+                </label>
             </div>
             <div class="pt-4 flex space-x-3">
                 <button type="button" onclick="document.getElementById('modal-cat').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
@@ -295,15 +318,55 @@
     </div>
 </div>
 
+<!-- Modal Producto -->
+<div id="modal-producto" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
+    <div class="glass p-6 rounded-2xl border border-slate-700/50 w-full max-w-sm mx-auto">
+        <h3 id="modal-producto-title" class="text-lg font-bold text-white mb-6 flex items-center">
+            <i class="fas fa-cube text-emerald-400 mr-3"></i>Nuevo Producto
+        </h3>
+        <form id="form-producto" method="POST" action="{% url 'crear_producto' %}" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="banco_id" id="producto-banco-id" value="">
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Nombre del Producto</label>
+                <input type="text" name="nombre" required class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Tipo</label>
+                <select name="tipo" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none">
+                    <option value="TDC">Tarjeta de Crédito</option>
+                    <option value="LINEA_CREDITO">Línea de Crédito</option>
+                    <option value="CUENTA">Cuenta Corriente / Débito</option>
+                    <option value="COBRO">Cobro de Mantenimiento</option>
+                    <option value="OTRO">Otro</option>
+                </select>
+            </div>
+            <div class="pt-4 flex space-x-3">
+                <button type="button" onclick="document.getElementById('modal-producto').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
+                    Cancelar
+                </button>
+                <button type="submit" class="flex-1 py-3 px-4 rounded-xl bg-emerald-500 text-slate-900 font-bold shadow-lg shadow-emerald-500/20">
+                    Guardar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
-function editCategoria(id, nombre, tipo, contabilizar, moneda) {
+function editCategoria(id, nombre, tipo, contabilizar, moneda, dia_cobro) {
     const modal = document.getElementById('modal-cat');
     const form = document.getElementById('form-cat');
-    form.action = `/configuracion/editar-categoria/${id}/`;
+    
+    // Replace placeholder with actual ID
+    let actionUrl = "{% url 'editar_categoria' 999999 %}";
+    form.action = actionUrl.replace('999999', id);
+    
     form.querySelector('[name="nombre"]').value = nombre;
     form.querySelector('[name="tipo"]').value = tipo;
     form.querySelector('[name="contabilizar"]').checked = contabilizar;
     form.querySelector('[name="moneda_defecto"]').value = moneda;
+    form.querySelector('[name="dia_cobro"]').value = dia_cobro || '';
     document.getElementById('modal-cat-title').innerHTML = '<i class="fas fa-edit text-orange-400 mr-3"></i> Editar Categoría';
     modal.classList.remove('hidden');
 }
@@ -321,11 +384,39 @@ function newCategoria() {
 function editBanco(id, nombre, notas, mostrar) {
     const modal = document.getElementById('modal-banco');
     const form = document.getElementById('form-banco');
-    form.action = `/configuracion/editar-banco/${id}/`;
+    
+    let actionUrl = "{% url 'editar_banco' 999999 %}";
+    form.action = actionUrl.replace('999999', id);
+    
     form.querySelector('[name="nombre"]').value = nombre;
     form.querySelector('[name="notas"]').value = notas;
     form.querySelector('[name="mostrar_en_carga_masiva"]').checked = mostrar;
     document.getElementById('modal-banco-title').innerHTML = '<i class="fas fa-edit text-indigo-400 mr-3"></i> Editar Banco';
+    modal.classList.remove('hidden');
+}
+
+function newProducto(bancoId) {
+    const modal = document.getElementById('modal-producto');
+    const form = document.getElementById('form-producto');
+    form.action = "{% url 'crear_producto' %}";
+    form.reset();
+    document.getElementById('producto-banco-id').value = bancoId;
+    document.getElementById('modal-producto-title').innerHTML = '<i class="fas fa-cube text-emerald-400 mr-3"></i> Nuevo Producto';
+    modal.classList.remove('hidden');
+}
+
+function editProducto(id, bancoId, nombre, tipo) {
+    const modal = document.getElementById('modal-producto');
+    const form = document.getElementById('form-producto');
+    
+    let actionUrl = "{% url 'editar_producto' 999999 %}";
+    form.action = actionUrl.replace('999999', id);
+    
+    document.getElementById('producto-banco-id').value = bancoId;
+    form.querySelector('[name="nombre"]').value = nombre;
+    form.querySelector('[name="tipo"]').value = tipo;
+    
+    document.getElementById('modal-producto-title').innerHTML = '<i class="fas fa-edit text-emerald-400 mr-3"></i> Editar Producto';
     modal.classList.remove('hidden');
 }
 
