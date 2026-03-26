@@ -14,6 +14,10 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Corrección de Contexto en Carga Masiva (Hotfix)
+- **Vistas**:
+  - Se actualizó el contexto en la vista `gastos_table` en `core/views.py` para incluir `grouped_categorias`, `default_year` y `default_month`. Esto soluciona un bug donde el modal de Carga Masiva no mostraba ningún input (campos de categoría) al ser renderizado directamente dentro de la página de gastos.
+
 ### [2026-03] Carga de Datos Reales (Migración)
 - **Automatización**:
   - Creación del script `load_real_data.py` para automatizar la inserción de datos históricos y actuales extraídos de capturas de pantalla de control financiero.

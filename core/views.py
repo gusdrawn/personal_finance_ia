@@ -129,11 +129,29 @@ def gastos_table(request):
     # Calculate total savings needed
     total_ahorro_programado = sum(g.ahorro_mensual for g in gastos_programados)
     
+    # Gather categories for the bulk modal
+    categorias_bulk = CategoriaIngreso.objects.filter(
+        Q(user=user) & (Q(banco_defecto__isnull=True) | Q(banco_defecto__mostrar_en_carga_masiva=True))
+    ).select_related('banco_defecto')
+    
+    grouped_categorias = {}
+    for cat in categorias_bulk:
+        tipo = cat.get_tipo_display()
+        if tipo not in grouped_categorias:
+            grouped_categorias[tipo] = []
+        grouped_categorias[tipo].append(cat)
+        
+    tipo_order = {'Ingreso': 0, 'Gasto': 1, 'Gasto Fijo': 2, 'Tarjeta de Crédito': 3}
+    grouped_sorted = dict(sorted(grouped_categorias.items(), key=lambda x: tipo_order.get(x[0], 99)))
+    
     context = {
         'current_year': last_month_date.year,
         'current_month': last_month_date.month,
+        'default_year': last_month_date.year,
+        'default_month': last_month_date.month,
         'years': years,
         'categorias': categorias,
+        'grouped_categorias': grouped_sorted,
         'gastos_programados': gastos_programados,
         'total_ahorro_anual': total_ahorro_programado,
         'total_ahorro_trimestral': Decimal('0'),
