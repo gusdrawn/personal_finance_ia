@@ -79,7 +79,26 @@
             <!-- Left Side: Tenant -->
             <div class="space-y-4">
                 <div class="p-4 rounded-xl {% if depto.arrendatario %}bg-slate-800/30 border border-slate-700/30{% else %}bg-amber-500/5 border border-amber-500/20{% endif %}">
-                    <p class="text-[10px] uppercase font-bold text-slate-500 mb-2">Arrendatario</p>
+                    <div class="flex justify-between items-center mb-2">
+                        <p class="text-[10px] uppercase font-bold text-slate-500">Arrendatario</p>
+                        <div class="flex space-x-2">
+                            {% if depto.arrendatario %}
+                            <button onclick="editArrendatario('{{ depto.arrendatario.id }}', '{{ depto.arrendatario.nombre|escapejs }}', '{{ depto.arrendatario.rut|escapejs }}', '{% if depto.arrendatario.fecha_inicio_contrato %}{{ depto.arrendatario.fecha_inicio_contrato|date:'Y-m-d' }}{% endif %}', '{{ depto.arrendatario.monto_arriendo_clp|stringformat:'f' }}', '{{ depto.arrendatario.monto_arriendo_usd|stringformat:'f' }}', '{{ depto.arrendatario.telefono|escapejs }}', '{{ depto.arrendatario.email|escapejs }}')" class="w-6 h-6 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-sky-400 transition-colors">
+                                <i class="fas fa-edit text-[10px]"></i>
+                            </button>
+                            <form action="{% url 'borrar_arrendatario' depto.arrendatario.id %}" method="POST" class="inline" onsubmit="return confirm('¿Quitar arrendatario?');">
+                                {% csrf_token %}
+                                <button type="submit" class="w-6 h-6 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-rose-500 transition-colors">
+                                    <i class="fas fa-trash text-[10px]"></i>
+                                </button>
+                            </form>
+                            {% else %}
+                            <button onclick="newArrendatario('{{ depto.id }}')" class="w-6 h-6 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-emerald-400 transition-colors">
+                                <i class="fas fa-plus text-[10px]"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
                     {% if depto.arrendatario %}
                         <p class="font-bold text-slate-200">{{ depto.arrendatario.nombre }}</p>
                         <p class="text-xs text-slate-500 mt-1">RUT: {{ depto.arrendatario.rut }}</p>
@@ -131,8 +150,18 @@
         <div class="px-6 pb-6 mt-auto">
             <div class="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/10">
                 <div class="flex items-center justify-between mb-3">
-                    <p class="text-[10px] uppercase font-bold text-indigo-400">Financiamiento: {{ depto.credito_hipotecario.banco.nombre }}</p>
-                    <i class="fas fa-shield-halved text-indigo-400 text-[10px]"></i>
+                    <p class="text-[10px] uppercase font-bold text-indigo-400 flex items-center"><i class="fas fa-shield-halved mr-1"></i> {{ depto.credito_hipotecario.banco.nombre }}</p>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="editCredito('{{ depto.credito_hipotecario.id }}', '{{ depto.credito_hipotecario.banco.id }}', '{{ depto.credito_hipotecario.monto_original_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.tasa_anual|stringformat:'f' }}', '{{ depto.credito_hipotecario.plazo_anos }}', '{{ depto.credito_hipotecario.tipo_tasa }}', '{{ depto.credito_hipotecario.cuota_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.saldo_actual_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.cuotas_totales }}', '{{ depto.credito_hipotecario.cuotas_pagadas }}', '{% if depto.fecha_inicio %}{{ depto.fecha_inicio|date:'Y-m-d' }}{% endif %}', '{% if depto.fecha_ultima_cuota %}{{ depto.fecha_ultima_cuota|date:'Y-m-d' }}{% endif %}')" class="w-6 h-6 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-sky-400 transition-colors">
+                            <i class="fas fa-edit text-[10px]"></i>
+                        </button>
+                        <form action="{% url 'borrar_credito' depto.credito_hipotecario.id %}" method="POST" class="inline" onsubmit="return confirm('¿Borrar hipoteca?');">
+                            {% csrf_token %}
+                            <button type="submit" class="w-6 h-6 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-rose-500 transition-colors">
+                                <i class="fas fa-trash text-[10px]"></i>
+                            </button>
+                        </form>
+                    </div>
                 </div>
                 <div class="grid grid-cols-3 gap-2 text-[10px] mb-3">
                     <div class="flex flex-col">
@@ -158,6 +187,13 @@
                 </div>
                 {% endif %}
             </div>
+        </div>
+        </div>
+        {% else %}
+        <div class="px-6 pb-6 mt-auto flex justify-end">
+            <button onclick="newCredito('{{ depto.id }}')" class="px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-500/20 transition-colors">
+                <i class="fas fa-plus mr-1"></i> Agregar Hipoteca
+            </button>
         </div>
         {% endif %}
     </div>
@@ -261,6 +297,138 @@
     </div>
 </div>
 
+<div id="modal-arrendatario" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass w-full max-w-lg rounded-3xl overflow-hidden border border-slate-700 shadow-2xl">
+        <form id="arrendatario-form" method="POST" action="">
+            {% csrf_token %}
+            <div class="p-6 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
+                <h3 id="modal-arrendatario-title" class="text-xl font-black text-white uppercase tracking-tight">Arrendatario</h3>
+                <button type="button" onclick="closeModalArrendatario()" class="text-slate-500 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-8 space-y-5">
+                <div>
+                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Nombre</label>
+                    <input type="text" id="arr-nombre" name="nombre" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">RUT</label>
+                        <input type="text" id="arr-rut" name="rut" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Fecha Inicio Contrato</label>
+                        <input type="date" id="arr-inicio" name="fecha_inicio_contrato" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Renta (CLP)</label>
+                        <input type="number" id="arr-clp" name="monto_arriendo_clp" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Renta (USD) (Opcional)</label>
+                        <input type="number" step="0.01" id="arr-usd" name="monto_arriendo_usd" class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Teléfono (Opcional)</label>
+                        <input type="text" id="arr-telefono" name="telefono" class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Email (Opcional)</label>
+                        <input type="email" id="arr-email" name="email" class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 bg-slate-900/50 flex space-x-3">
+                <button type="button" onclick="closeModalArrendatario()" class="flex-1 py-4 text-xs font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancelar</button>
+                <button type="submit" class="flex-1 bg-emerald-500 text-slate-950 py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:scale-[1.02] transition-transform">Guardar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="modal-credito" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass w-full max-w-lg rounded-3xl overflow-hidden border border-slate-700 shadow-2xl">
+        <form id="credito-form" method="POST" action="">
+            {% csrf_token %}
+            <div class="p-6 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center">
+                <h3 id="modal-credito-title" class="text-xl font-black text-white uppercase tracking-tight">Crédito Hipotecario</h3>
+                <button type="button" onclick="closeModalCredito()" class="text-slate-500 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-8 space-y-5">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Banco</label>
+                        <select id="cred-banco" name="banco_id" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                            {% for banco in bancos %}
+                            <option value="{{ banco.id }}">{{ banco.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Tipo Tasa</label>
+                        <select id="cred-tipo" name="tipo_tasa" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                            <option value="FIJA">Fija</option>
+                            <option value="VARIABLE">Variable</option>
+                            <option value="SEMIVARIABLE">Semivariable</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Monto Orig. (UF)</label>
+                        <input type="number" step="0.01" id="cred-monto" name="monto_original_uf" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Tasa Anual (%)</label>
+                        <input type="number" step="0.01" id="cred-tasa" name="tasa_anual" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Cuota (UF)</label>
+                        <input type="number" step="0.01" id="cred-cuota" name="cuota_uf" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Saldo Actual (UF)</label>
+                        <input type="number" step="0.01" id="cred-saldo" name="saldo_actual_uf" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">1ra Cuota (Opc.)</label>
+                        <input type="date" id="cred-inicio" name="fecha_inicio" class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Última Cuota (Opc.)</label>
+                        <input type="date" id="cred-fin" name="fecha_ultima_cuota" class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Plazo (Años)</label>
+                        <input type="number" id="cred-plazo" name="plazo_anos" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Tot. Cuotas</label>
+                        <input type="number" id="cred-totales" name="cuotas_totales" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Pagadas</label>
+                        <input type="number" id="cred-pagadas" name="cuotas_pagadas" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 bg-slate-900/50 flex space-x-3">
+                <button type="button" onclick="closeModalCredito()" class="flex-1 py-4 text-xs font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancelar</button>
+                <button type="submit" class="flex-1 bg-indigo-500 text-slate-950 py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:scale-[1.02] transition-transform">Guardar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function closeModalDepto() {
     document.getElementById('modal-depto').classList.add('hidden');
@@ -279,13 +447,81 @@ function newDepto() {
 
 function editDepto(id, codigo, piso, metros, compra, actual) {
     document.getElementById('modal-depto-title').innerText = 'Editar Departamento';
-    document.getElementById('depto-form').action = '/departamentos/editar/' + id + '/';
+    document.getElementById('depto-form').action = '/dashboard/departamentos/editar/' + id + '/';
     document.getElementById('depto-codigo').value = codigo;
     document.getElementById('depto-piso').value = piso;
     document.getElementById('depto-metros').value = metros.replace(',', '.');
     document.getElementById('depto-compra').value = compra.replace(',', '.');
     document.getElementById('depto-actual').value = actual.replace(',', '.');
     document.getElementById('modal-depto').classList.remove('hidden');
+}
+
+function closeModalArrendatario() {
+    document.getElementById('modal-arrendatario').classList.add('hidden');
+}
+
+function newArrendatario(deptoId) {
+    document.getElementById('modal-arrendatario-title').innerText = 'Nuevo Arrendatario';
+    document.getElementById('arrendatario-form').action = '/dashboard/departamentos/' + deptoId + '/arrendatario/crear/';
+    document.getElementById('arr-nombre').value = '';
+    document.getElementById('arr-rut').value = '';
+    document.getElementById('arr-inicio').value = '';
+    document.getElementById('arr-clp').value = '';
+    document.getElementById('arr-usd').value = '';
+    document.getElementById('arr-telefono').value = '';
+    document.getElementById('arr-email').value = '';
+    document.getElementById('modal-arrendatario').classList.remove('hidden');
+}
+
+function editArrendatario(id, nombre, rut, inicio, clp, usd, telefono, email) {
+    document.getElementById('modal-arrendatario-title').innerText = 'Editar Arrendatario';
+    document.getElementById('arrendatario-form').action = '/dashboard/departamentos/arrendatario/editar/' + id + '/';
+    document.getElementById('arr-nombre').value = nombre;
+    document.getElementById('arr-rut').value = rut;
+    document.getElementById('arr-inicio').value = inicio || '';
+    document.getElementById('arr-clp').value = clp.replace(',', '.');
+    document.getElementById('arr-usd').value = (usd || '').replace(',', '.');
+    document.getElementById('arr-telefono').value = telefono || '';
+    document.getElementById('arr-email').value = email || '';
+    document.getElementById('modal-arrendatario').classList.remove('hidden');
+}
+
+function closeModalCredito() {
+    document.getElementById('modal-credito').classList.add('hidden');
+}
+
+function newCredito(deptoId) {
+    document.getElementById('modal-credito-title').innerText = 'Nueva Hipoteca';
+    document.getElementById('credito-form').action = '/dashboard/departamentos/' + deptoId + '/credito/crear/';
+    document.getElementById('cred-banco').value = '';
+    document.getElementById('cred-monto').value = '';
+    document.getElementById('cred-tasa').value = '';
+    document.getElementById('cred-plazo').value = '';
+    document.getElementById('cred-tipo').value = 'FIJA';
+    document.getElementById('cred-cuota').value = '';
+    document.getElementById('cred-saldo').value = '';
+    document.getElementById('cred-totales').value = '';
+    document.getElementById('cred-pagadas').value = '';
+    document.getElementById('cred-inicio').value = '';
+    document.getElementById('cred-fin').value = '';
+    document.getElementById('modal-credito').classList.remove('hidden');
+}
+
+function editCredito(id, banco, monto, tasa, plazo, tipo, cuota, saldo, totales, pagadas, inicio, fin) {
+    document.getElementById('modal-credito-title').innerText = 'Editar Hipoteca';
+    document.getElementById('credito-form').action = '/dashboard/departamentos/credito/editar/' + id + '/';
+    document.getElementById('cred-banco').value = banco;
+    document.getElementById('cred-monto').value = monto.replace(',', '.');
+    document.getElementById('cred-tasa').value = tasa.replace(',', '.');
+    document.getElementById('cred-plazo').value = plazo;
+    document.getElementById('cred-tipo').value = tipo;
+    document.getElementById('cred-cuota').value = cuota.replace(',', '.');
+    document.getElementById('cred-saldo').value = saldo.replace(',', '.');
+    document.getElementById('cred-totales').value = totales;
+    document.getElementById('cred-pagadas').value = pagadas;
+    document.getElementById('cred-inicio').value = inicio || '';
+    document.getElementById('cred-fin').value = fin || '';
+    document.getElementById('modal-credito').classList.remove('hidden');
 }
 </script>
 {% endblock %}

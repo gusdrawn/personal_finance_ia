@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from gastos.models import RegistroMensual, GastoProgramado, CategoriaIngreso
 from patrimonio.models import Activo, Pasivo, SnapshotPatrimonio
-from departamentos.models import Departamento, Estacionamiento, Arrendatario
+from departamentos.models import Departamento, Estacionamiento, Arrendatario, CreditoHipotecario
 from inversiones.models import Inversion
 from configuracion.models import TipoCambio, Banco, Producto
 
@@ -271,12 +271,15 @@ def departamentos(request):
         for d in departamentos
     )
     
+    bancos = Banco.objects.all()
+
     context = {
         'departamentos': departamentos,
         'total_arriendos': total_arriendos,
         'promedio_arriendo': promedio_arriendo,
         'total_valor_actual': total_valor_actual,
         'tipo_cambio': valor_uf,
+        'bancos': bancos,
     }
     
     return render(request, 'departamentos.html', context)
@@ -460,6 +463,7 @@ def crear_departamento(request):
     depto.metros_cuadrados = request.POST.get('metros_cuadrados')
     depto.valor_compra_uf = request.POST.get('valor_compra_uf')
     depto.valor_actual_uf = request.POST.get('valor_actual_uf')
+    
     depto.save()
     return redirect('departamentos')
 
@@ -472,6 +476,7 @@ def editar_departamento(request, pk):
     depto.metros_cuadrados = request.POST.get('metros_cuadrados')
     depto.valor_compra_uf = request.POST.get('valor_compra_uf')
     depto.valor_actual_uf = request.POST.get('valor_actual_uf')
+    
     depto.save()
     return redirect('departamentos')
 
@@ -480,6 +485,118 @@ def editar_departamento(request, pk):
 def borrar_departamento(request, pk):
     depto = Departamento.objects.get(pk=pk, user=request.user)
     depto.delete()
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def crear_arrendatario(request, depto_pk):
+    depto = Departamento.objects.get(pk=depto_pk, user=request.user)
+    Arrendatario.objects.create(
+        departamento=depto,
+        nombre=request.POST.get('nombre'),
+        rut=request.POST.get('rut'),
+        fecha_inicio_contrato=request.POST.get('fecha_inicio_contrato'),
+        monto_arriendo_clp=request.POST.get('monto_arriendo_clp', 0),
+        monto_arriendo_usd=request.POST.get('monto_arriendo_usd', 0),
+        telefono=request.POST.get('telefono', ''),
+        email=request.POST.get('email', '')
+    )
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def editar_arrendatario(request, pk):
+    arrendatario = Arrendatario.objects.get(pk=pk, departamento__user=request.user)
+    arrendatario.nombre = request.POST.get('nombre', arrendatario.nombre)
+    arrendatario.rut = request.POST.get('rut', arrendatario.rut)
+    arrendatario.fecha_inicio_contrato = request.POST.get('fecha_inicio_contrato', arrendatario.fecha_inicio_contrato)
+    arrendatario.monto_arriendo_clp = request.POST.get('monto_arriendo_clp', arrendatario.monto_arriendo_clp)
+    arrendatario.monto_arriendo_usd = request.POST.get('monto_arriendo_usd', arrendatario.monto_arriendo_usd)
+    arrendatario.telefono = request.POST.get('telefono', arrendatario.telefono)
+    arrendatario.email = request.POST.get('email', arrendatario.email)
+    arrendatario.save()
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_arrendatario(request, pk):
+    arrendatario = Arrendatario.objects.get(pk=pk, departamento__user=request.user)
+    arrendatario.delete()
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def crear_credito(request, depto_pk):
+    depto = Departamento.objects.get(pk=depto_pk, user=request.user)
+    CreditoHipotecario.objects.create(
+        departamento=depto,
+        banco_id=request.POST.get('banco_id'),
+        monto_original_uf=request.POST.get('monto_original_uf', 0),
+        tasa_anual=request.POST.get('tasa_anual', 0),
+        plazo_anos=request.POST.get('plazo_anos', 0),
+        tipo_tasa=request.POST.get('tipo_tasa', 'FIJA'),
+        cuota_uf=request.POST.get('cuota_uf', 0),
+        saldo_actual_uf=request.POST.get('saldo_actual_uf', 0),
+        cuotas_totales=request.POST.get('cuotas_totales', 0),
+        cuotas_pagadas=request.POST.get('cuotas_pagadas', 0)
+    )
+    
+    fecha_inicio = request.POST.get('fecha_inicio')
+    fecha_ultima_cuota = request.POST.get('fecha_ultima_cuota')
+    plazo_anos = request.POST.get('plazo_anos')
+    
+    if fecha_inicio: depto.fecha_inicio = fecha_inicio
+    if fecha_ultima_cuota: depto.fecha_ultima_cuota = fecha_ultima_cuota
+    if plazo_anos: depto.plazo_anos = int(plazo_anos)
+    depto.save(update_fields=['fecha_inicio', 'fecha_ultima_cuota', 'plazo_anos'])
+    
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def editar_credito(request, pk):
+    credito = CreditoHipotecario.objects.get(pk=pk, departamento__user=request.user)
+    credito.banco_id = request.POST.get('banco_id', credito.banco_id)
+    credito.monto_original_uf = request.POST.get('monto_original_uf', credito.monto_original_uf)
+    credito.tasa_anual = request.POST.get('tasa_anual', credito.tasa_anual)
+    credito.plazo_anos = request.POST.get('plazo_anos', credito.plazo_anos)
+    credito.tipo_tasa = request.POST.get('tipo_tasa', credito.tipo_tasa)
+    credito.cuota_uf = request.POST.get('cuota_uf', credito.cuota_uf)
+    credito.saldo_actual_uf = request.POST.get('saldo_actual_uf', credito.saldo_actual_uf)
+    credito.cuotas_totales = request.POST.get('cuotas_totales', credito.cuotas_totales)
+    credito.cuotas_pagadas = request.POST.get('cuotas_pagadas', credito.cuotas_pagadas)
+    credito.save()
+    
+    depto = credito.departamento
+    fecha_inicio = request.POST.get('fecha_inicio')
+    fecha_ultima_cuota = request.POST.get('fecha_ultima_cuota')
+    plazo_anos = request.POST.get('plazo_anos')
+    
+    depto.fecha_inicio = fecha_inicio if fecha_inicio else None
+    depto.fecha_ultima_cuota = fecha_ultima_cuota if fecha_ultima_cuota else None
+    depto.plazo_anos = int(plazo_anos) if plazo_anos else None
+    depto.save(update_fields=['fecha_inicio', 'fecha_ultima_cuota', 'plazo_anos'])
+    
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_credito(request, pk):
+    credito = CreditoHipotecario.objects.get(pk=pk, departamento__user=request.user)
+    depto = credito.departamento
+    credito.delete()
+    
+    depto.fecha_inicio = None
+    depto.fecha_ultima_cuota = None
+    depto.plazo_anos = None
+    depto.save()
+    
     return redirect('departamentos')
 
 @require_http_methods(["POST"])
