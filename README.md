@@ -97,6 +97,7 @@ python manage.py shell            # Django interactive shell
 python manage.py makemigrations   # Generate database migrations
 python manage.py migrate          # Apply database migrations
 python manage.py populate_fixtures # Load demo data
+python load_real_data.py          # Load real historical data (from images)
 ```
 
 ---

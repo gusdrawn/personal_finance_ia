@@ -228,6 +228,22 @@
     </a>
 </div>
 
+<div class="glass p-8 rounded-2xl border-l-4 border-emerald-500 flex flex-col md:flex-row justify-between items-center bg-emerald-500/5 mt-8">
+    <div class="mb-6 md:mb-0">
+        <h4 class="text-lg font-bold text-white mb-2 flex items-center">
+            <i class="fas fa-camera mr-3 text-emerald-400"></i>
+            Snapshot de Patrimonio (Manual)
+        </h4>
+        <p class="text-slate-400 text-sm">Toma y guarda una instantánea histórica de todos tus balances al día de hoy. Recomendado una vez al mes.</p>
+    </div>
+    <form action="{% url 'tomar_snapshot' %}" method="POST" class="inline">
+        {% csrf_token %}
+        <button type="submit" class="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center shadow-lg transition-colors">
+            <i class="fas fa-camera mr-3"></i>Guardar Snapshot Actual
+        </button>
+    </form>
+</div>
+
 <!-- Modal Categoría -->
 <div id="modal-cat" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
     <div class="glass p-6 rounded-2xl border border-slate-700/50 w-full max-w-md mx-auto">

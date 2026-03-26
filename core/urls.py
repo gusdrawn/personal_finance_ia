@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from configuracion.views import update_rates
+from configuracion.views import update_rates, take_snapshot
 
 urlpatterns = [
     path('', views.dashboard, name='dashboard'),
@@ -13,6 +13,7 @@ urlpatterns = [
     path('patrimonio/crear-activo/', views.crear_activo, name='crear_activo'),
     path('patrimonio/crear-pasivo/', views.crear_pasivo, name='crear_pasivo'),
     path('configuracion/actualizar-tasas/', update_rates, name='actualizar_tasas'),
+    path('configuracion/tomar-snapshot/', take_snapshot, name='tomar_snapshot'),
     path('departamentos/estacionamientos/', views.estacionamientos, name='estacionamientos'),
     path('patrimonio/editar-activo/<int:pk>/', views.editar_activo, name='editar_activo'),
     path('patrimonio/borrar-activo/<int:pk>/', views.borrar_activo, name='borrar_activo'),

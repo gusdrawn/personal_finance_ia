@@ -1,12 +1,15 @@
 import requests
+import urllib3
 from datetime import date
 from decimal import Decimal
 from .models import TipoCambio
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 def fetch_mindicador_rates():
     """Fetch current UF and USD rates from mindicador.cl"""
     try:
-        response = requests.get('https://mindicador.cl/api', timeout=10)
+        response = requests.get('https://mindicador.cl/api', timeout=10, verify=False)
         data = response.json()
         
         uf_val = Decimal(str(data['uf']['valor']))

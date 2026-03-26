@@ -157,6 +157,7 @@ def patrimonio(request):
         valor_uf = tipo_cambio.uf
     except TipoCambio.DoesNotExist:
         valor_uf = Decimal(0)
+        tipo_cambio = None
     
     activos_list = []
     total_activos_base = Decimal(0)
@@ -231,7 +232,11 @@ def patrimonio(request):
 def departamentos(request):
     """Departments/Properties view"""
     user = request.user
-    tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
+    try:
+        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
+        valor_uf = tipo_cambio.uf
+    except TipoCambio.DoesNotExist:
+        valor_uf = Decimal(0)
     
     departamentos = Departamento.objects.filter(user=user).prefetch_related(
         'arrendatario', 'credito_hipotecario'
@@ -239,12 +244,12 @@ def departamentos(request):
     
     total_arriendos = sum(
         d.arrendatario.monto_arriendo_clp 
-        for d in departamentos if d.arrendatario
+        for d in departamentos if hasattr(d, 'arrendatario')
     )
     promedio_arriendo = total_arriendos / departamentos.count() if departamentos.count() > 0 else 0
     
     total_valor_actual = sum(
-        d.valor_actual_uf * tipo_cambio.uf 
+        d.valor_actual_uf * valor_uf 
         for d in departamentos
     )
     
@@ -253,7 +258,7 @@ def departamentos(request):
         'total_arriendos': total_arriendos,
         'promedio_arriendo': promedio_arriendo,
         'total_valor_actual': total_valor_actual,
-        'tipo_cambio': tipo_cambio.uf,
+        'tipo_cambio': valor_uf,
     }
     
     return render(request, 'departamentos.html', context)
@@ -303,7 +308,10 @@ def inversiones(request):
 def configuracion(request):
     """Configuration/Settings view"""
     user = request.user
-    tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
+    try:
+        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
+    except TipoCambio.DoesNotExist:
+        tipo_cambio = None
     bancos = Banco.objects.all()
     categorias = CategoriaIngreso.objects.filter(user=user)
     
