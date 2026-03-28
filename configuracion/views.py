@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 from patrimonio.models import Activo, Pasivo, SnapshotPatrimonio
 from departamentos.models import Departamento
-from inversiones.models import Inversion, HistorialInversion
+from patrimonio.models import HistorialActivo
 from configuracion.models import TipoCambio
 
 @login_required
@@ -31,37 +31,32 @@ def take_snapshot(request):
             valor_dolar = Decimal(0)
 
         # 1. Update Inversion History
-        inversiones_activas = Inversion.objects.filter(user=user, activo=True)
-        for inv in inversiones_activas:
-            HistorialInversion.objects.update_or_create(
-                inversion=inv,
+        activos_tracked = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
+        for act in activos_tracked:
+            HistorialActivo.objects.update_or_create(
+                activo=act,
                 fecha=today,
                 defaults={
-                    'monto_clp': inv.monto_clp,
-                    'monto_usd': inv.monto_usd,
+                    'monto_clp': act.monto_clp,
+                    'monto_usd': act.monto_usd,
                     'valor_uf': valor_uf,
                     'valor_dolar': valor_dolar,
                 }
             )
 
         # 2. Calculate totals for SnapshotPatrimonio
-        activos_base = Activo.objects.filter(user=user).exclude(tipo__in=['INVERSION', 'DEPARTAMENTO'])
+        activos_base = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
         total_activos_base_clp = sum(a.monto_clp for a in activos_base) if activos_base.exists() else Decimal(0)
         total_activos_base_usd = sum(a.monto_usd for a in activos_base) if activos_base.exists() else Decimal(0)
         
         # liquidez
-        activos_liquidos = sum(a.monto_clp for a in activos_base.filter(tipo_liquidez='LIQUIDO'))
-        liquidez_inversiones = sum(i.monto_clp for i in inversiones_activas if i.tipo in ['CRIPTO', 'ACCIONES', 'FONDO_MUTUO', 'BROKERAGE'])
-        total_liquidos = activos_liquidos + liquidez_inversiones
+        total_liquidos = sum(a.monto_clp for a in activos_base.filter(es_liquido=True))
 
         departamentos = Departamento.objects.filter(user=user)
         total_departamentos_clp = sum(d.valor_actual_uf * valor_uf for d in departamentos)
-        
-        total_inversiones_clp = sum(i.monto_clp for i in inversiones_activas)
-        total_inversiones_usd = sum(i.monto_usd for i in inversiones_activas)
 
-        total_activos_clp = total_activos_base_clp + total_departamentos_clp + total_inversiones_clp
-        total_activos_usd = total_activos_base_usd + total_inversiones_usd
+        total_activos_clp = total_activos_base_clp + total_departamentos_clp
+        total_activos_usd = total_activos_base_usd
 
         pasivos = Pasivo.objects.filter(user=user)
         total_pasivos_clp = sum(p.monto_clp for p in pasivos) if pasivos.exists() else Decimal(0)

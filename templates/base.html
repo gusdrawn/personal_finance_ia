@@ -75,9 +75,13 @@
                     <i class="fas fa-parking w-5"></i>
                     <span class="font-medium">Estacionamientos</span>
                 </a>
-                <a href="{% url 'inversiones' %}" class="sidebar-item {% if 'inversiones' in request.resolver_match.url_name %}active{% endif %}">
+                <a href="{% url 'activos' %}" class="sidebar-item {% if 'activos' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-chart-pie w-6"></i>
-                    <span class="font-medium">Inversiones</span>
+                    <span class="font-medium">Activos</span>
+                </a>
+                <a href="{% url 'pasivos' %}" class="sidebar-item {% if 'pasivos' in request.resolver_match.url_name %}active{% endif %}">
+                    <i class="fas fa-credit-card w-6"></i>
+                    <span class="font-medium">Pasivos</span>
                 </a>
                 <a href="{% url 'prestamos_index' %}" class="sidebar-item {% if 'prestamos' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-bicycle w-6"></i>

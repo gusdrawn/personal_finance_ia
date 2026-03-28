@@ -1,15 +1,14 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
-from django.db.models import Sum, Q, F
+from django.db.models import Sum, Q, F, Avg
 from django.urls import reverse
 from datetime import date, timedelta
 from decimal import Decimal
 
 from gastos.models import RegistroMensual, GastoProgramado, CategoriaIngreso
-from patrimonio.models import Activo, Pasivo, SnapshotPatrimonio
+from patrimonio.models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio
 from departamentos.models import Departamento, Estacionamiento, Arrendatario, CreditoHipotecario
-from inversiones.models import Inversion
 from configuracion.models import TipoCambio, Banco, Producto
 
 
@@ -18,17 +17,19 @@ def dashboard(request):
     """Dashboard with key metrics and charts"""
     user = request.user
     
-    # Get latest type changes
+    # Get latest exchange rates
     try:
         tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
+        valor_uf = tipo_cambio.uf
     except TipoCambio.DoesNotExist:
         tipo_cambio = None
+        valor_uf = Decimal(0)
     
-    # Calculate patrimony
-    activos_base = Activo.objects.filter(user=user).exclude(tipo__in=['INVERSION', 'DEPARTAMENTO'])
-    total_activos_base = sum(a.monto_clp for a in activos_base) if activos_base.exists() else 0
+    # Calculate patrimony from unified Activo model
+    activos_all = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
+    total_activos_base = sum(a.monto_clp for a in activos_all) if activos_all.exists() else 0
     
-    pasivos = Pasivo.objects.filter(user=user)
+    pasivos = Pasivo.objects.filter(user=user, activo=True)
     total_pasivos = sum(p.monto_clp for p in pasivos) if pasivos.exists() else 0
     
     total_departamentos = 0
@@ -36,27 +37,30 @@ def dashboard(request):
         departamentos_todos = Departamento.objects.filter(user=user)
         total_departamentos = sum(d.valor_actual_uf * tipo_cambio.uf for d in departamentos_todos)
         
-    inversiones_todas = Inversion.objects.filter(user=user, activo=True)
-    total_inversiones = sum(i.monto_clp for i in inversiones_todas)
-
-    total_activos = total_activos_base + total_departamentos + total_inversiones
+    total_activos = total_activos_base + total_departamentos
     patrimonio_neto = total_activos - total_pasivos
     
     # Calculate liquidity
-    activos_liquidos = sum(a.monto_clp for a in activos_base.filter(tipo_liquidez='LIQUIDO'))
-    liquidez_inversiones = sum(i.monto_clp for i in inversiones_todas if i.tipo in ['CRIPTO', 'ACCIONES', 'FONDO_MUTUO', 'BROKERAGE'])
-    total_liquidos = activos_liquidos + liquidez_inversiones
+    total_liquidos = sum(a.monto_clp for a in activos_all.filter(es_liquido=True))
+    total_no_liquidos = total_activos - total_liquidos
     liquidez_pct = (total_liquidos / total_activos * 100) if total_activos > 0 else 0
     
-    # Current month metrics
-    latest_registro = RegistroMensual.objects.filter(user=user).order_by('-year', '-mes').first()
-    if latest_registro:
-        target_year = latest_registro.year
-        target_month = latest_registro.mes
+    # Current month metrics - default to last month with data
+    selected_year = request.GET.get('year')
+    selected_month = request.GET.get('month')
+    
+    if selected_year and selected_month:
+        target_year = int(selected_year)
+        target_month = int(selected_month)
     else:
-        today = date.today()
-        target_year = today.year
-        target_month = today.month
+        latest_registro = RegistroMensual.objects.filter(user=user).order_by('-year', '-mes').first()
+        if latest_registro:
+            target_year = latest_registro.year
+            target_month = latest_registro.mes
+        else:
+            today = date.today()
+            target_year = today.year
+            target_month = today.month
         
     ingresos = RegistroMensual.objects.filter(
         user=user, year=target_year, mes=target_month, tipo='INGRESO',
@@ -90,14 +94,45 @@ def dashboard(request):
         
     otros = total_gastos - (gastos_fijos + suscripciones + tarjetas)
     
-    # Get departments and investments
+    # Historical Patrimonio (snapshots)
+    snapshots = SnapshotPatrimonio.objects.filter(user=user).order_by('fecha')
+    snapshot_labels = [s.fecha.strftime('%b %Y') for s in snapshots]
+    snapshot_activos = [float(s.activos_total_clp) for s in snapshots]
+    snapshot_pasivos = [float(s.pasivos_total_clp) for s in snapshots]
+    snapshot_neto = [float(s.patrimonio_neto_clp) for s in snapshots]
+    
+    # Historical Income/Expense (last 6 months)
+    today = date.today()
+    historico_meses = []
+    for i in range(5, -1, -1):
+        d = today.replace(day=1) - timedelta(days=30 * i)
+        y, m = d.year, d.month
+        ing = RegistroMensual.objects.filter(
+            user=user, year=y, mes=m, tipo='INGRESO', categoria__contabilizar=True
+        ).aggregate(t=Sum('monto'))['t'] or 0
+        gas = RegistroMensual.objects.filter(
+            user=user, year=y, mes=m, categoria__contabilizar=True
+        ).exclude(tipo='INGRESO').aggregate(t=Sum('monto'))['t'] or 0
+        historico_meses.append({
+            'label': f"{m:02d}/{y}",
+            'ingresos': float(ing),
+            'gastos': float(gas),
+            'balance': float(ing - gas),
+        })
+    
+    # Get departments and top activos for previews
     departamentos = Departamento.objects.filter(user=user)[:3]
-    inversiones = Inversion.objects.filter(user=user)[:4]
+    top_activos = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO').order_by('-monto_clp')[:4]
+    
+    # Available months for the month selector
+    available_months = RegistroMensual.objects.filter(user=user).values('year', 'mes').distinct().order_by('-year', '-mes')[:24]
     
     context = {
         'patrimonio_neto': patrimonio_neto,
         'total_activos': total_activos,
         'total_pasivos': total_pasivos,
+        'total_liquidos': total_liquidos,
+        'total_no_liquidos': total_no_liquidos,
         'liquidez_pct': liquidez_pct,
         'ingresos_mes': ingresos,
         'gastos_mes': total_gastos,
@@ -107,9 +142,15 @@ def dashboard(request):
         'otros': otros,
         'tipo_cambio': tipo_cambio,
         'departamentos': departamentos,
-        'inversiones': inversiones,
+        'top_activos': top_activos,
         'target_year': target_year,
         'target_month': target_month,
+        'snapshot_labels': snapshot_labels,
+        'snapshot_activos': snapshot_activos,
+        'snapshot_pasivos': snapshot_pasivos,
+        'snapshot_neto': snapshot_neto,
+        'historico_meses': historico_meses,
+        'available_months': list(available_months),
     }
     
     return render(request, 'dashboard.html', context)
@@ -162,13 +203,12 @@ def gastos_table(request):
 
 @login_required
 def patrimonio(request):
-    """Patrimony/Net worth view"""
+    """Patrimony/Net worth view - Summary page"""
     user = request.user
     
-    activos_base = Activo.objects.filter(user=user).exclude(tipo__in=['INVERSION', 'DEPARTAMENTO'])
-    pasivos = Pasivo.objects.filter(user=user)
+    activos_all = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
+    pasivos = Pasivo.objects.filter(user=user, activo=True)
     departamentos = Departamento.objects.filter(user=user)
-    inversiones = Inversion.objects.filter(user=user, activo=True)
     
     try:
         tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
@@ -177,56 +217,16 @@ def patrimonio(request):
         valor_uf = Decimal(0)
         tipo_cambio = None
     
-    activos_list = []
-    total_activos_base = Decimal(0)
-    for a in activos_base:
-        total_activos_base += a.monto_clp
-        activos_list.append({
-            'id': a.id,
-            'nombre': a.nombre,
-            'tipo': a.tipo,
-            'tipo_display': a.get_tipo_display(),
-            'tipo_liquidez': a.tipo_liquidez,
-            'liquidez_display': a.get_tipo_liquidez_display(),
-            'es_liquido': a.tipo_liquidez == 'LIQUIDO',
-            'monto_clp': a.monto_clp,
-            'monto_usd': a.monto_usd,
-            'es_manual': True,
-        })
-        
-    total_departamentos = Decimal(0)
-    for d in departamentos:
-        monto = d.valor_actual_uf * valor_uf
-        total_departamentos += monto
-        activos_list.append({
-            'nombre': f"Departamento {d.codigo}",
-            'tipo_display': 'Bienes Raíces',
-            'liquidez_display': 'No Líquido',
-            'es_liquido': False,
-            'monto_clp': monto,
-            'monto_usd': 0,
-        })
-        
-    total_inversiones = Decimal(0)
-    for i in inversiones:
-        total_inversiones += i.monto_clp
-        activos_list.append({
-            'id': i.id,
-            'nombre': i.nombre,
-            'tipo_display': 'Inversión: ' + i.get_tipo_display(),
-            'liquidez_display': 'Líquido' if i.tipo in ['CRIPTO', 'ACCIONES'] else 'No Líquido',
-            'es_liquido': i.tipo in ['CRIPTO', 'ACCIONES'],
-            'monto_clp': i.monto_clp,
-            'monto_usd': i.monto_usd,
-            'es_manual': False,
-            'es_inversion': True
-        })
-        
-    activos_list.sort(key=lambda x: x['monto_clp'], reverse=True)
-    
-    total_activos = total_activos_base + total_departamentos + total_inversiones
+    # Totals
+    total_activos_base = sum(a.monto_clp for a in activos_all)
+    total_departamentos = sum(d.valor_actual_uf * valor_uf for d in departamentos)
+    total_activos = total_activos_base + total_departamentos
     total_pasivos = sum(p.monto_clp for p in pasivos)
     patrimonio_neto = total_activos - total_pasivos
+    
+    total_liquidos = sum(a.monto_clp for a in activos_all.filter(es_liquido=True))
+    total_no_liquidos = total_activos - total_liquidos
+    liquidez_pct = (total_liquidos / total_activos * 100) if total_activos > 0 else 0
     
     snapshots = SnapshotPatrimonio.objects.filter(user=user).order_by('-fecha')[:12]
     
@@ -234,16 +234,167 @@ def patrimonio(request):
         'total_activos': total_activos,
         'total_pasivos': total_pasivos,
         'patrimonio_neto': patrimonio_neto,
-        'activos_count': len(activos_list),
+        'total_liquidos': total_liquidos,
+        'total_no_liquidos': total_no_liquidos,
+        'liquidez_pct': liquidez_pct,
+        'activos_count': activos_all.count() + departamentos.count(),
         'pasivos_count': pasivos.count(),
-        'activos': activos_list,
-        'pasivos': pasivos,
         'snapshots': snapshots,
         'tipo_cambio': tipo_cambio,
-        'alert_msg': "Los activos de 'Bienes Raíces' se editan desde la pestaña de Departamentos, y las 'Inversiones' desde la pestaña de Inversiones."
     }
     
     return render(request, 'patrimonio.html', context)
+
+
+@login_required
+def activos_view(request):
+    """Unified Assets view (replaces Inversiones)"""
+    user = request.user
+    
+    try:
+        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
+        valor_uf = tipo_cambio.uf
+    except TipoCambio.DoesNotExist:
+        valor_uf = Decimal(0)
+        tipo_cambio = None
+    
+    # All user assets (excluding departamentos which are auto-generated)
+    activos_qs = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
+    
+    # Build departamento assets
+    departamentos = Departamento.objects.filter(user=user)
+    depto_activos = []
+    total_depto_clp = Decimal(0)
+    for d in departamentos:
+        monto = d.valor_actual_uf * valor_uf
+        total_depto_clp += monto
+        depto_activos.append({
+            'id': None,
+            'nombre': f"Depto {d.codigo}",
+            'tipo': 'DEPARTAMENTO',
+            'tipo_display': 'Departamento',
+            'horizonte_temporal': 'LARGO_PLAZO',
+            'horizonte_display': 'Largo Plazo',
+            'es_liquido': False,
+            'monto_clp': monto,
+            'monto_usd': Decimal(0),
+            'es_depto': True,
+            'depto_id': d.id,
+        })
+    
+    total_invertido = sum(a.monto_clp for a in activos_qs) + total_depto_clp
+    
+    # Group by horizonte_temporal
+    HORIZONTE_ORDER = {'EFECTIVO': 0, 'CORTO_PLAZO': 1, 'MEDIANO_PLAZO': 2, 'LARGO_PLAZO': 3}
+    HORIZONTE_LABELS = dict(Activo.HORIZONTE_CHOICES)
+    
+    grouped = {}
+    for h_key, h_label in Activo.HORIZONTE_CHOICES:
+        items = list(activos_qs.filter(horizonte_temporal=h_key))
+        # Add depto assets to LARGO_PLAZO
+        if h_key == 'LARGO_PLAZO':
+            grouped[h_key] = {
+                'label': h_label,
+                'items': items,
+                'depto_items': depto_activos,
+                'total': sum(a.monto_clp for a in items) + total_depto_clp,
+            }
+        else:
+            grouped[h_key] = {
+                'label': h_label,
+                'items': items,
+                'depto_items': [],
+                'total': sum(a.monto_clp for a in items),
+            }
+    
+    # Calculate portfolio percentages for chart
+    chart_data = []
+    for a in activos_qs:
+        chart_data.append({'nombre': a.nombre, 'monto': float(a.monto_clp)})
+    for d in depto_activos:
+        chart_data.append({'nombre': d['nombre'], 'monto': float(d['monto_clp'])})
+    
+    # Liquidity totals
+    total_liquidos = sum(a.monto_clp for a in activos_qs.filter(es_liquido=True))
+    total_no_liquidos = total_invertido - total_liquidos
+    liquidez_pct = (total_liquidos / total_invertido * 100) if total_invertido > 0 else 0
+    
+    # Portfolio history (from HistorialActivo)
+    from django.db.models.functions import TruncMonth
+    historico_qs = HistorialActivo.objects.filter(
+        activo__user=user,
+        activo__activo=True,
+        fecha__gte=date.today() - timedelta(days=365)
+    ).annotate(month=TruncMonth('fecha')).values('month').annotate(total=Sum('monto_clp')).order_by('month')
+    
+    historico = {
+        'labels': [h['month'].strftime('%b %Y') for h in historico_qs],
+        'values': [float(h['total']) for h in historico_qs]
+    }
+    
+    context = {
+        'grouped': grouped,
+        'total_invertido': total_invertido,
+        'total_liquidos': total_liquidos,
+        'total_no_liquidos': total_no_liquidos,
+        'liquidez_pct': liquidez_pct,
+        'activos_count': activos_qs.count() + len(depto_activos),
+        'chart_data': chart_data,
+        'historico': historico if historico['labels'] else None,
+        'tipo_cambio': tipo_cambio,
+    }
+    
+    return render(request, 'activos.html', context)
+
+
+@login_required
+def pasivos_view(request):
+    """Liabilities dedicated page"""
+    user = request.user
+    
+    try:
+        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
+    except TipoCambio.DoesNotExist:
+        tipo_cambio = None
+    
+    pasivos_all = Pasivo.objects.filter(user=user, activo=True)
+    total_pasivos = sum(p.monto_clp for p in pasivos_all)
+    
+    # Group by tipo
+    TIPO_ORDER = {'TDC': 0, 'CREDITO_HIPOTECARIO': 1, 'CREDITO_CONSUMO': 2, 'PRESTAMO': 3, 'OTRO': 4}
+    TIPO_LABELS = dict(Pasivo.TIPO_PASIVO)
+    
+    grouped = {}
+    for t_key, t_label in Pasivo.TIPO_PASIVO:
+        items = list(pasivos_all.filter(tipo=t_key))
+        if items:
+            grouped[t_key] = {
+                'label': t_label,
+                'items': items,
+                'total': sum(p.monto_clp for p in items),
+            }
+    
+    # Activos for ratio
+    activos_total = sum(a.monto_clp for a in Activo.objects.filter(user=user, activo=True))
+    departamentos = Departamento.objects.filter(user=user)
+    if tipo_cambio:
+        activos_total += sum(d.valor_actual_uf * tipo_cambio.uf for d in departamentos)
+    
+    ratio_da = (total_pasivos / activos_total * 100) if activos_total > 0 else 0
+    
+    # Available productos for linking
+    productos = Producto.objects.filter(activo=True).select_related('banco')
+    
+    context = {
+        'grouped': grouped,
+        'total_pasivos': total_pasivos,
+        'pasivos_count': pasivos_all.count(),
+        'ratio_da': ratio_da,
+        'tipo_cambio': tipo_cambio,
+        'productos': productos,
+    }
+    
+    return render(request, 'pasivos.html', context)
 
 
 @login_required
@@ -256,25 +407,64 @@ def departamentos(request):
     except TipoCambio.DoesNotExist:
         valor_uf = Decimal(0)
     
-    departamentos = Departamento.objects.filter(user=user).prefetch_related(
+    departamentos_qs = Departamento.objects.filter(user=user).prefetch_related(
         'arrendatario', 'credito_hipotecario'
     )
     
     total_arriendos = sum(
         d.arrendatario.monto_arriendo_clp 
-        for d in departamentos if hasattr(d, 'arrendatario')
+        for d in departamentos_qs if hasattr(d, 'arrendatario')
     )
-    promedio_arriendo = total_arriendos / departamentos.count() if departamentos.count() > 0 else 0
+    promedio_arriendo = total_arriendos / departamentos_qs.count() if departamentos_qs.count() > 0 else 0
     
     total_valor_actual = sum(
         d.valor_actual_uf * valor_uf 
-        for d in departamentos
+        for d in departamentos_qs
     )
     
     bancos = Banco.objects.all()
+    
+    # Calculate ROI metrics for each departamento
+    deptos_con_roi = []
+    for d in departamentos_qs:
+        info = {
+            'depto': d,
+            'valor_clp': d.valor_actual_uf * valor_uf,
+        }
+        
+        if hasattr(d, 'arrendatario'):
+            renta_esperada = d.arrendatario.monto_arriendo_clp
+            # Check if there's a category for this depto in RegistroMensual
+            cat_nombre = f"Arriendo {d.codigo}"
+            ingreso_real = RegistroMensual.objects.filter(
+                user=user, categoria__nombre=cat_nombre
+            ).aggregate(avg=Avg('monto'))['avg'] or Decimal(0)
+            
+            info['renta_esperada'] = renta_esperada
+            info['ingreso_real'] = ingreso_real
+            info['costo_admin'] = renta_esperada - ingreso_real if ingreso_real > 0 else Decimal(0)
+            info['pct_admin'] = (info['costo_admin'] / renta_esperada * 100) if renta_esperada > 0 and ingreso_real > 0 else 0
+            
+            valor_actual_clp = d.valor_actual_uf * valor_uf
+            if valor_actual_clp > 0 and ingreso_real > 0:
+                info['roi_cashflow'] = float(ingreso_real * 12 / valor_actual_clp * 100)
+            else:
+                info['roi_cashflow'] = 0
+            
+            # ROI Amortization
+            if hasattr(d, 'credito_hipotecario'):
+                amort_mensual = d.credito_hipotecario.calcular_amortizacion_mensual() * valor_uf
+                info['roi_amort'] = float(amort_mensual * 12 / valor_actual_clp * 100) if valor_actual_clp > 0 else 0
+            else:
+                info['roi_amort'] = 0
+            
+            info['roi_total'] = info['roi_cashflow'] + info['roi_amort']
+        
+        deptos_con_roi.append(info)
 
     context = {
-        'departamentos': departamentos,
+        'departamentos': departamentos_qs,
+        'deptos_con_roi': deptos_con_roi,
         'total_arriendos': total_arriendos,
         'promedio_arriendo': promedio_arriendo,
         'total_valor_actual': total_valor_actual,
@@ -283,46 +473,6 @@ def departamentos(request):
     }
     
     return render(request, 'departamentos.html', context)
-
-
-@login_required
-def inversiones(request):
-    """Investments view"""
-    user = request.user
-    
-    inversiones_qs = Inversion.objects.filter(user=user, activo=True).order_by('tipo', 'nombre')
-    total_invertido = sum(i.monto_clp for i in inversiones_qs)
-    
-    # Calculate portfolio percentages on the fly
-    inversiones = []
-    for inv in inversiones_qs:
-        inv.porcentaje_cartera = (inv.monto_clp / total_invertido * 100) if total_invertido > 0 else 0
-        inversiones.append(inv)
-        
-    # Get portfolio history (sum of all active investments historical records)
-    from django.db.models.functions import TruncMonth
-    from django.db.models import Sum
-    from inversiones.models import HistorialInversion
-    
-    historico_qs = HistorialInversion.objects.filter(
-        inversion__user=user,
-        inversion__activo=True,
-        fecha__gte=date.today() - timedelta(days=365)
-    ).annotate(month=TruncMonth('fecha')).values('month').annotate(total=Sum('monto_clp')).order_by('month')
-    
-    historico = {
-        'labels': [h['month'].strftime('%b %Y') for h in historico_qs],
-        'values': [float(h['total']) for h in historico_qs]
-    }
-    
-    context = {
-        'inversiones': inversiones,
-        'total_invertido': total_invertido,
-        'historico': historico if historico['labels'] else None,
-        'diversificacion_pct': (len(inversiones) / 10.0 * 100) if len(inversiones) < 10 else 100, # Simple index
-    }
-    
-    return render(request, 'inversiones.html', context)
 
 
 @login_required
@@ -344,40 +494,157 @@ def configuracion(request):
     
     return render(request, 'configuracion.html', context)
 
+
+# ===================== ACTIVOS CRUD =====================
+
 @require_http_methods(["POST"])
 @login_required
 def crear_activo(request):
-    monto_clp = request.POST.get('monto_clp')
-    if not monto_clp: monto_clp = 0
-    monto_usd = request.POST.get('monto_usd')
-    if not monto_usd: monto_usd = 0
+    monto_clp = request.POST.get('monto_clp') or 0
+    monto_usd = request.POST.get('monto_usd') or 0
     
     Activo.objects.create(
         user=request.user,
         nombre=request.POST.get('nombre', 'Nuevo Activo'),
         tipo=request.POST.get('tipo', 'OTRO'),
-        tipo_liquidez=request.POST.get('tipo_liquidez', 'LIQUIDO'),
+        horizonte_temporal=request.POST.get('horizonte_temporal', 'EFECTIVO'),
+        es_liquido=request.POST.get('es_liquido') == 'on',
         monto_clp=monto_clp,
-        monto_usd=monto_usd
+        monto_usd=monto_usd,
+        notas=request.POST.get('notas', ''),
     )
-    return redirect('patrimonio')
+    next_url = request.POST.get('next', 'activos')
+    return redirect(next_url)
+
+
+@require_http_methods(["POST"])
+@login_required
+def editar_activo(request, pk):
+    activo = Activo.objects.get(pk=pk, user=request.user)
+    activo.nombre = request.POST.get('nombre', activo.nombre)
+    activo.tipo = request.POST.get('tipo', activo.tipo)
+    activo.horizonte_temporal = request.POST.get('horizonte_temporal', activo.horizonte_temporal)
+    activo.es_liquido = request.POST.get('es_liquido') == 'on'
+    activo.monto_clp = request.POST.get('monto_clp') or 0
+    activo.monto_usd = request.POST.get('monto_usd') or 0
+    activo.notas = request.POST.get('notas', activo.notas)
+    activo.save()
+    next_url = request.POST.get('next', 'activos')
+    return redirect(next_url)
+
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_activo(request, pk):
+    activo = Activo.objects.get(pk=pk, user=request.user)
+    activo.delete()
+    next_url = request.POST.get('next', 'activos')
+    return redirect(next_url)
+
+
+# ===================== PASIVOS CRUD =====================
 
 @require_http_methods(["POST"])
 @login_required
 def crear_pasivo(request):
-    monto_clp = request.POST.get('monto_clp')
-    if not monto_clp: monto_clp = 0
-    monto_usd = request.POST.get('monto_usd')
-    if not monto_usd: monto_usd = 0
+    monto_clp = request.POST.get('monto_clp') or 0
+    monto_usd = request.POST.get('monto_usd') or 0
+    
+    producto_id = request.POST.get('producto_id')
+    producto = Producto.objects.get(id=producto_id) if producto_id else None
     
     Pasivo.objects.create(
         user=request.user,
         nombre=request.POST.get('nombre', 'Nueva Deuda'),
         tipo=request.POST.get('tipo', 'OTRO'),
         monto_clp=monto_clp,
-        monto_usd=monto_usd
+        monto_usd=monto_usd,
+        producto=producto,
+        notas=request.POST.get('notas', ''),
     )
-    return redirect('patrimonio')
+    next_url = request.POST.get('next', 'pasivos')
+    return redirect(next_url)
+
+
+@require_http_methods(["POST"])
+@login_required
+def editar_pasivo(request, pk):
+    pasivo = Pasivo.objects.get(pk=pk, user=request.user)
+    pasivo.nombre = request.POST.get('nombre', pasivo.nombre)
+    pasivo.tipo = request.POST.get('tipo', pasivo.tipo)
+    pasivo.monto_clp = request.POST.get('monto_clp') or 0
+    pasivo.monto_usd = request.POST.get('monto_usd') or 0
+    pasivo.notas = request.POST.get('notas', pasivo.notas)
+    pasivo.save()
+    next_url = request.POST.get('next', 'pasivos')
+    return redirect(next_url)
+
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_pasivo(request, pk):
+    pasivo = Pasivo.objects.get(pk=pk, user=request.user)
+    # Don't delete if linked to a Producto (Entidad Financiera)
+    if pasivo.producto:
+        return redirect('pasivos')
+    pasivo.delete()
+    next_url = request.POST.get('next', 'pasivos')
+    return redirect(next_url)
+
+
+# ===================== DEPARTAMENTOS CRUD =====================
+
+@require_http_methods(["POST"])
+@login_required
+def crear_departamento(request):
+    depto = Departamento(user=request.user)
+    depto.codigo = request.POST.get('codigo')
+    depto.piso = request.POST.get('piso')
+    depto.metros_cuadrados = request.POST.get('metros_cuadrados')
+    depto.valor_compra_uf = request.POST.get('valor_compra_uf')
+    depto.valor_actual_uf = request.POST.get('valor_actual_uf')
+    depto.save()
+    
+    # Auto-create INGRESO category for Carga Masiva
+    CategoriaIngreso.objects.get_or_create(
+        user=request.user,
+        nombre=f"Arriendo {depto.codigo}",
+        tipo='INGRESO',
+        defaults={
+            'mostrar_en_carga_masiva': True,
+            'moneda_defecto': 'CLP',
+            'contabilizar': True,
+            'activo': True,
+        }
+    )
+    
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def editar_departamento(request, pk):
+    depto = Departamento.objects.get(pk=pk, user=request.user)
+    depto.codigo = request.POST.get('codigo')
+    depto.piso = request.POST.get('piso')
+    depto.metros_cuadrados = request.POST.get('metros_cuadrados')
+    depto.valor_compra_uf = request.POST.get('valor_compra_uf')
+    depto.valor_actual_uf = request.POST.get('valor_actual_uf')
+    depto.save()
+    return redirect('departamentos')
+
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_departamento(request, pk):
+    depto = Departamento.objects.get(pk=pk, user=request.user)
+    # Also remove associated INGRESO category
+    CategoriaIngreso.objects.filter(
+        user=request.user, nombre=f"Arriendo {depto.codigo}", tipo='INGRESO'
+    ).delete()
+    depto.delete()
+    return redirect('departamentos')
+
 
 @login_required
 def estacionamientos(request):
@@ -407,86 +674,8 @@ def estacionamientos(request):
     }
     return render(request, 'estacionamientos.html', context)
 
-@require_http_methods(["POST"])
-@login_required
-def editar_activo(request, pk):
-    activo = Activo.objects.get(pk=pk, user=request.user)
-    monto_clp = request.POST.get('monto_clp')
-    if not monto_clp: monto_clp = 0
-    monto_usd = request.POST.get('monto_usd')
-    if not monto_usd: monto_usd = 0
-    
-    activo.nombre = request.POST.get('nombre')
-    activo.tipo = request.POST.get('tipo')
-    activo.tipo_liquidez = request.POST.get('tipo_liquidez')
-    activo.monto_clp = monto_clp
-    activo.monto_usd = monto_usd
-    activo.save()
-    return redirect('patrimonio')
 
-@require_http_methods(["POST"])
-@login_required
-def borrar_activo(request, pk):
-    activo = Activo.objects.get(pk=pk, user=request.user)
-    activo.delete()
-    return redirect('patrimonio')
-
-@require_http_methods(["POST"])
-@login_required
-def editar_pasivo(request, pk):
-    pasivo = Pasivo.objects.get(pk=pk, user=request.user)
-    monto_clp = request.POST.get('monto_clp')
-    if not monto_clp: monto_clp = 0
-    monto_usd = request.POST.get('monto_usd')
-    if not monto_usd: monto_usd = 0
-    
-    pasivo.nombre = request.POST.get('nombre')
-    pasivo.tipo = request.POST.get('tipo')
-    pasivo.monto_clp = monto_clp
-    pasivo.monto_usd = monto_usd
-    pasivo.save()
-    return redirect('patrimonio')
-
-@require_http_methods(["POST"])
-@login_required
-def borrar_pasivo(request, pk):
-    pasivo = Pasivo.objects.get(pk=pk, user=request.user)
-    pasivo.delete()
-    return redirect('patrimonio')
-
-@require_http_methods(["POST"])
-@login_required
-def crear_departamento(request):
-    depto = Departamento(user=request.user)
-    depto.codigo = request.POST.get('codigo')
-    depto.piso = request.POST.get('piso')
-    depto.metros_cuadrados = request.POST.get('metros_cuadrados')
-    depto.valor_compra_uf = request.POST.get('valor_compra_uf')
-    depto.valor_actual_uf = request.POST.get('valor_actual_uf')
-    
-    depto.save()
-    return redirect('departamentos')
-
-@require_http_methods(["POST"])
-@login_required
-def editar_departamento(request, pk):
-    depto = Departamento.objects.get(pk=pk, user=request.user)
-    depto.codigo = request.POST.get('codigo')
-    depto.piso = request.POST.get('piso')
-    depto.metros_cuadrados = request.POST.get('metros_cuadrados')
-    depto.valor_compra_uf = request.POST.get('valor_compra_uf')
-    depto.valor_actual_uf = request.POST.get('valor_actual_uf')
-    
-    depto.save()
-    return redirect('departamentos')
-
-@require_http_methods(["POST"])
-@login_required
-def borrar_departamento(request, pk):
-    depto = Departamento.objects.get(pk=pk, user=request.user)
-    depto.delete()
-    return redirect('departamentos')
-
+# ===================== ARRENDATARIOS CRUD =====================
 
 @require_http_methods(["POST"])
 @login_required
@@ -527,6 +716,8 @@ def borrar_arrendatario(request, pk):
     arrendatario.delete()
     return redirect('departamentos')
 
+
+# ===================== CREDITO HIPOTECARIO CRUD =====================
 
 @require_http_methods(["POST"])
 @login_required
@@ -599,24 +790,8 @@ def borrar_credito(request, pk):
     
     return redirect('departamentos')
 
-@require_http_methods(["POST"])
-@login_required
-def editar_inversion(request, pk):
-    inv = Inversion.objects.get(pk=pk, user=request.user)
-    inv.nombre = request.POST.get('nombre')
-    inv.tipo = request.POST.get('tipo')
-    inv.monto_clp = request.POST.get('monto_clp', 0)
-    inv.monto_usd = request.POST.get('monto_usd', 0)
-    inv.activo = request.POST.get('activo') == 'on'
-    inv.save()
-    return redirect('inversiones')
 
-@require_http_methods(["POST"])
-@login_required
-def borrar_inversion(request, pk):
-    inv = Inversion.objects.get(pk=pk, user=request.user)
-    inv.delete()
-    return redirect('inversiones')
+# ===================== GASTOS CRUD =====================
 
 @login_required
 def bulk_gastos(request):
@@ -626,7 +801,6 @@ def bulk_gastos(request):
         year = int(request.POST.get('year'))
         month = int(request.POST.get('month'))
         
-        # Categories to process
         for key, value in request.POST.items():
             if key.startswith('cat_'):
                 cat_id = key.split('_')[1]
@@ -650,7 +824,6 @@ def bulk_gastos(request):
         
         return redirect(f'/dashboard/gastos/?year={year}&month={month}')
 
-    # Default to last month
     today = date.today()
     last_month_date = today.replace(day=1) - timedelta(days=1)
     
@@ -658,7 +831,6 @@ def bulk_gastos(request):
         user=user, mostrar_en_carga_masiva=True
     ).select_related('banco_defecto')
     
-    # Group categories for the UI
     grouped_categorias = {}
     for cat in categorias:
         tipo = cat.get_tipo_display()
@@ -666,7 +838,6 @@ def bulk_gastos(request):
             grouped_categorias[tipo] = []
         grouped_categorias[tipo].append(cat)
         
-    # Sort with "Ingreso" first
     tipo_order = {'Ingreso': 0, 'Gasto': 1, 'Gasto Fijo': 2, 'Tarjeta de Crédito': 3}
     grouped_sorted = dict(sorted(grouped_categorias.items(), key=lambda x: tipo_order.get(x[0], 99)))
     
@@ -677,6 +848,7 @@ def bulk_gastos(request):
         'grouped_categorias': grouped_sorted,
     }
     return render(request, 'bulk_gastos_modal.html', context)
+
 
 @login_required
 def get_category_data(request, cat_pk):
@@ -695,10 +867,12 @@ def get_category_data(request, cat_pk):
     }
     return JsonResponse(data)
 
+
+# ===================== CATEGORIAS CRUD =====================
+
 @require_http_methods(["POST"])
 @login_required
 def crear_categoria(request):
-    """Simple view to create a category"""
     nombre = request.POST.get('nombre')
     tipo = request.POST.get('tipo', 'GASTO')
     contabilizar = request.POST.get('contabilizar') == 'on'
@@ -721,9 +895,9 @@ def crear_categoria(request):
             mostrar_en_carga_masiva=mostrar_en_carga_masiva,
             activo=True
         )
-    # Redirect back to previous page
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
+
 
 @require_http_methods(["POST"])
 @login_required
@@ -746,17 +920,20 @@ def editar_categoria(request, pk):
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
 
+
 @require_http_methods(["POST"])
 @login_required
 def borrar_categoria(request, pk):
     cat = CategoriaIngreso.objects.get(pk=pk, user=request.user)
     if cat.producto_asociado:
-        # Avoid manually deleting synced categories
         pass
     else:
         cat.delete()
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
+
+
+# ===================== BANCOS CRUD =====================
 
 @require_http_methods(["POST"])
 @login_required
@@ -773,6 +950,7 @@ def crear_banco(request):
         )
     return redirect('configuracion')
 
+
 @require_http_methods(["POST"])
 @login_required
 def editar_banco(request, pk):
@@ -783,6 +961,17 @@ def editar_banco(request, pk):
     banco.save()
     return redirect('configuracion')
 
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_banco(request, pk):
+    banco = Banco.objects.get(pk=pk)
+    banco.delete()
+    return redirect('configuracion')
+
+
+# ===================== CALENDARIO =====================
+
 @login_required
 def calendario(request):
     from gastos.models import CategoriaIngreso, GastoProgramado
@@ -790,7 +979,6 @@ def calendario(request):
     import calendar
     from datetime import date
     
-    # Get current or requested year/month
     try:
         year = int(request.GET.get('year', date.today().year))
         month = int(request.GET.get('month', date.today().month))
@@ -798,25 +986,19 @@ def calendario(request):
         year = date.today().year
         month = date.today().month
 
-    # Grid logic
-    cal = calendar.Calendar(firstweekday=6) # Sunday start
+    cal = calendar.Calendar(firstweekday=6)
     month_days = cal.monthdayscalendar(year, month)
     month_name = calendar.month_name[month].capitalize()
 
-    # Data for the calendar
     categorias = CategoriaIngreso.objects.filter(user=request.user, dia_cobro__isnull=False)
-    departamentos = request.user.departamentos.filter(fecha_ultima_cuota__gte=date(year, month, 1))
+    departamentos_cal = request.user.departamentos.filter(fecha_ultima_cuota__gte=date(year, month, 1))
     
     gastos_programados = GastoProgramado.objects.filter(user=request.user, activo=True)
     
-    # Find which GastosProgramados fall in this month's grid
-    # We do this logic in Python for simplicity, though could be done in DB depending on DB.
-    # To show them on the right day in the grid, we match `dia_cobro`.
     grid_gastos = []
     current_date = date(year, month, 1)
     
     for g in gastos_programados:
-        # Calculate month difference
         if g.fecha_inicio <= current_date:
             month_diff = (year - g.fecha_inicio.year) * 12 + (month - g.fecha_inicio.month)
             show = False
@@ -827,11 +1009,9 @@ def calendario(request):
             elif g.frecuencia == 'ANUAL' and month_diff % 12 == 0: show = True
             
             if show:
-                # Add a property dynamically to render it easily
                 g.dia_cobro = g.fecha_inicio.day
                 grid_gastos.append(g)
 
-    # Navigation
     prev_month = month - 1 if month > 1 else 12
     prev_year = year if month > 1 else year - 1
     next_month = month + 1 if month < 12 else 1
@@ -843,7 +1023,7 @@ def calendario(request):
         'month_name': month_name,
         'month_days': month_days,
         'categorias': categorias,
-        'departamentos': departamentos,
+        'departamentos': departamentos_cal,
         'gastos_programados': gastos_programados,
         'grid_gastos': grid_gastos,
         'nav': {
@@ -852,6 +1032,7 @@ def calendario(request):
         }
     }
     return render(request, 'calendario.html', context)
+
 
 @require_http_methods(["POST"])
 @login_required
@@ -868,6 +1049,7 @@ def crear_gasto_programado(request):
     )
     return redirect('calendario')
 
+
 @require_http_methods(["POST"])
 @login_required
 def editar_gasto_programado(request, pk):
@@ -883,6 +1065,7 @@ def editar_gasto_programado(request, pk):
     gasto.save()
     return redirect('calendario')
 
+
 @require_http_methods(["POST"])
 @login_required
 def borrar_gasto_programado(request, pk):
@@ -892,12 +1075,7 @@ def borrar_gasto_programado(request, pk):
     return redirect('calendario')
 
 
-@require_http_methods(["POST"])
-@login_required
-def borrar_banco(request, pk):
-    banco = Banco.objects.get(pk=pk)
-    banco.delete()
-    return redirect('configuracion')
+# ===================== PRODUCTOS CRUD =====================
 
 @require_http_methods(["POST"])
 @login_required
@@ -920,7 +1098,6 @@ def crear_producto(request):
         activo=True
     )
     
-    # Auto-generar categoría para Carga Masiva (evita crearla a mano)
     from gastos.models import CategoriaIngreso
     banco = Banco.objects.get(id=banco_id)
     if tipo == 'CREDITO_CONSUMO':
@@ -932,7 +1109,6 @@ def crear_producto(request):
     else:
         cat_tipo = 'COBRO_BANCO'
     
-    # CLP category
     CategoriaIngreso.objects.create(
         user=request.user,
         nombre=f"{banco.nombre} - {nombre} (CLP)" if tiene_cupo_usd else f"{banco.nombre} - {nombre}",
@@ -947,7 +1123,6 @@ def crear_producto(request):
     )
     
     if tiene_cupo_usd:
-        # USD category
         CategoriaIngreso.objects.create(
             user=request.user,
             nombre=f"{banco.nombre} - {nombre} (USD)",
@@ -962,6 +1137,7 @@ def crear_producto(request):
         )
     return redirect('configuracion')
 
+
 @require_http_methods(["POST"])
 @login_required
 def editar_producto(request, pk):
@@ -970,7 +1146,6 @@ def editar_producto(request, pk):
     prod.nombre = request.POST.get('nombre', prod.nombre)
     prod.tipo = request.POST.get('tipo', prod.tipo)
     
-    old_usd = prod.tiene_cupo_usd
     prod.tiene_cupo_usd = request.POST.get('tiene_cupo_usd') == 'on'
     prod.contabilizar = request.POST.get('contabilizar') == 'on'
     
@@ -979,7 +1154,6 @@ def editar_producto(request, pk):
     
     prod.save()
     
-    # Sync category if it exists
     from gastos.models import CategoriaIngreso
     banco = Banco.objects.get(id=prod.banco_id)
     
@@ -995,7 +1169,6 @@ def editar_producto(request, pk):
     categorias = prod.categorias_vinculadas.all()
     if categorias.exists():
         if not prod.tiene_cupo_usd:
-            # Drop USD if it exists, rename remaining to normal
             for cat in categorias:
                 if cat.moneda_defecto == 'USD':
                     cat.delete()
@@ -1007,7 +1180,6 @@ def editar_producto(request, pk):
                     cat.dia_cobro = prod.dia_cobro
                     cat.save(update_fields=['nombre', 'tipo', 'banco_defecto', 'contabilizar', 'dia_cobro'])
         else:
-            # Update or create both
             clp_cat = categorias.filter(moneda_defecto='CLP').first()
             if clp_cat:
                 clp_cat.nombre = f"{banco.nombre} - {prod.nombre} (CLP)"
@@ -1040,6 +1212,7 @@ def editar_producto(request, pk):
         
     return redirect('configuracion')
 
+
 @require_http_methods(["POST"])
 @login_required
 def borrar_producto(request, pk):
@@ -1047,5 +1220,3 @@ def borrar_producto(request, pk):
     prod.categorias_vinculadas.all().delete()
     prod.delete()
     return redirect('configuracion')
-
-

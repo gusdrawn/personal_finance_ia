@@ -7,9 +7,8 @@ from decimal import Decimal
 from core.models import UserProfile, Periodo, AuditoriaChange
 from configuracion.models import Banco, Producto, TipoCambio, ConfiguracionGeneral
 from gastos.models import CategoriaIngreso, RegistroMensual, GastoProgramado
-from patrimonio.models import Activo, Pasivo, SnapshotPatrimonio, MiniSesion, LineaMiniSesion
+from patrimonio.models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio, MiniSesion, LineaMiniSesion
 from departamentos.models import Departamento, Arrendatario, CreditoHipotecario, Estacionamiento
-from inversiones.models import Inversion, HistorialInversion
 
 
 class Command(BaseCommand):
@@ -232,7 +231,8 @@ class Command(BaseCommand):
                 nombre=nombre,
                 defaults={
                     'tipo': tipo,
-                    'tipo_liquidez': liquidez,
+                    'es_liquido': liquidez == 'LIQUIDO',
+                    'horizonte_temporal': 'EFECTIVO' if tipo == 'EFECTIVO' else 'LARGO_PLAZO',
                     'monto_clp': monto_clp,
                     'monto_usd': monto_usd
                 }
@@ -339,7 +339,7 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(f'✓ Created patrimony snapshot'))
 
-        # Create investments
+        # Create investments (now as Activo)
         investments_data = [
             ('Crypto General', 'CRIPTO', Decimal('500000'), Decimal('750')),
             ('SoyFocus', 'FONDO_MUTUO', Decimal('200000'), Decimal('0')),
@@ -347,22 +347,23 @@ class Command(BaseCommand):
         ]
         
         for nombre, tipo, monto_clp, monto_usd in investments_data:
-            inv, _ = Inversion.objects.get_or_create(
+            act, _ = Activo.objects.get_or_create(
                 user=user,
                 nombre=nombre,
                 defaults={
                     'tipo': tipo,
+                    'horizonte_temporal': 'MEDIANO_PLAZO',
+                    'es_liquido': True,
                     'monto_clp': monto_clp,
                     'monto_usd': monto_usd,
-                    'porcentaje_cartera': Decimal('0'),
                     'activo': True
                 }
             )
             
             # Add historical records for last 5 days
             for days_ago in range(5):
-                HistorialInversion.objects.get_or_create(
-                    inversion=inv,
+                HistorialActivo.objects.get_or_create(
+                    activo=act,
                     fecha=today - timedelta(days=days_ago),
                     defaults={
                         'monto_clp': monto_clp + (Decimal(days_ago) * Decimal('10000')),

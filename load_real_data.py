@@ -10,7 +10,7 @@ django.setup()
 from django.contrib.auth.models import User
 from configuracion.models import Banco, Producto, TipoCambio
 from gastos.models import CategoriaIngreso, RegistroMensual
-from patrimonio.models import Activo, Pasivo, SnapshotPatrimonio
+from patrimonio.models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio
 from departamentos.models import Departamento, CreditoHipotecario
 
 def run():
@@ -78,34 +78,36 @@ def run():
     # 4. Activos Actuales (Snapshot Image 2)
     print("Cargando Activos...")
     activos_data = [
+        # (nombre, tipo, es_liquido, horizonte, monto_clp, monto_usd, *depto)
         # Efectivo
-        ('Cash Panama', 'EFECTIVO', 'LIQUIDO', 265744, 290),
-        ('Efectivo', 'EFECTIVO', 'LIQUIDO', 20000, 22),
-        ('Cash BoA', 'EFECTIVO', 'LIQUIDO', 460929, 503),
-        # Largo Plazo
-        ('Crypto General', 'INVERSION', 'LIQUIDO', 4394863, 4796),
-        ('SoyFocus', 'INVERSION', 'LIQUIDO', 129447, 141),
-        ('Fintual', 'INVERSION', 'LIQUIDO', 4338849, 4735),
-        ('DVA', 'INVERSION', 'LIQUIDO', 8637522, 9426),
-        ('Buda', 'INVERSION', 'LIQUIDO', 534229, 583),
+        ('Cash Panama', 'EFECTIVO', True, 'EFECTIVO', 265744, 290),
+        ('Efectivo', 'EFECTIVO', True, 'EFECTIVO', 20000, 22),
+        ('Cash BoA', 'EFECTIVO', True, 'EFECTIVO', 460929, 503),
+        # Inversiones
+        ('Crypto General', 'CRIPTO', True, 'MEDIANO_PLAZO', 4394863, 4796),
+        ('SoyFocus', 'FONDO_MUTUO', True, 'MEDIANO_PLAZO', 129447, 141),
+        ('Fintual', 'FONDO_MUTUO', True, 'MEDIANO_PLAZO', 4338849, 4735),
+        ('DVA', 'BROKERAGE', True, 'LARGO_PLAZO', 8637522, 9426),
+        ('Buda', 'CRIPTO', True, 'CORTO_PLAZO', 534229, 583),
         # Deptos (Vinculados)
-        ('E107 - Activo', 'DEPARTAMENTO', 'NO_LIQUIDO', 103057249, 112464, deptos['E107']),
-        ('E205 - Activo', 'DEPARTAMENTO', 'NO_LIQUIDO', 73220228, 79903, deptos['E205']),
-        ('E507 - Activo', 'DEPARTAMENTO', 'NO_LIQUIDO', 103057249, 112464, deptos['E507']),
-        ('F107 - Activo', 'DEPARTAMENTO', 'NO_LIQUIDO', 103057249, 112464, deptos['F107']),
-        ('F205 - Activo', 'DEPARTAMENTO', 'NO_LIQUIDO', 73220228, 79903, deptos['F205']),
-        ('F405 - Activo', 'DEPARTAMENTO', 'NO_LIQUIDO', 72511930, 79130, deptos['F405']),
+        ('E107 - Activo', 'DEPARTAMENTO', False, 'LARGO_PLAZO', 103057249, 112464, deptos['E107']),
+        ('E205 - Activo', 'DEPARTAMENTO', False, 'LARGO_PLAZO', 73220228, 79903, deptos['E205']),
+        ('E507 - Activo', 'DEPARTAMENTO', False, 'LARGO_PLAZO', 103057249, 112464, deptos['E507']),
+        ('F107 - Activo', 'DEPARTAMENTO', False, 'LARGO_PLAZO', 103057249, 112464, deptos['F107']),
+        ('F205 - Activo', 'DEPARTAMENTO', False, 'LARGO_PLAZO', 73220228, 79903, deptos['F205']),
+        ('F405 - Activo', 'DEPARTAMENTO', False, 'LARGO_PLAZO', 72511930, 79130, deptos['F405']),
         # Ahorros
-        ('AFP Habitat', 'AHORRO', 'NO_LIQUIDO', 26090844, 28472),
-        ('AFC', 'AHORRO', 'NO_LIQUIDO', 8016554, 8748),
+        ('AFP Habitat', 'AHORRO', False, 'LARGO_PLAZO', 26090844, 28472),
+        ('AFC', 'AHORRO', False, 'LARGO_PLAZO', 8016554, 8748),
     ]
     for act in activos_data:
-        m_clp, m_usd = Decimal(act[3]), Decimal(act[4])
-        depto = act[5] if len(act) > 5 else None
+        m_clp, m_usd = Decimal(act[4]), Decimal(act[5])
+        depto = act[6] if len(act) > 6 else None
         Activo.objects.update_or_create(
             user=user, nombre=act[0],
             defaults={
-                'tipo': act[1], 'tipo_liquidez': act[2], 
+                'tipo': act[1], 'es_liquido': act[2],
+                'horizonte_temporal': act[3],
                 'monto_clp': m_clp, 'monto_usd': m_usd,
                 'departamento': depto
             }

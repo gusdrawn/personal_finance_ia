@@ -1,0 +1,478 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Activos - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Gestión de Activos{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+    <div class="glass p-6 rounded-2xl border-t-4 border-amber-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Total AUM</span>
+            <i class="fas fa-sack-dollar text-amber-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">
+            ${{ total_invertido|floatformat:0|intcomma|default:"0" }}
+        </p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Assets Under Management</p>
+    </div>
+
+    <div class="glass p-6 rounded-2xl border-t-4 border-sky-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Activos</span>
+            <i class="fas fa-layer-group text-sky-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">{{ activos_count }}</p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Activos Registrados</p>
+    </div>
+
+    <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Liquidez</span>
+            <i class="fas fa-water text-emerald-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">
+            {{ liquidez_pct|floatformat:1|default:"0" }}%
+        </p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">${{ total_liquidos|floatformat:0|intcomma }} líquidos</p>
+    </div>
+</div>
+
+<!-- Action Bar -->
+<div class="flex items-center justify-between mb-6">
+    <h3 class="text-lg font-bold text-white flex items-center">
+        <i class="fas fa-coins mr-3 text-emerald-400"></i>
+        Mis Activos
+    </h3>
+    <button onclick="openActivoModal()" class="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 hover:scale-105">
+        <i class="fas fa-plus mr-2"></i>Nuevo Activo
+    </button>
+</div>
+
+<!-- Grouped by Horizonte Temporal -->
+{% for h_key, group in grouped.items %}
+{% if group.items or group.depto_items %}
+<div class="glass p-6 rounded-2xl mb-6">
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center space-x-3">
+            <span class="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest
+                {% if h_key == 'EFECTIVO' %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20
+                {% elif h_key == 'CORTO_PLAZO' %}bg-sky-500/10 text-sky-400 border border-sky-500/20
+                {% elif h_key == 'MEDIANO_PLAZO' %}bg-amber-500/10 text-amber-400 border border-amber-500/20
+                {% else %}bg-indigo-500/10 text-indigo-400 border border-indigo-500/20
+                {% endif %}">
+                {% if h_key == 'EFECTIVO' %}<i class="fas fa-money-bill-wave mr-2"></i>
+                {% elif h_key == 'CORTO_PLAZO' %}<i class="fas fa-clock mr-2"></i>
+                {% elif h_key == 'MEDIANO_PLAZO' %}<i class="fas fa-hourglass-half mr-2"></i>
+                {% else %}<i class="fas fa-landmark mr-2"></i>
+                {% endif %}
+                {{ group.label }}
+            </span>
+        </div>
+        <span class="text-sm font-bold text-slate-400">${{ group.total|floatformat:0|intcomma }}</span>
+    </div>
+    
+    <div class="space-y-2">
+        {% for activo in group.items %}
+        <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-4">
+                    <div class="w-10 h-10 rounded-lg flex items-center justify-center
+                        {% if activo.es_liquido %}bg-emerald-500/10 text-emerald-400{% else %}bg-slate-700/50 text-slate-400{% endif %}">
+                        {% if activo.tipo == 'EFECTIVO' %}<i class="fas fa-money-bill"></i>
+                        {% elif activo.tipo == 'CRIPTO' %}<i class="fab fa-bitcoin"></i>
+                        {% elif activo.tipo == 'FONDO_MUTUO' %}<i class="fas fa-chart-area"></i>
+                        {% elif activo.tipo == 'ACCIONES' %}<i class="fas fa-chart-line"></i>
+                        {% elif activo.tipo == 'BROKERAGE' %}<i class="fas fa-building-columns"></i>
+                        {% elif activo.tipo == 'PLAZO_FIJO' %}<i class="fas fa-lock"></i>
+                        {% elif activo.tipo == 'AHORRO' %}<i class="fas fa-piggy-bank"></i>
+                        {% elif activo.tipo == 'PRESTAMO_DADO' %}<i class="fas fa-hand-holding-dollar"></i>
+                        {% else %}<i class="fas fa-coins"></i>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ activo.nombre }}</p>
+                        <div class="flex items-center space-x-2 mt-0.5">
+                            <span class="text-[10px] uppercase font-bold text-slate-500">{{ activo.get_tipo_display }}</span>
+                            {% if activo.es_liquido %}
+                            <span class="px-1.5 py-0.5 text-[9px] font-black rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Líquido</span>
+                            {% else %}
+                            <span class="px-1.5 py-0.5 text-[9px] font-black rounded bg-slate-700/50 text-slate-400 border border-slate-600">No Líquido</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-right">
+                        <p class="font-bold text-white tracking-tight">${{ activo.monto_clp|floatformat:0|intcomma }}</p>
+                        {% if activo.monto_usd > 0 %}
+                        <p class="text-[10px] text-slate-500 font-mono">US${{ activo.monto_usd|floatformat:2|intcomma }}</p>
+                        {% endif %}
+                    </div>
+                    <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onclick="openEditActivoModal({{ activo.id }}, '{{ activo.nombre|escapejs }}', '{{ activo.tipo }}', '{{ activo.horizonte_temporal }}', {{ activo.es_liquido|yesno:'true,false' }}, {{ activo.monto_clp }}, {{ activo.monto_usd }}, '{{ activo.notas|escapejs }}')" class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center">
+                            <i class="fas fa-pen text-[10px]"></i>
+                        </button>
+                        <form action="{% url 'borrar_activo' activo.id %}" method="POST" onsubmit="return confirm('¿Eliminar este activo?')" class="inline">
+                            {% csrf_token %}
+                            <input type="hidden" name="next" value="activos">
+                            <button type="submit" class="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors flex items-center justify-center">
+                                <i class="fas fa-trash text-[10px]"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        
+        {% for depto in group.depto_items %}
+        <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 border-l-4 border-l-orange-500/40 opacity-80">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-4">
+                    <div class="w-10 h-10 rounded-lg bg-orange-500/10 text-orange-400 flex items-center justify-center">
+                        <i class="fas fa-building"></i>
+                    </div>
+                    <div>
+                        <p class="font-bold text-slate-200">{{ depto.nombre }}</p>
+                        <div class="flex items-center space-x-2 mt-0.5">
+                            <span class="text-[10px] uppercase font-bold text-slate-500">Inmobiliario</span>
+                            <span class="px-1.5 py-0.5 text-[9px] font-black rounded bg-slate-700/50 text-slate-400 border border-slate-600">No Líquido</span>
+                            <span class="px-1.5 py-0.5 text-[9px] font-black rounded bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                                <i class="fas fa-link mr-1"></i>Vinculado
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <p class="font-bold text-white tracking-tight">${{ depto.monto_clp|floatformat:0|intcomma }}</p>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+
+<!-- Charts -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+    <!-- Asset Allocation -->
+    <div class="glass p-8 rounded-2xl">
+        <h3 class="text-xl font-bold text-white flex items-center mb-8">
+            <i class="fas fa-chart-pie mr-4 text-sky-400"></i>
+            Asset Allocation
+        </h3>
+        <div class="relative aspect-square max-h-[400px] mx-auto">
+            <canvas id="portfolioChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Liquidez -->
+    <div class="glass p-8 rounded-2xl">
+        <h3 class="text-xl font-bold text-white flex items-center mb-8">
+            <i class="fas fa-water mr-4 text-emerald-400"></i>
+            Ratio de Liquidez
+        </h3>
+        <div class="relative aspect-square max-h-[400px] mx-auto">
+            <canvas id="liquidezChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Evolution Chart -->
+<div class="glass p-8 rounded-2xl mb-8">
+    <div class="flex items-center justify-between mb-8">
+        <h3 class="text-xl font-bold text-white flex items-center">
+            <i class="fas fa-chart-line mr-4 text-indigo-400"></i>
+            Evolución del Portafolio
+        </h3>
+        <div class="bg-indigo-500/10 px-4 py-2 rounded-xl text-xs font-bold text-indigo-400">
+            Últimos 12 Meses
+        </div>
+    </div>
+    <div class="h-[300px] w-full">
+        {% if historico %}
+        <canvas id="evolucionChart"></canvas>
+        {% else %}
+        <div class="flex flex-col items-center justify-center h-full text-slate-500">
+            <i class="fas fa-clock-rotate-left text-3xl mb-4 opacity-20"></i>
+            <p class="font-medium tracking-tight">Recopilando datos de mercado...</p>
+            <p class="text-xs mt-2 opacity-60">Los datos aparecerán cuando se tomen snapshots</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div id="modal-activo" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center backdrop-blur-sm">
+    <div class="glass p-8 rounded-2xl w-full max-w-lg border border-slate-700">
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-xl font-bold text-white" id="activo-modal-title">Nuevo Activo</h3>
+            <button onclick="closeActivoModal()" class="text-slate-400 hover:text-white transition-colors">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <form id="activo-form" action="{% url 'crear_activo' %}" method="POST" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="activos">
+            
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Nombre</label>
+                <input type="text" name="nombre" id="act-nombre" required class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors">
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Tipo</label>
+                    <select name="tipo" id="act-tipo" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors">
+                        <option value="EFECTIVO">Efectivo</option>
+                        <option value="CRIPTO">Criptomoneda</option>
+                        <option value="FONDO_MUTUO">Fondo Mutuo</option>
+                        <option value="ACCIONES">Acciones</option>
+                        <option value="BROKERAGE">Brokerage Account</option>
+                        <option value="PLAZO_FIJO">Plazo Fijo</option>
+                        <option value="PRESTAMO_DADO">Préstamo Dado</option>
+                        <option value="AHORRO">Ahorro</option>
+                        <option value="OTRO">Otro</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Horizonte</label>
+                    <select name="horizonte_temporal" id="act-horizonte" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors">
+                        <option value="EFECTIVO">Efectivo</option>
+                        <option value="CORTO_PLAZO">Corto Plazo</option>
+                        <option value="MEDIANO_PLAZO">Mediano Plazo</option>
+                        <option value="LARGO_PLAZO">Largo Plazo</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-3 p-3 rounded-xl bg-slate-800/30 border border-slate-700/30">
+                <input type="checkbox" name="es_liquido" id="act-liquido" class="w-4 h-4 rounded accent-emerald-500" checked>
+                <label for="act-liquido" class="text-sm font-medium text-slate-300 cursor-pointer">
+                    <i class="fas fa-water text-emerald-400 mr-1"></i> Es Líquido
+                    <span class="text-xs text-slate-500 ml-1">(Se puede liquidar fácilmente)</span>
+                </label>
+            </div>
+            
+            <div class="p-4 rounded-xl bg-sky-500/5 border border-sky-500/20">
+                <p class="text-[10px] font-black uppercase text-sky-400 mb-3 tracking-widest flex items-center">
+                    <i class="fas fa-calculator mr-2"></i>Montos
+                </p>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">CLP</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+                            <input type="number" name="monto_clp" id="act-clp" step="1" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-8 pr-4 py-2 text-white focus:outline-none focus:border-sky-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">USD</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">US$</span>
+                            <input type="number" name="monto_usd" id="act-usd" step="0.01" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-12 pr-4 py-2 text-white focus:outline-none focus:border-sky-500">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Notas</label>
+                <textarea name="notas" id="act-notas" rows="2" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500 transition-colors resize-none"></textarea>
+            </div>
+            
+            <button type="submit" id="activo-submit-btn" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl mt-2 transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40">
+                <i class="fas fa-save mr-2"></i>Guardar Activo
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+    // ==================== MODALS ====================
+    function openActivoModal() {
+        document.getElementById('activo-form').action = "{% url 'crear_activo' %}";
+        document.getElementById('activo-modal-title').innerText = "Nuevo Activo";
+        document.getElementById('act-nombre').value = '';
+        document.getElementById('act-tipo').value = 'EFECTIVO';
+        document.getElementById('act-horizonte').value = 'EFECTIVO';
+        document.getElementById('act-liquido').checked = true;
+        document.getElementById('act-clp').value = 0;
+        document.getElementById('act-usd').value = 0;
+        document.getElementById('act-notas').value = '';
+        document.getElementById('modal-activo').classList.remove('hidden');
+    }
+
+    function openEditActivoModal(id, nombre, tipo, horizonte, esLiquido, clp, usd, notas) {
+        document.getElementById('activo-form').action = "/dashboard/activos/editar/" + id + "/";
+        document.getElementById('activo-modal-title').innerText = "Editar Activo";
+        document.getElementById('act-nombre').value = nombre;
+        document.getElementById('act-tipo').value = tipo;
+        document.getElementById('act-horizonte').value = horizonte;
+        document.getElementById('act-liquido').checked = esLiquido;
+        document.getElementById('act-clp').value = clp;
+        document.getElementById('act-usd').value = usd;
+        document.getElementById('act-notas').value = notas || '';
+        document.getElementById('modal-activo').classList.remove('hidden');
+    }
+
+    function closeActivoModal() {
+        document.getElementById('modal-activo').classList.add('hidden');
+    }
+
+    // Close modal on backdrop click
+    document.getElementById('modal-activo').addEventListener('click', function(e) {
+        if (e.target === this) closeActivoModal();
+    });
+
+    // ==================== CHARTS ====================
+    const CHART_COLORS = [
+        '#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#6366f1',
+        '#ec4899', '#f43f5e', '#06b6d4', '#84cc16', '#fb923c',
+        '#a855f7', '#14b8a6', '#ef4444', '#0ea5e9', '#d946ef'
+    ];
+
+    // Asset Allocation
+    const portfolioCtx = document.getElementById('portfolioChart').getContext('2d');
+    const chartLabels = [{% for d in chart_data %}'{{ d.nombre }}',{% endfor %}];
+    const chartValues = [{% for d in chart_data %}{{ d.monto }},{% endfor %}];
+    
+    new Chart(portfolioCtx, {
+        type: 'doughnut',
+        data: {
+            labels: chartLabels,
+            datasets: [{
+                data: chartValues,
+                backgroundColor: CHART_COLORS.slice(0, chartLabels.length),
+                hoverOffset: 20,
+                borderWidth: 0,
+                spacing: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '72%',
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        color: '#94a3b8',
+                        padding: 12,
+                        usePointStyle: true,
+                        pointStyle: 'rectRounded',
+                        font: { family: 'Outfit', size: 11, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    titleFont: { family: 'Outfit', size: 14, weight: 'bold' },
+                    bodyFont: { family: 'Inter', size: 12 },
+                    padding: 14,
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 1,
+                    callbacks: {
+                        label: function(ctx) {
+                            return ' $' + ctx.parsed.toLocaleString('es-CL');
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Liquidez Chart
+    const liqCtx = document.getElementById('liquidezChart').getContext('2d');
+    new Chart(liqCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Líquido', 'No Líquido'],
+            datasets: [{
+                data: [{{ total_liquidos|floatformat:0|default:"0" }}, {{ total_no_liquidos|floatformat:0|default:"0" }}],
+                backgroundColor: ['#10b981', '#475569'],
+                hoverOffset: 15,
+                borderWidth: 0,
+                spacing: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '72%',
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        color: '#94a3b8',
+                        padding: 20,
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        font: { family: 'Outfit', size: 12, weight: '600' }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = ((ctx.parsed / total) * 100).toFixed(1);
+                            return ' $' + ctx.parsed.toLocaleString('es-CL') + ' (' + pct + '%)';
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Evolution Chart
+    {% if historico %}
+    const evolucionCtx = document.getElementById('evolucionChart').getContext('2d');
+    new Chart(evolucionCtx, {
+        type: 'line',
+        data: {
+            labels: [{% for label in historico.labels %}'{{ label }}',{% endfor %}],
+            datasets: [{
+                label: 'AUM Portafolio',
+                data: [{% for val in historico.values %}{{ val }},{% endfor %}],
+                borderColor: '#6366f1',
+                backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                fill: true,
+                tension: 0.4,
+                borderWidth: 3,
+                pointBackgroundColor: '#6366f1',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return ' $' + context.parsed.y.toLocaleString('es-CL');
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + (value / 1000000).toFixed(1) + 'M';
+                        }
+                    }
+                },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+    {% endif %}
+</script>
+{% endblock %}

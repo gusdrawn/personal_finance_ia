@@ -4,7 +4,7 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'finanzas_project.settings')
 django.setup()
 
-from inversiones.models import Inversion
+from patrimonio.models import Activo
 from django.contrib.auth.models import User
 from django.db.models import Sum
 

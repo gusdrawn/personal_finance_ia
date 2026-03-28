@@ -1,0 +1,250 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Pasivos - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Gestión de Pasivos{% endblock %}
+
+{% block content %}
+<!-- Top Metrics -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+    <div class="glass p-6 rounded-2xl border-t-4 border-rose-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Total Pasivos</span>
+            <i class="fas fa-credit-card text-rose-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">
+            ${{ total_pasivos|floatformat:0|intcomma|default:"0" }}
+        </p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Carga financiera total</p>
+    </div>
+
+    <div class="glass p-6 rounded-2xl border-t-4 border-amber-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Deudas</span>
+            <i class="fas fa-list text-amber-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">{{ pasivos_count }}</p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Obligaciones activas</p>
+    </div>
+
+    <div class="glass p-6 rounded-2xl border-t-4 border-indigo-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Ratio D/A</span>
+            <i class="fas fa-balance-scale text-indigo-500 text-sm"></i>
+        </div>
+        <p class="text-3xl font-bold text-white">
+            {{ ratio_da|floatformat:1|default:"0" }}%
+        </p>
+        <p class="text-xs text-slate-500 mt-2 font-medium">Deuda sobre Activos</p>
+    </div>
+</div>
+
+<!-- Action Bar -->
+<div class="flex items-center justify-between mb-6">
+    <h3 class="text-lg font-bold text-white flex items-center">
+        <i class="fas fa-file-invoice-dollar mr-3 text-rose-400"></i>
+        Mis Pasivos
+    </h3>
+    <button onclick="openPasivoModal()" class="px-5 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-rose-500/20 hover:shadow-rose-500/40 hover:scale-105">
+        <i class="fas fa-plus mr-2"></i>Nuevo Pasivo
+    </button>
+</div>
+
+<!-- Grouped by Tipo -->
+{% for t_key, group in grouped.items %}
+<div class="glass p-6 rounded-2xl mb-6">
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center space-x-3">
+            <span class="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest
+                {% if t_key == 'TDC' %}bg-pink-500/10 text-pink-400 border border-pink-500/20
+                {% elif t_key == 'CREDITO_HIPOTECARIO' %}bg-violet-500/10 text-violet-400 border border-violet-500/20
+                {% elif t_key == 'CREDITO_CONSUMO' %}bg-amber-500/10 text-amber-400 border border-amber-500/20
+                {% elif t_key == 'PRESTAMO' %}bg-sky-500/10 text-sky-400 border border-sky-500/20
+                {% else %}bg-slate-500/10 text-slate-400 border border-slate-500/20
+                {% endif %}">
+                {% if t_key == 'TDC' %}<i class="fas fa-credit-card mr-2"></i>
+                {% elif t_key == 'CREDITO_HIPOTECARIO' %}<i class="fas fa-home mr-2"></i>
+                {% elif t_key == 'CREDITO_CONSUMO' %}<i class="fas fa-money-check mr-2"></i>
+                {% elif t_key == 'PRESTAMO' %}<i class="fas fa-handshake mr-2"></i>
+                {% else %}<i class="fas fa-file-invoice mr-2"></i>
+                {% endif %}
+                {{ group.label }}
+            </span>
+        </div>
+        <span class="text-sm font-bold text-slate-400">${{ group.total|floatformat:0|intcomma }}</span>
+    </div>
+    
+    <div class="space-y-2">
+        {% for pasivo in group.items %}
+        <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-4">
+                    <div class="w-10 h-10 rounded-lg flex items-center justify-center bg-rose-500/10 text-rose-400">
+                        {% if pasivo.tipo == 'TDC' %}<i class="fas fa-credit-card"></i>
+                        {% elif pasivo.tipo == 'CREDITO_HIPOTECARIO' %}<i class="fas fa-home"></i>
+                        {% elif pasivo.tipo == 'CREDITO_CONSUMO' %}<i class="fas fa-money-check"></i>
+                        {% elif pasivo.tipo == 'PRESTAMO' %}<i class="fas fa-handshake"></i>
+                        {% else %}<i class="fas fa-file-invoice"></i>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ pasivo.nombre }}</p>
+                        <div class="flex items-center space-x-2 mt-0.5">
+                            <span class="text-[10px] uppercase font-bold text-slate-500">{{ pasivo.get_tipo_display }}</span>
+                            {% if pasivo.producto %}
+                            <span class="px-1.5 py-0.5 text-[9px] font-black rounded bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                                <i class="fas fa-lock mr-1"></i>{{ pasivo.producto.banco.nombre }}
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="text-right">
+                        <p class="font-bold text-white tracking-tight">${{ pasivo.monto_clp|floatformat:0|intcomma }}</p>
+                        {% if pasivo.monto_usd > 0 %}
+                        <p class="text-[10px] text-slate-500 font-mono">US${{ pasivo.monto_usd|floatformat:2|intcomma }}</p>
+                        {% endif %}
+                    </div>
+                    <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onclick="openEditPasivoModal({{ pasivo.id }}, '{{ pasivo.nombre|escapejs }}', '{{ pasivo.tipo }}', {{ pasivo.monto_clp }}, {{ pasivo.monto_usd }}, '{{ pasivo.notas|escapejs }}', {{ pasivo.producto_id|default:'null' }})" class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center">
+                            <i class="fas fa-pen text-[10px]"></i>
+                        </button>
+                        {% if not pasivo.producto %}
+                        <form action="{% url 'borrar_pasivo' pasivo.id %}" method="POST" onsubmit="return confirm('¿Eliminar esta deuda?')" class="inline">
+                            {% csrf_token %}
+                            <input type="hidden" name="next" value="pasivos">
+                            <button type="submit" class="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white transition-colors flex items-center justify-center">
+                                <i class="fas fa-trash text-[10px]"></i>
+                            </button>
+                        </form>
+                        {% else %}
+                        <span class="w-8 h-8 rounded-lg bg-slate-700/50 text-slate-500 flex items-center justify-center cursor-not-allowed" title="Vinculado a Entidad Financiera">
+                            <i class="fas fa-lock text-[10px]"></i>
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+{% if not grouped %}
+<div class="glass p-12 rounded-2xl text-center">
+    <i class="fas fa-check-circle text-4xl text-emerald-400 mb-4"></i>
+    <p class="text-xl font-bold text-white mb-2">¡Sin Deudas!</p>
+    <p class="text-slate-400 text-sm">No tienes pasivos registrados. Usa el botón "Nuevo Pasivo" para agregar uno.</p>
+</div>
+{% endif %}
+
+<!-- Create/Edit Modal -->
+<div id="modal-pasivo" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center backdrop-blur-sm">
+    <div class="glass p-8 rounded-2xl w-full max-w-lg border border-slate-700">
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-xl font-bold text-white" id="pasivo-modal-title">Nuevo Pasivo</h3>
+            <button onclick="closePasivoModal()" class="text-slate-400 hover:text-white transition-colors">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <form id="pasivo-form" action="{% url 'crear_pasivo' %}" method="POST" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="pasivos">
+            
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Nombre</label>
+                <input type="text" name="nombre" id="pas-nombre" required class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors">
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Tipo</label>
+                    <select name="tipo" id="pas-tipo" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-rose-500 transition-colors">
+                        <option value="TDC">Tarjeta de Crédito</option>
+                        <option value="CREDITO_HIPOTECARIO">Crédito Hipotecario</option>
+                        <option value="CREDITO_CONSUMO">Crédito de Consumo</option>
+                        <option value="PRESTAMO">Préstamo</option>
+                        <option value="OTRO">Otro</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Producto (Opcional)</label>
+                    <select name="producto_id" id="pas-producto" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-rose-500 transition-colors">
+                        <option value="">— Ninguno —</option>
+                        {% for prod in productos %}
+                        <option value="{{ prod.id }}">{{ prod.banco.nombre }} - {{ prod.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            
+            <div class="p-4 rounded-xl bg-rose-500/5 border border-rose-500/20">
+                <p class="text-[10px] font-black uppercase text-rose-400 mb-3 tracking-widest flex items-center">
+                    <i class="fas fa-calculator mr-2"></i>Montos de Deuda
+                </p>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">CLP</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+                            <input type="number" name="monto_clp" id="pas-clp" step="1" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-8 pr-4 py-2 text-white focus:outline-none focus:border-rose-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">USD</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">US$</span>
+                            <input type="number" name="monto_usd" id="pas-usd" step="0.01" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-12 pr-4 py-2 text-white focus:outline-none focus:border-rose-500">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Notas</label>
+                <textarea name="notas" id="pas-notas" rows="2" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-rose-500 transition-colors resize-none"></textarea>
+            </div>
+            
+            <button type="submit" class="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-xl mt-2 transition-all shadow-lg shadow-rose-500/20 hover:shadow-rose-500/40">
+                <i class="fas fa-save mr-2"></i>Guardar Pasivo
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+    function openPasivoModal() {
+        document.getElementById('pasivo-form').action = "{% url 'crear_pasivo' %}";
+        document.getElementById('pasivo-modal-title').innerText = "Nuevo Pasivo";
+        document.getElementById('pas-nombre').value = '';
+        document.getElementById('pas-tipo').value = 'OTRO';
+        document.getElementById('pas-producto').value = '';
+        document.getElementById('pas-clp').value = 0;
+        document.getElementById('pas-usd').value = 0;
+        document.getElementById('pas-notas').value = '';
+        document.getElementById('modal-pasivo').classList.remove('hidden');
+    }
+
+    function openEditPasivoModal(id, nombre, tipo, clp, usd, notas, productoId) {
+        document.getElementById('pasivo-form').action = "/dashboard/pasivos/editar/" + id + "/";
+        document.getElementById('pasivo-modal-title').innerText = "Editar Pasivo";
+        document.getElementById('pas-nombre').value = nombre;
+        document.getElementById('pas-tipo').value = tipo;
+        document.getElementById('pas-producto').value = productoId || '';
+        document.getElementById('pas-clp').value = clp;
+        document.getElementById('pas-usd').value = usd;
+        document.getElementById('pas-notas').value = notas || '';
+        document.getElementById('modal-pasivo').classList.remove('hidden');
+    }
+
+    function closePasivoModal() {
+        document.getElementById('modal-pasivo').classList.add('hidden');
+    }
+
+    document.getElementById('modal-pasivo').addEventListener('click', function(e) {
+        if (e.target === this) closePasivoModal();
+    });
+</script>
+{% endblock %}

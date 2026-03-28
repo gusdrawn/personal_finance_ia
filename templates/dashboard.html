@@ -19,7 +19,7 @@
             </div>
             <div class="flex flex-col">
                 <h3 class="text-3xl font-bold text-white tracking-tight">${{ patrimonio_neto|floatformat:0|intcomma|default:"0" }}</h3>
-                <span class="text-xs text-emerald-400 mt-1 font-medium"><i class="fas fa-arrow-up mr-1"></i> Balance Total</span>
+                <span class="text-xs text-emerald-400 mt-1 font-medium"><i class="fas fa-arrow-up mr-1"></i>Balance Total</span>
             </div>
         </div>
     </div>
@@ -76,54 +76,97 @@
     </div>
 </div>
 
-<!-- Main Metrics -->
+<!-- Row 2: Flujo de Caja + Composición + Liquidez Pie -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <!-- Ingresos vs Gastos -->
+    <!-- Ingresos vs Gastos with Month Selector -->
     <div class="lg:col-span-2 glass p-8 rounded-2xl">
-        <div class="flex items-center justify-between mb-8">
+        <div class="flex items-center justify-between mb-6">
             <div>
-                <h3 class="text-xl font-bold text-white">Flujo de Caja <span class="text-slate-500 font-medium">({{ target_month }}/{{ target_year }})</span></h3>
-                <p class="text-slate-400 text-sm">Comparativa de ingresos vs gastos mensuales</p>
+                <h3 class="text-xl font-bold text-white">Flujo de Caja</h3>
+                <p class="text-slate-400 text-sm">Ingresos vs gastos mensuales</p>
             </div>
-            <div class="flex space-x-4">
-                <div class="flex items-center space-x-2">
-                    <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
-                    <span class="text-xs text-slate-300">Ingresos</span>
-                </div>
-                <div class="flex items-center space-x-2">
-                    <span class="w-3 h-3 rounded-full bg-rose-500"></span>
-                    <span class="text-xs text-slate-300">Gastos</span>
-                </div>
+            <div class="flex items-center space-x-2">
+                <select id="month-selector" onchange="changeMonth()" class="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold focus:outline-none focus:border-emerald-500">
+                    {% for m in available_months %}
+                    <option value="{{ m.year }}-{{ m.mes }}" {% if m.year == target_year and m.mes == target_month %}selected{% endif %}>
+                        {{ m.mes }}/{{ m.year }}
+                    </option>
+                    {% endfor %}
+                </select>
             </div>
         </div>
-        <div class="h-64">
+        <div class="h-56">
             <canvas id="ingresoGastoChart"></canvas>
         </div>
-        <div class="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10">
-                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Total Ingresos</p>
+                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Ingresos</p>
                 <p class="text-2xl font-bold text-emerald-400">${{ ingresos_mes|floatformat:0|intcomma|default:"0" }}</p>
             </div>
             <div class="p-4 rounded-xl bg-rose-500/5 border border-rose-500/10">
-                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Total Gastos</p>
+                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Gastos</p>
                 <p class="text-2xl font-bold text-rose-400">${{ gastos_mes|floatformat:0|intcomma|default:"0" }}</p>
+            </div>
+            <div class="p-4 rounded-xl bg-sky-500/5 border border-sky-500/10">
+                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Balance</p>
+                <p class="text-2xl font-bold {% if ingresos_mes > gastos_mes %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                    ${{ ingresos_mes|floatformat:0|intcomma|default:"0" }}
+                </p>
             </div>
         </div>
     </div>
 
-    <!-- Distribución de Gastos -->
+    <!-- Liquidez Pie -->
     <div class="glass p-8 rounded-2xl flex flex-col">
-        <h3 class="text-xl font-bold text-white mb-2">Composición <span class="text-slate-500 font-medium text-sm">({{ target_month }}/{{ target_year }})</span></h3>
-        <p class="text-slate-400 text-sm mb-8">Distribución por categoría de gasto</p>
+        <h3 class="text-xl font-bold text-white mb-2">Liquidez</h3>
+        <p class="text-slate-400 text-sm mb-6">Líquido vs No Líquido</p>
         <div class="flex-1 flex items-center justify-center">
-            <div class="w-full max-w-[240px]">
-                <canvas id="distribucionGastosChart"></canvas>
+            <div class="w-full max-w-[220px]">
+                <canvas id="liquidezPieChart"></canvas>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Recent Data -->
+<!-- Row 3: Histórico de Patrimonio -->
+{% if snapshot_labels %}
+<div class="glass p-8 rounded-2xl">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h3 class="text-xl font-bold text-white"><i class="fas fa-chart-area mr-3 text-indigo-400"></i>Evolución Patrimonial</h3>
+            <p class="text-slate-400 text-sm">Activos, Pasivos y Patrimonio Neto histórico</p>
+        </div>
+        <div class="flex space-x-3">
+            <div class="flex items-center space-x-1.5"><span class="w-3 h-3 rounded-full bg-sky-500"></span><span class="text-xs text-slate-400">Activos</span></div>
+            <div class="flex items-center space-x-1.5"><span class="w-3 h-3 rounded-full bg-rose-500"></span><span class="text-xs text-slate-400">Pasivos</span></div>
+            <div class="flex items-center space-x-1.5"><span class="w-3 h-3 rounded-full bg-emerald-500"></span><span class="text-xs text-slate-400">Neto</span></div>
+        </div>
+    </div>
+    <div class="h-72">
+        <canvas id="patrimonioHistoricoChart"></canvas>
+    </div>
+</div>
+{% endif %}
+
+<!-- Row 4: Histórico de Gastos -->
+<div class="glass p-8 rounded-2xl">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h3 class="text-xl font-bold text-white"><i class="fas fa-chart-bar mr-3 text-amber-400"></i>Tendencia de Ingresos & Gastos</h3>
+            <p class="text-slate-400 text-sm">Últimos 6 meses</p>
+        </div>
+        <div class="flex space-x-2">
+            <button onclick="toggleDataset(0)" id="btn-ingresos" class="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/40 transition-colors">Ingresos</button>
+            <button onclick="toggleDataset(1)" id="btn-gastos" class="px-3 py-1 rounded-lg text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/40 transition-colors">Gastos</button>
+            <button onclick="toggleDataset(2)" id="btn-balance" class="px-3 py-1 rounded-lg text-xs font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30 hover:bg-sky-500/40 transition-colors">Balance</button>
+        </div>
+    </div>
+    <div class="h-64">
+        <canvas id="historicoGastosChart"></canvas>
+    </div>
+</div>
+
+<!-- Row 5: Quick Links -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
     <!-- Departamentos -->
     <div class="glass rounded-2xl overflow-hidden flex flex-col">
@@ -143,11 +186,15 @@
                     </div>
                     <div>
                         <p class="font-bold text-slate-200">{{ depto.codigo }}</p>
-                        <p class="text-xs text-slate-500">{{ depto.arrendatario.nombre }}</p>
+                        <p class="text-xs text-slate-500">{% if depto.arrendatario %}{{ depto.arrendatario.nombre }}{% else %}Disponible{% endif %}</p>
                     </div>
                 </div>
                 <div class="text-right">
+                    {% if depto.arrendatario %}
                     <p class="font-bold text-emerald-400">${{ depto.arrendatario.monto_arriendo_clp|floatformat:0|intcomma }}</p>
+                    {% else %}
+                    <p class="font-bold text-slate-500">—</p>
+                    {% endif %}
                     <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Renta mensual</p>
                 </div>
             </div>
@@ -155,29 +202,29 @@
         </div>
     </div>
 
-    <!-- Inversiones -->
+    <!-- Top Activos -->
     <div class="glass rounded-2xl overflow-hidden flex flex-col">
         <div class="p-6 border-b border-slate-800/50 flex justify-between items-center">
             <div class="flex items-center space-x-3">
                 <i class="fas fa-chart-line text-blue-400"></i>
-                <h3 class="font-bold text-white">Inversiones Activas</h3>
+                <h3 class="font-bold text-white">Top Activos</h3>
             </div>
-            <a href="{% url 'inversiones' %}" class="text-xs text-emerald-400 font-bold hover:underline">Gestionar Portfolio <i class="fas fa-chevron-right ml-1"></i></a>
+            <a href="{% url 'activos' %}" class="text-xs text-emerald-400 font-bold hover:underline">Gestionar Portfolio <i class="fas fa-chevron-right ml-1"></i></a>
         </div>
         <div class="p-6 space-y-4 flex-1">
-            {% for inv in inversiones|slice:":3" %}
+            {% for act in top_activos|slice:":4" %}
             <div class="flex justify-between items-center p-4 rounded-xl bg-slate-800/30 hover:bg-slate-800/50 transition-colors border border-slate-700/30">
                 <div class="flex items-center space-x-4">
                     <div class="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
                         <i class="fas fa-coins"></i>
                     </div>
                     <div>
-                        <p class="font-bold text-slate-200">{{ inv.nombre }}</p>
-                        <p class="text-xs text-slate-500">{{ inv.get_tipo_display }}</p>
+                        <p class="font-bold text-slate-200">{{ act.nombre }}</p>
+                        <p class="text-xs text-slate-500">{{ act.get_tipo_display }}</p>
                     </div>
                 </div>
                 <div class="text-right">
-                    <p class="font-bold text-white">${{ inv.monto_clp|floatformat:0|intcomma }}</p>
+                    <p class="font-bold text-white">${{ act.monto_clp|floatformat:0|intcomma }}</p>
                     <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Valuación actual</p>
                 </div>
             </div>
@@ -187,7 +234,7 @@
 </div>
 
 <script>
-    // Configuración global de Chart.js
+    // Global Chart.js config
     Chart.defaults.color = '#94a3b8';
     Chart.defaults.font.family = "'Outfit', sans-serif";
     Chart.defaults.plugins.tooltip.backgroundColor = '#1e293b';
@@ -195,7 +242,14 @@
     Chart.defaults.plugins.tooltip.borderWidth = 1;
     Chart.defaults.plugins.tooltip.padding = 12;
 
-    // Ingresos vs Gastos Chart
+    // Month selector
+    function changeMonth() {
+        const val = document.getElementById('month-selector').value;
+        const [year, month] = val.split('-');
+        window.location.href = '/dashboard/?year=' + year + '&month=' + month;
+    }
+
+    // Ingresos vs Gastos Bar Chart
     const ingresoGastoCtx = document.getElementById('ingresoGastoChart').getContext('2d');
     new Chart(ingresoGastoCtx, {
         type: 'bar',
@@ -219,22 +273,16 @@
                 tooltip: {
                     callbacks: {
                         label: function(context) {
-                            return ' ' + context.dataset.label + ': $' + context.parsed.y.toLocaleString();
+                            return ' $' + context.parsed.y.toLocaleString('es-CL');
                         }
                     }
                 }
             },
             scales: {
-                x: {
-                    grid: { display: false },
-                    border: { display: false }
-                },
+                x: { grid: { display: false }, border: { display: false } },
                 y: {
                     beginAtZero: true,
-                    grid: { 
-                        color: 'rgba(255,255,255,0.05)',
-                        drawBorder: false
-                    },
+                    grid: { color: 'rgba(255,255,255,0.05)', drawBorder: false },
                     border: { display: false },
                     ticks: {
                         callback: function(value) {
@@ -248,39 +296,211 @@
         }
     });
 
-    // Distribución de Gastos
-    const distribucionCtx = document.getElementById('distribucionGastosChart').getContext('2d');
-    new Chart(distribucionCtx, {
+    // Liquidez Pie Chart
+    const liquidezCtx = document.getElementById('liquidezPieChart').getContext('2d');
+    new Chart(liquidezCtx, {
         type: 'doughnut',
         data: {
-            labels: ['Fijos', 'Suscripciones', 'Tarjetas', 'Otros'],
+            labels: ['Líquido', 'No Líquido'],
             datasets: [{
-                data: [{{ gastos_fijos|floatformat:0|default:"0" }}, {{ suscripciones|floatformat:0|default:"0" }}, {{ tarjetas|floatformat:0|default:"0" }}, {{ otros|floatformat:0|default:"0" }}],
-                backgroundColor: [
-                    '#3b82f6',
-                    '#8b5cf6',
-                    '#ec4899',
-                    '#f59e0b'
-                ],
+                data: [{{ total_liquidos|floatformat:0|default:"0" }}, {{ total_no_liquidos|floatformat:0|default:"0" }}],
+                backgroundColor: ['#10b981', '#475569'],
                 borderWidth: 0,
-                hoverOffset: 20
+                hoverOffset: 15,
+                spacing: 4
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: true,
-            cutout: '75%',
+            cutout: '72%',
             plugins: {
                 legend: { 
                     position: 'bottom',
-                    labels: {
-                        padding: 20,
-                        usePointStyle: true,
-                        pointStyle: 'circle'
+                    labels: { padding: 16, usePointStyle: true, pointStyle: 'circle', font: { size: 11 } }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = ((ctx.parsed / total) * 100).toFixed(1);
+                            return ' $' + ctx.parsed.toLocaleString('es-CL') + ' (' + pct + '%)';
+                        }
                     }
                 }
             }
         }
     });
+
+    // Patrimonio Histórico Line Chart
+    {% if snapshot_labels %}
+    const patCtx = document.getElementById('patrimonioHistoricoChart').getContext('2d');
+    new Chart(patCtx, {
+        type: 'line',
+        data: {
+            labels: {{ snapshot_labels|safe }},
+            datasets: [
+                {
+                    label: 'Activos',
+                    data: {{ snapshot_activos|safe }},
+                    borderColor: '#0ea5e9',
+                    backgroundColor: 'rgba(14, 165, 233, 0.05)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2.5,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#0ea5e9',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                },
+                {
+                    label: 'Pasivos',
+                    data: {{ snapshot_pasivos|safe }},
+                    borderColor: '#f43f5e',
+                    backgroundColor: 'rgba(244, 63, 94, 0.05)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2.5,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#f43f5e',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                },
+                {
+                    label: 'Patrimonio Neto',
+                    data: {{ snapshot_neto|safe }},
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 3,
+                    pointRadius: 5,
+                    pointBackgroundColor: '#10b981',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            return ' ' + ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString('es-CL');
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: {
+                        callback: function(v) {
+                            if (v >= 1000000) return '$' + (v / 1000000).toFixed(0) + 'M';
+                            if (v >= 1000) return '$' + (v / 1000).toFixed(0) + 'K';
+                            return '$' + v;
+                        }
+                    }
+                },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+    {% endif %}
+
+    // Histórico Gastos Multi-Line Chart
+    const histLabels = [{% for m in historico_meses %}'{{ m.label }}',{% endfor %}];
+    const histIngresos = [{% for m in historico_meses %}{{ m.ingresos }},{% endfor %}];
+    const histGastos = [{% for m in historico_meses %}{{ m.gastos }},{% endfor %}];
+    const histBalance = [{% for m in historico_meses %}{{ m.balance }},{% endfor %}];
+
+    const historicoChart = new Chart(document.getElementById('historicoGastosChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: histLabels,
+            datasets: [
+                {
+                    label: 'Ingresos',
+                    data: histIngresos,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2.5,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#10b981'
+                },
+                {
+                    label: 'Gastos',
+                    data: histGastos,
+                    borderColor: '#f43f5e',
+                    backgroundColor: 'rgba(244, 63, 94, 0.08)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2.5,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#f43f5e'
+                },
+                {
+                    label: 'Balance',
+                    data: histBalance,
+                    borderColor: '#0ea5e9',
+                    backgroundColor: 'rgba(14, 165, 233, 0.08)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2.5,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#0ea5e9'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            return ' ' + ctx.dataset.label + ': $' + ctx.parsed.y.toLocaleString('es-CL');
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: {
+                        callback: function(v) {
+                            if (Math.abs(v) >= 1000000) return '$' + (v / 1000000).toFixed(1) + 'M';
+                            if (Math.abs(v) >= 1000) return '$' + (v / 1000).toFixed(0) + 'K';
+                            return '$' + v;
+                        }
+                    }
+                },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+
+    // Toggle dataset visibility
+    function toggleDataset(index) {
+        const meta = historicoChart.getDatasetMeta(index);
+        meta.hidden = !meta.hidden;
+        historicoChart.update();
+        
+        const btnIds = ['btn-ingresos', 'btn-gastos', 'btn-balance'];
+        const btn = document.getElementById(btnIds[index]);
+        if (meta.hidden) {
+            btn.style.opacity = '0.3';
+        } else {
+            btn.style.opacity = '1';
+        }
+    }
 </script>
 {% endblock %}

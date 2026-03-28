@@ -14,11 +14,39 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Rework Patrimonio, Inversiones & Dashboard (Major)
+- **Modelos**:
+  - Modelo `Activo` unificado: fusión de `inversiones.Inversion` + `patrimonio.Activo` en un solo modelo con campos `horizonte_temporal` (EFECTIVO / CORTO_PLAZO / MEDIANO_PLAZO / LARGO_PLAZO), `es_liquido` (boolean), y `activo` (flag).
+  - `HistorialInversion` → `HistorialActivo` movido a `patrimonio/models.py` con FK al `Activo` unificado.
+  - `Pasivo` añade campo `activo` (boolean), `producto` (FK a Producto para vincular con Entidades Financieras), y tipo `CREDITO_CONSUMO`.
+  - Eliminados modelos `Inversion` y `HistorialInversion` de la app `inversiones` (app vaciada, conservada por historial de migraciones).
+- **Nueva Página — Activos** (`/dashboard/activos/`):
+  - Reemplaza la anterior "Inversiones" con tabla agrupada por horizonte temporal.
+  - Departamentos aparecen como activos inmobiliarios vinculados en el grupo "Largo Plazo".
+  - CRUD completo con modales funcionales (crear, editar, eliminar).
+  - Gráficas: Asset Allocation (doughnut), Ratio de Liquidez (doughnut), y Evolución del Portafolio (line chart desde HistorialActivo).
+- **Nueva Página — Pasivos** (`/dashboard/pasivos/`):
+  - CRUD dedicado para gestión de deudas.
+  - Items vinculados a Entidades Financieras protegidos contra eliminación (icono candado 🔒).
+  - Agrupados por tipo: TDC, Crédito Hipotecario, Crédito de Consumo, Préstamo, Otro.
+  - Métricas: Total Pasivos, Nº Deudas, Ratio D/A.
+- **Dashboard Mejorado**:
+  - Nuevas gráficas: Pie de Liquidez (Líquido vs No Líquido), Evolución Patrimonial (3 líneas: Activos/Pasivos/Neto desde SnapshotPatrimonio), Tendencia Ingresos & Gastos (últimos 6 meses con toggle).
+  - Selector de mes para Flujo de Caja (dropdown con meses disponibles).
+  - Top Activos y Propiedades como quick-links.
+- **Patrimonio** (`/dashboard/patrimonio/`):
+  - Simplificado a página resumen/hub con links directos a Activos y Pasivos.
+  - Tabla de historial de Snapshots.
+- **Sidebar**:
+  - "Inversiones" renombrado a "Activos".
+  - Nuevo link "Pasivos" con icono `fa-credit-card`.
+- **Departamentos — Auto-INGRESO**:
+  - Al crear un departamento, se auto-genera una `CategoriaIngreso` tipo INGRESO `"Arriendo {codigo}"` con `mostrar_en_carga_masiva=True`.
+  - Al borrar un departamento, se elimina la categoría asociada.
+  - Cálculo de métricas ROI (Cash Flow, Amortización, Total, % Administración) en la vista de departamentos.
+- **Archivos actualizados**: `patrimonio/models.py`, `patrimonio/admin.py`, `inversiones/models.py`, `inversiones/admin.py`, `core/views.py`, `core/urls.py`, `configuracion/views.py`, `templates/base.html`, `templates/dashboard.html`, `templates/activos.html` (nuevo), `templates/pasivos.html` (nuevo), `templates/patrimonio.html`, `load_real_data.py`, `populate_fixtures.py`.
+
 ### [2026-03] Edición de Gastos Programados (Enhancement)
-- **Vistas y Templates**:
-  - Implementación del botón de edición para `GastoProgramado` en la vista de `calendario.html`.
-  - El modal de "Nuevo Gasto Programado" ahora es dinámico y permite editar registros existentes cargando sus datos automáticamente vía JavaScript.
-  - Actualización de las vistas `crear_gasto_programado` y `editar_gasto_programado` en `core/views.py` para soportar los campos `notas` y `activo`.
 
 ### [2026-03] Tipos de Categoría y Carga Masiva (Fix/Enhancement)
 - **Modelos Actualizados**:
@@ -122,32 +150,41 @@ mindmap
       ::icon(fa fa-shield)
       Profiles
       Periodos
-      Dashboard
+      Dashboard Mejorado
     gastos[gastos App]
       ::icon(fa fa-receipt)
-      Categorias (Ingreso/Gasto)
+      Categorias
       Registros Mensuales
-      Gastos Programados (Unificados)
+      Gastos Programados
       Calendario Mensual
-    patrimonio[patrimonio App]
+    patrimonio[patrimonio App - UNIFICADO]
       ::icon(fa fa-vault)
-      Activos Liquidos/Iliquidos
-      Pasivos (Deudas)
+      Activo Unificado
+        Efectivo / Corto / Mediano / Largo Plazo
+        Inversiones / Cripto / Fondos
+        Departamentos vinculados
+      Pasivo
+        TDC / Hipotecario / Consumo
+        Vinculado a Entidad Financiera
+      HistorialActivo
+      SnapshotPatrimonio
     departamentos[departamentos App]
       ::icon(fa fa-building)
       Propiedades
       Credito Hipotecario
       Arrendatarios
-    inversiones[inversiones App]
-      ::icon(fa fa-chart-line)
-      Criptomonedas / Acciones
-      Fondos Mutuos / Brokerage
-    prestamos[prestamos App *NUEVO*]
+      ROI y Metricas
+    inversiones[inversiones App - DEPRECADA]
+      ::icon(fa fa-archive)
+      Modelos movidos a patrimonio
+    prestamos[prestamos App]
       ::icon(fa fa-bicycle)
       Bicicletas Personales
       Bicicletas de Terceros
     configuracion[configuracion App]
       ::icon(fa fa-cogs)
-      Bancos (Entidades)
+      Bancos / Entidades
+      Productos Financieros
       Divisas / Tasas Cambio
+      Snapshot Manual
 ```

@@ -3,15 +3,21 @@ from decimal import Decimal
 
 
 class Activo(models.Model):
-    """Assets (cash, investments, loans given, properties, etc)"""
-    TIPO_LIQUIDEZ = [
-        ('LIQUIDO', 'Líquido'),
-        ('NO_LIQUIDO', 'No Líquido'),
+    """Unified asset model: cash, investments, properties, loans given, etc."""
+    HORIZONTE_CHOICES = [
+        ('EFECTIVO', 'Efectivo'),
+        ('CORTO_PLAZO', 'Corto Plazo'),
+        ('MEDIANO_PLAZO', 'Mediano Plazo'),
+        ('LARGO_PLAZO', 'Largo Plazo'),
     ]
-    
+
     TIPO_ACTIVO = [
         ('EFECTIVO', 'Efectivo'),
-        ('INVERSION', 'Inversión'),
+        ('CRIPTO', 'Criptomoneda'),
+        ('FONDO_MUTUO', 'Fondo Mutuo'),
+        ('ACCIONES', 'Acciones'),
+        ('BROKERAGE', 'Brokerage Account'),
+        ('PLAZO_FIJO', 'Plazo Fijo'),
         ('PRESTAMO_DADO', 'Préstamo Dado'),
         ('DEPARTAMENTO', 'Departamento'),
         ('AHORRO', 'Ahorro'),
@@ -21,9 +27,14 @@ class Activo(models.Model):
     user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='activos')
     nombre = models.CharField(max_length=150)
     tipo = models.CharField(max_length=20, choices=TIPO_ACTIVO)
-    tipo_liquidez = models.CharField(max_length=20, choices=TIPO_LIQUIDEZ, default='LIQUIDO')
+    horizonte_temporal = models.CharField(
+        max_length=20, choices=HORIZONTE_CHOICES, default='EFECTIVO',
+        help_text="Horizonte de inversión del activo"
+    )
+    es_liquido = models.BooleanField(default=True, help_text="¿Se puede liquidar fácilmente?")
     monto_clp = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     monto_usd = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    activo = models.BooleanField(default=True)
     notas = models.TextField(blank=True)
     departamento = models.OneToOneField(
         'departamentos.Departamento',
@@ -38,10 +49,35 @@ class Activo(models.Model):
     class Meta:
         verbose_name = 'Activo'
         verbose_name_plural = 'Activos'
-        ordering = ['tipo', 'nombre']
+        ordering = ['horizonte_temporal', 'tipo', 'nombre']
 
     def __str__(self):
         return f"{self.nombre} - CLP ${self.monto_clp} / USD ${self.monto_usd}"
+
+
+class HistorialActivo(models.Model):
+    """Historical snapshots of asset values"""
+    activo = models.ForeignKey(Activo, on_delete=models.CASCADE, related_name='historial')
+    fecha = models.DateField(db_index=True)
+    monto_clp = models.DecimalField(max_digits=15, decimal_places=2)
+    monto_usd = models.DecimalField(max_digits=15, decimal_places=2)
+    valor_uf = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    valor_dolar = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    notas = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Historial Activo'
+        verbose_name_plural = 'Historiales Activos'
+        ordering = ['-fecha']
+        indexes = [
+            models.Index(fields=['activo', '-fecha']),
+        ]
+        unique_together = ('activo', 'fecha')
+
+    def __str__(self):
+        return f"{self.activo.nombre} - {self.fecha}"
 
 
 class Pasivo(models.Model):
@@ -49,6 +85,7 @@ class Pasivo(models.Model):
     TIPO_PASIVO = [
         ('TDC', 'Tarjeta de Crédito'),
         ('CREDITO_HIPOTECARIO', 'Crédito Hipotecario'),
+        ('CREDITO_CONSUMO', 'Crédito de Consumo'),
         ('PRESTAMO', 'Préstamo'),
         ('OTRO', 'Otro'),
     ]
@@ -65,6 +102,7 @@ class Pasivo(models.Model):
         on_delete=models.SET_NULL,
         related_name='pasivos'
     )
+    activo = models.BooleanField(default=True, help_text="Si la deuda sigue vigente")
     notas = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

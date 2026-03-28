@@ -1,10 +1,11 @@
 {% extends 'base.html' %}
-{% load humanize core_extras %}
+{% load humanize %}
 
 {% block title %}Patrimonio - FinanzasPersonalesIA{% endblock %}
 {% block page_title %}Estado del Patrimonio{% endblock %}
 
 {% block content %}
+<!-- Summary Cards -->
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
     <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500 card-stat">
         <div class="flex items-center justify-between mb-2">
@@ -40,278 +41,86 @@
     </div>
 </div>
 
-{% if alert_msg %}
-<div class="mb-8 p-4 rounded-xl bg-sky-500/10 border-l-4 border-sky-500 text-sky-400 text-xs font-medium animate-in slide-in-from-left duration-500">
-    <div class="flex items-center">
-        <i class="fas fa-info-circle mr-3 text-sm"></i>
-        {{ alert_msg }}
+<!-- Quick Links -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <a href="{% url 'activos' %}" class="glass p-8 rounded-2xl hover:bg-slate-800/50 transition-all group border border-slate-700/30 hover:border-emerald-500/30">
+        <div class="flex items-center space-x-4 mb-4">
+            <div class="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:bg-emerald-500 group-hover:text-white transition-all">
+                <i class="fas fa-chart-pie text-lg"></i>
+            </div>
+            <div>
+                <h3 class="text-lg font-bold text-white group-hover:text-emerald-400 transition-colors">Gestionar Activos</h3>
+                <p class="text-xs text-slate-400">Inversiones, efectivo, ahorro & bienes raíces</p>
+            </div>
+        </div>
+        <div class="flex justify-between items-center bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+            <div>
+                <p class="text-xs text-slate-500 font-bold uppercase">Total Activos</p>
+                <p class="text-xl font-bold text-emerald-400">${{ total_activos|floatformat:0|intcomma|default:"0" }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-slate-500 font-bold uppercase">Liquidez</p>
+                <p class="text-xl font-bold text-white">{{ liquidez_pct|floatformat:1 }}%</p>
+            </div>
+            <i class="fas fa-chevron-right text-slate-600 group-hover:text-emerald-400 transition-colors"></i>
+        </div>
+    </a>
+    
+    <a href="{% url 'pasivos' %}" class="glass p-8 rounded-2xl hover:bg-slate-800/50 transition-all group border border-slate-700/30 hover:border-rose-500/30">
+        <div class="flex items-center space-x-4 mb-4">
+            <div class="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-400 group-hover:bg-rose-500 group-hover:text-white transition-all">
+                <i class="fas fa-credit-card text-lg"></i>
+            </div>
+            <div>
+                <h3 class="text-lg font-bold text-white group-hover:text-rose-400 transition-colors">Gestionar Pasivos</h3>
+                <p class="text-xs text-slate-400">Deudas, créditos & tarjetas de crédito</p>
+            </div>
+        </div>
+        <div class="flex justify-between items-center bg-slate-800/30 rounded-xl p-4 border border-slate-700/30">
+            <div>
+                <p class="text-xs text-slate-500 font-bold uppercase">Total Pasivos</p>
+                <p class="text-xl font-bold text-rose-400">${{ total_pasivos|floatformat:0|intcomma|default:"0" }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-slate-500 font-bold uppercase">Deudas</p>
+                <p class="text-xl font-bold text-white">{{ pasivos_count }}</p>
+            </div>
+            <i class="fas fa-chevron-right text-slate-600 group-hover:text-rose-400 transition-colors"></i>
+        </div>
+    </a>
+</div>
+
+<!-- Snapshots History -->
+{% if snapshots %}
+<div class="glass p-8 rounded-2xl">
+    <div class="flex items-center justify-between mb-6">
+        <h3 class="text-xl font-bold text-white flex items-center">
+            <i class="fas fa-history mr-4 text-indigo-400"></i>
+            Historial de Snapshots
+        </h3>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-left text-xs text-slate-500 uppercase tracking-widest border-b border-slate-800">
+                    <th class="pb-3 pr-4">Fecha</th>
+                    <th class="pb-3 pr-4 text-right">Activos</th>
+                    <th class="pb-3 pr-4 text-right">Pasivos</th>
+                    <th class="pb-3 text-right">Patrimonio Neto</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in snapshots %}
+                <tr class="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
+                    <td class="py-3 pr-4 font-medium text-slate-300">{{ s.fecha }}</td>
+                    <td class="py-3 pr-4 text-right text-emerald-400 font-bold">${{ s.activos_total_clp|floatformat:0|intcomma }}</td>
+                    <td class="py-3 pr-4 text-right text-rose-400 font-bold">${{ s.pasivos_total_clp|floatformat:0|intcomma }}</td>
+                    <td class="py-3 text-right text-white font-bold">${{ s.patrimonio_neto_clp|floatformat:0|intcomma }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endif %}
-
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-    <!-- Activos -->
-    <div class="glass p-8 rounded-2xl">
-        <div class="flex items-center justify-between mb-8">
-            <h3 class="text-xl font-bold text-white flex items-center">
-                <i class="fas fa-chart-pie mr-4 text-emerald-500"></i>
-                Detalle de Activos
-            </h3>
-            <div class="flex items-center space-x-4">
-                <button onclick="openCreateModal('activo')" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-bold transition-colors shadow-lg shadow-emerald-500/20">
-                    <i class="fas fa-plus mr-2"></i>Nuevo Activo
-                </button>
-            </div>
-        </div>
-        
-        <div class="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {% for activo in activos %}
-            <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group relative">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ activo.nombre }}</p>
-                        <div class="flex items-center space-x-3 mt-1">
-                            <span class="text-[10px] uppercase font-bold text-slate-500">{{ activo.tipo_display }}</span>
-                            <span class="px-2 py-0.5 text-[9px] font-black rounded-md {% if activo.es_liquido %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20{% else %}bg-slate-700/50 text-slate-400 border border-slate-600{% endif %}">
-                                {{ activo.liquidez_display }}
-                            </span>
-                        </div>
-                    </div>
-                    <div class="text-right flex items-center space-x-4">
-                        <div>
-                            <p class="font-bold text-white tracking-tight">${{ activo.monto_clp|floatformat:0|intcomma }}</p>
-                            {% if activo.monto_usd > 0 %}
-                            <p class="text-[10px] text-slate-500 font-mono">US${{ activo.monto_usd|floatformat:2|intcomma }}</p>
-                            {% endif %}
-                        </div>
-                        {% if activo.es_manual %}
-                        <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onclick="openEditModal('activo', {{ activo.id }}, '{{ activo.nombre|escapejs }}', '{{ activo.tipo }}', '{{ activo.tipo_liquidez }}', {{ activo.monto_clp }}, {{ activo.monto_usd }})" class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center">
-                                <i class="fas fa-pen text-[10px]"></i>
-                            </button>
-                            <form action="{% url 'borrar_activo' activo.id %}" method="POST" onsubmit="return confirm('¿Eliminar este activo?')" class="inline">
-                                {% csrf_token %}
-                                <button type="submit" class="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-50 text-white hover:bg-rose-500 transition-colors flex items-center justify-center">
-                                    <i class="fas fa-trash text-[10px]"></i>
-                                </button>
-                            </form>
-                        </div>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-
-    <!-- Pasivos -->
-    <div class="glass p-8 rounded-2xl">
-        <div class="flex items-center justify-between mb-8">
-            <h3 class="text-xl font-bold text-white flex items-center">
-                <i class="fas fa-credit-card mr-4 text-rose-500"></i>
-                Carga Financiera
-            </h3>
-            <div class="flex items-center space-x-4">
-                <button onclick="openCreateModal('pasivo')" class="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-sm font-bold transition-colors shadow-lg shadow-rose-500/20">
-                    <i class="fas fa-plus mr-2"></i>Nuevo Pasivo
-                </button>
-            </div>
-        </div>
-        
-        <div class="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {% for pasivo in pasivos %}
-            <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ pasivo.nombre }}</p>
-                        <p class="text-[10px] uppercase font-bold text-slate-500 mt-1">{{ pasivo.get_tipo_display }}</p>
-                    </div>
-                    <div class="text-right flex items-center space-x-4">
-                        <div>
-                            <p class="font-bold text-white tracking-tight">${{ pasivo.monto_clp|floatformat:0|intcomma }}</p>
-                            {% if pasivo.monto_usd > 0 %}
-                            <p class="text-[10px] text-slate-500 font-mono">US${{ pasivo.monto_usd|floatformat:2|intcomma }}</p>
-                            {% endif %}
-                        </div>
-                        <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onclick="openEditModal('pasivo', {{ pasivo.id }}, '{{ pasivo.nombre|escapejs }}', '{{ pasivo.tipo }}', null, {{ pasivo.monto_clp }}, {{ pasivo.monto_usd }})" class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center">
-                                <i class="fas fa-pen text-[10px]"></i>
-                            </button>
-                            <form action="{% url 'borrar_pasivo' pasivo.id %}" method="POST" onsubmit="return confirm('¿Eliminar esta deuda?')" class="inline">
-                                {% csrf_token %}
-                                <button type="submit" class="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-50 transition-colors flex items-center justify-center hover:bg-rose-500 hover:text-white">
-                                    <i class="fas fa-trash text-[10px]"></i>
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-</div>
-
-<!-- Modal Generic -->
-<div id="modal-finance" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center backdrop-blur-sm">
-    <div class="glass p-8 rounded-2xl w-full max-w-md border border-slate-700">
-        <div class="flex justify-between items-center mb-6">
-            <h3 class="text-xl font-bold text-white" id="modal-title">Gestión Financiera</h3>
-            <button onclick="closeModal()" class="text-slate-400 hover:text-white">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        <form id="finance-form" action="" method="POST" class="space-y-4">
-            {% csrf_token %}
-            <div id="form-container">
-                <!-- Inputs generated via JS -->
-                 <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Nombre</label>
-                    <input type="text" name="nombre" id="input-nombre" required class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-sky-500">
-                </div>
-                
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Tipo</label>
-                        <select name="tipo" id="input-tipo" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-sky-500">
-                            <!-- Options updated via JS -->
-                        </select>
-                    </div>
-                    <div id="liquidez-container">
-                        <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Liquidez</label>
-                        <select name="tipo_liquidez" id="input-liquidez" class="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-sky-500">
-                            <option value="LIQUIDO">Líquido</option>
-                            <option value="NO_LIQUIDO">No Líquido</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="p-4 rounded-xl bg-sky-500/5 border border-sky-500/20 mt-4">
-                    <p class="text-[10px] font-black uppercase text-sky-400 mb-3 tracking-widest flex items-center">
-                        <i class="fas fa-calculator mr-2"></i>Calculadora de Divisas
-                    </p>
-                    <div class="grid grid-cols-1 gap-4">
-                        <div>
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Monto en CLP</label>
-                            <div class="relative">
-                                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                                <input type="number" name="monto_clp" id="input-clp" step="1" oninput="convertCurrency('clp')" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-8 pr-4 py-2 text-white focus:outline-none focus:border-sky-500">
-                            </div>
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Monto en USD</label>
-                            <div class="relative">
-                                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">US$</span>
-                                <input type="number" name="monto_usd" id="input-usd" step="0.01" oninput="convertCurrency('usd')" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-12 pr-4 py-2 text-white focus:outline-none focus:border-sky-500">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <button type="submit" id="submit-btn" class="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 rounded-lg mt-6 transition-colors shadow-lg shadow-sky-500/20">
-                Guardar Cambios
-            </button>
-        </form>
-    </div>
-</div>
-
-<script>
-const USD_RATE = {{ tipo_cambio.dolar|default:950 }};
-
-function openCreateModal(modelType) {
-    const form = document.getElementById('finance-form');
-    const title = document.getElementById('modal-title');
-    const submitBtn = document.getElementById('submit-btn');
-    const tipo = document.getElementById('input-tipo');
-    const liqContainer = document.getElementById('liquidez-container');
-    
-    // Reset values
-    document.getElementById('input-nombre').value = '';
-    document.getElementById('input-clp').value = 0;
-    document.getElementById('input-usd').value = 0;
-    
-    tipo.innerHTML = '';
-    if (modelType === 'activo') {
-        form.action = "{% url 'crear_activo' %}";
-        title.innerText = "Nuevo Activo";
-        submitBtn.className = "w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-lg mt-6 transition-colors shadow-lg shadow-emerald-500/20";
-        liqContainer.classList.remove('hidden');
-        ['EFECTIVO', 'AHORRO', 'PRESTAMO_DADO', 'OTRO'].forEach(t => {
-            const opt = document.createElement('option');
-            opt.value = t; opt.text = t;
-            tipo.add(opt);
-        });
-    } else {
-        form.action = "{% url 'crear_pasivo' %}";
-        title.innerText = "Nuevo Pasivo";
-        submitBtn.className = "w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-lg mt-6 transition-colors shadow-lg shadow-rose-500/20";
-        liqContainer.classList.add('hidden');
-        ['TDC', 'CREDITO_HIPOTECARIO', 'PRESTAMO', 'OTRO'].forEach(t => {
-            const opt = document.createElement('option');
-            opt.value = t; opt.text = t;
-            tipo.add(opt);
-        });
-    }
-    
-    document.getElementById('modal-finance').classList.remove('hidden');
-}
-
-function openEditModal(modelType, id, nombre, typeVal, liqVal, clp, usd) {
-    const form = document.getElementById('finance-form');
-    const title = document.getElementById('modal-title');
-    const submitBtn = document.getElementById('submit-btn');
-    const tipo = document.getElementById('input-tipo');
-    const liqContainer = document.getElementById('liquidez-container');
-    
-    document.getElementById('input-nombre').value = nombre;
-    document.getElementById('input-clp').value = clp;
-    document.getElementById('input-usd').value = usd;
-    
-    tipo.innerHTML = '';
-    if (modelType === 'activo') {
-        form.action = "/dashboard/patrimonio/editar-activo/" + id + "/";
-        title.innerText = "Editar Activo";
-        submitBtn.className = "w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-lg mt-6 transition-colors font-black uppercase tracking-widest";
-        liqContainer.classList.remove('hidden');
-        document.getElementById('input-liquidez').value = liqVal;
-        ['EFECTIVO', 'AHORRO', 'PRESTAMO_DADO', 'OTRO'].forEach(t => {
-            const opt = document.createElement('option');
-            opt.value = t; opt.text = t;
-            if(t === typeVal) opt.selected = true;
-            tipo.add(opt);
-        });
-    } else {
-        form.action = "/dashboard/patrimonio/editar-pasivo/" + id + "/";
-        title.innerText = "Editar Pasivo";
-        submitBtn.className = "w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-lg mt-6 transition-colors font-black uppercase tracking-widest";
-        liqContainer.classList.add('hidden');
-        ['TDC', 'CREDITO_HIPOTECARIO', 'PRESTAMO', 'OTRO'].forEach(t => {
-            const opt = document.createElement('option');
-            opt.value = t; opt.text = t;
-            if(t === typeVal) opt.selected = true;
-            tipo.add(opt);
-        });
-    }
-    
-    document.getElementById('modal-finance').classList.remove('hidden');
-}
-
-function closeModal() {
-    document.getElementById('modal-finance').classList.add('hidden');
-}
-
-function convertCurrency(source) {
-    const clpInput = document.getElementById('input-clp');
-    const usdInput = document.getElementById('input-usd');
-    
-    if (source === 'clp') {
-        const clpVal = parseFloat(clpInput.value) || 0;
-        usdInput.value = (clpVal / USD_RATE).toFixed(2);
-    } else {
-        const usdVal = parseFloat(usdInput.value) || 0;
-        clpInput.value = Math.round(usdVal * USD_RATE);
-    }
-}
-</script>
 {% endblock %}
