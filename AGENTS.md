@@ -14,6 +14,12 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Edición de Gastos Programados (Enhancement)
+- **Vistas y Templates**:
+  - Implementación del botón de edición para `GastoProgramado` en la vista de `calendario.html`.
+  - El modal de "Nuevo Gasto Programado" ahora es dinámico y permite editar registros existentes cargando sus datos automáticamente vía JavaScript.
+  - Actualización de las vistas `crear_gasto_programado` y `editar_gasto_programado` en `core/views.py` para soportar los campos `notas` y `activo`.
+
 ### [2026-03] Tipos de Categoría y Carga Masiva (Fix/Enhancement)
 - **Modelos Actualizados**:
   - `CategoriaIngreso` y `RegistroMensual` ahora soportan nuevos tipos: `INVERSION` (Inversión), `CREDITO_CONSUMO` (Crédito de Consumo) y `CREDITO_HIPOTECARIO` (Crédito Hipotecario).

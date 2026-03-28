@@ -862,7 +862,9 @@ def crear_gasto_programado(request):
         nombre=request.POST.get('nombre'),
         monto=request.POST.get('monto'),
         fecha_inicio=request.POST.get('fecha_inicio'),
-        frecuencia=request.POST.get('frecuencia')
+        frecuencia=request.POST.get('frecuencia'),
+        notas=request.POST.get('notas', ''),
+        activo=request.POST.get('activo') == 'on' if 'activo' in request.POST else True
     )
     return redirect('calendario')
 
@@ -875,6 +877,9 @@ def editar_gasto_programado(request, pk):
     gasto.monto = request.POST.get('monto', gasto.monto)
     gasto.fecha_inicio = request.POST.get('fecha_inicio', gasto.fecha_inicio)
     gasto.frecuencia = request.POST.get('frecuencia', gasto.frecuencia)
+    gasto.notas = request.POST.get('notas', gasto.notas)
+    if 'activo' in request.POST:
+        gasto.activo = request.POST.get('activo') == 'on'
     gasto.save()
     return redirect('calendario')
 
