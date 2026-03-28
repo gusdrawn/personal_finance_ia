@@ -131,7 +131,7 @@ def gastos_table(request):
     
     # Gather categories for the bulk modal
     categorias_bulk = CategoriaIngreso.objects.filter(
-        Q(user=user) & (Q(banco_defecto__isnull=True) | Q(banco_defecto__mostrar_en_carga_masiva=True))
+        user=user, mostrar_en_carga_masiva=True
     ).select_related('banco_defecto')
     
     grouped_categorias = {}
@@ -655,7 +655,7 @@ def bulk_gastos(request):
     last_month_date = today.replace(day=1) - timedelta(days=1)
     
     categorias = CategoriaIngreso.objects.filter(
-        Q(user=user) & (Q(banco_defecto__isnull=True) | Q(banco_defecto__mostrar_en_carga_masiva=True))
+        user=user, mostrar_en_carga_masiva=True
     ).select_related('banco_defecto')
     
     # Group categories for the UI
@@ -708,6 +708,7 @@ def crear_categoria(request):
         dia_cobro = int(dia_cobro)
     else:
         dia_cobro = None
+    mostrar_en_carga_masiva = request.POST.get('mostrar_en_carga_masiva') == 'on'
     
     if nombre:
         CategoriaIngreso.objects.create(
@@ -717,6 +718,7 @@ def crear_categoria(request):
             contabilizar=contabilizar,
             moneda_defecto=moneda_defecto,
             dia_cobro=dia_cobro,
+            mostrar_en_carga_masiva=mostrar_en_carga_masiva,
             activo=True
         )
     # Redirect back to previous page
@@ -738,6 +740,8 @@ def editar_categoria(request, pk):
     else:
         cat.dia_cobro = None
         
+    cat.mostrar_en_carga_masiva = request.POST.get('mostrar_en_carga_masiva') == 'on'
+        
     cat.save()
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
@@ -746,7 +750,11 @@ def editar_categoria(request, pk):
 @login_required
 def borrar_categoria(request, pk):
     cat = CategoriaIngreso.objects.get(pk=pk, user=request.user)
-    cat.delete()
+    if cat.producto_asociado:
+        # Avoid manually deleting synced categories
+        pass
+    else:
+        cat.delete()
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
 
@@ -889,12 +897,55 @@ def borrar_banco(request, pk):
 @require_http_methods(["POST"])
 @login_required
 def crear_producto(request):
-    Producto.objects.create(
-        banco_id=request.POST.get('banco_id'),
-        nombre=request.POST.get('nombre'),
-        tipo=request.POST.get('tipo', 'TDC'),
+    banco_id = request.POST.get('banco_id')
+    nombre = request.POST.get('nombre')
+    tipo = request.POST.get('tipo', 'TDC')
+    tiene_cupo_usd = request.POST.get('tiene_cupo_usd') == 'on'
+    
+    prod = Producto.objects.create(
+        banco_id=banco_id,
+        nombre=nombre,
+        tipo=tipo,
+        tiene_cupo_usd=tiene_cupo_usd,
         activo=True
     )
+    
+    # Auto-generar categoría para Carga Masiva (evita crearla a mano)
+    from gastos.models import CategoriaIngreso
+    banco = Banco.objects.get(id=banco_id)
+    if tipo == 'CREDITO_CONSUMO':
+        cat_tipo = 'CREDITO_CONSUMO'
+    elif tipo == 'CREDITO_HIPOTECARIO':
+        cat_tipo = 'CREDITO_HIPOTECARIO'
+    elif tipo in ['TDC', 'LINEA_CREDITO']:
+        cat_tipo = 'TDC'
+    else:
+        cat_tipo = 'COBRO_BANCO'
+    
+    # CLP category
+    CategoriaIngreso.objects.create(
+        user=request.user,
+        nombre=f"{banco.nombre} - {nombre} (CLP)" if tiene_cupo_usd else f"{banco.nombre} - {nombre}",
+        tipo=cat_tipo,
+        banco_defecto=banco,
+        producto_asociado=prod,
+        moneda_defecto='CLP',
+        mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva,
+        activo=True
+    )
+    
+    if tiene_cupo_usd:
+        # USD category
+        CategoriaIngreso.objects.create(
+            user=request.user,
+            nombre=f"{banco.nombre} - {nombre} (USD)",
+            tipo=cat_tipo,
+            banco_defecto=banco,
+            producto_asociado=prod,
+            moneda_defecto='USD',
+            mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva,
+            activo=True
+        )
     return redirect('configuracion')
 
 @require_http_methods(["POST"])
@@ -904,13 +955,69 @@ def editar_producto(request, pk):
     prod.banco_id = request.POST.get('banco_id', prod.banco_id)
     prod.nombre = request.POST.get('nombre', prod.nombre)
     prod.tipo = request.POST.get('tipo', prod.tipo)
+    
+    old_usd = prod.tiene_cupo_usd
+    prod.tiene_cupo_usd = request.POST.get('tiene_cupo_usd') == 'on'
     prod.save()
+    
+    # Sync category if it exists
+    from gastos.models import CategoriaIngreso
+    banco = Banco.objects.get(id=prod.banco_id)
+    
+    if prod.tipo == 'CREDITO_CONSUMO':
+        cat_tipo = 'CREDITO_CONSUMO'
+    elif prod.tipo == 'CREDITO_HIPOTECARIO':
+        cat_tipo = 'CREDITO_HIPOTECARIO'
+    elif prod.tipo in ['TDC', 'LINEA_CREDITO']:
+        cat_tipo = 'TDC'
+    else:
+        cat_tipo = 'COBRO_BANCO'
+    
+    categorias = prod.categorias_vinculadas.all()
+    if categorias.exists():
+        if not prod.tiene_cupo_usd:
+            # Drop USD if it exists, rename remaining to normal
+            for cat in categorias:
+                if cat.moneda_defecto == 'USD':
+                    cat.delete()
+                else:
+                    cat.nombre = f"{banco.nombre} - {prod.nombre}"
+                    cat.tipo = cat_tipo
+                    cat.banco_defecto = banco
+                    cat.save(update_fields=['nombre', 'tipo', 'banco_defecto'])
+        else:
+            # Update or create both
+            clp_cat = categorias.filter(moneda_defecto='CLP').first()
+            if clp_cat:
+                clp_cat.nombre = f"{banco.nombre} - {prod.nombre} (CLP)"
+                clp_cat.tipo = cat_tipo
+                clp_cat.banco_defecto = banco
+                clp_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto'])
+            else:
+                CategoriaIngreso.objects.create(
+                    user=request.user, nombre=f"{banco.nombre} - {prod.nombre} (CLP)", tipo=cat_tipo,
+                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='CLP', mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, activo=True
+                )
+            
+            usd_cat = categorias.filter(moneda_defecto='USD').first()
+            if usd_cat:
+                usd_cat.nombre = f"{banco.nombre} - {prod.nombre} (USD)"
+                usd_cat.tipo = cat_tipo
+                usd_cat.banco_defecto = banco
+                usd_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto'])
+            else:
+                CategoriaIngreso.objects.create(
+                    user=request.user, nombre=f"{banco.nombre} - {prod.nombre} (USD)", tipo=cat_tipo,
+                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='USD', mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, activo=True
+                )
+        
     return redirect('configuracion')
 
 @require_http_methods(["POST"])
 @login_required
 def borrar_producto(request, pk):
     prod = Producto.objects.get(pk=pk)
+    prod.categorias_vinculadas.all().delete()
     prod.delete()
     return redirect('configuracion')
 

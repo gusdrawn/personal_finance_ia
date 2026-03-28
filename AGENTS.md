@@ -14,6 +14,17 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Tipos de Categoría y Carga Masiva (Fix/Enhancement)
+- **Modelos Actualizados**:
+  - `CategoriaIngreso` y `RegistroMensual` ahora soportan nuevos tipos: `INVERSION` (Inversión), `CREDITO_CONSUMO` (Crédito de Consumo) y `CREDITO_HIPOTECARIO` (Crédito Hipotecario).
+  - Se añadió `mostrar_en_carga_masiva` a `CategoriaIngreso` y la llave foránea `producto_asociado` para enlazar Productos financieros a Categorías (Módulo de Configuración).
+  - El modelo `Producto` ahora incluye `tiene_cupo_usd` para administrar tarjetas bimoneda de forma segregada.
+- **Vistas y Templates**:
+  - Actualización de las consultas en `gastos_table` y `bulk_gastos` (en `core/views.py`) para filtrar categorías basándose en su propio campo de persistencia.
+  - Implementada Sincronización Automática: al crear un `Producto` (como TDC, Créditos, etc.), se auto-genera su `CategoriaIngreso` asociada. Si el producto tiene cupo USD, se generan dos categorías individuales ("TDC (CLP)" y "TDC (USD)").
+  - Bloqueo de borrado y ocultamiento del botón de edición en "Categorías" para aquellas autogeneradas (aparecen candados) previniendo desincronización y problemas de integridad relacional. Se eliminan desde Entidades Financieras.
+  - Consolidación semántica de Tipos: Se movieron los "tipos" `TDC`, `COBRO_BANCO`, `CREDITO_CONSUMO` y `CREDITO_HIPOTECARIO` desde el formulario manual de Categorías hacia el formulario de Productos, forzando a que éstos se creen únicamente desde Entidades y manteniendo coherencia total.
+
 ### [2026-03] Soporte de Modales de Arrendatario y Crédito
 - **Nuevas Funcionalidades**:
   - Implementación de modales interactivos en la interfaz para la creación, edición y eliminación de Arrendatarios y Créditos Hipotecarios dentro de `departamentos.html`.

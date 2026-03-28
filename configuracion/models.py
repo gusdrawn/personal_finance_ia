@@ -29,8 +29,10 @@ class Producto(models.Model):
     PRODUCTO_TIPOS = [
         ('TDC', 'Tarjeta de Crédito'),
         ('LINEA_CREDITO', 'Línea de Crédito'),
+        ('CREDITO_CONSUMO', 'Crédito de Consumo'),
+        ('CREDITO_HIPOTECARIO', 'Crédito Hipotecario'),
         ('CUENTA', 'Cuenta Corriente'),
-        ('COBRO', 'Cobro/Cargo'),
+        ('COBRO_BANCO', 'Cobro de Banco'),
         ('OTRO', 'Otro'),
     ]
 
@@ -39,6 +41,10 @@ class Producto(models.Model):
     tipo = models.CharField(max_length=20, choices=PRODUCTO_TIPOS)
     orden = models.IntegerField(default=0)
     activo = models.BooleanField(default=True)
+    tiene_cupo_usd = models.BooleanField(
+        default=False,
+        help_text="Si es Tarjeta de Crédito, indica si maneja un cupo en dólares separado"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

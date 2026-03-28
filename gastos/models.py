@@ -19,6 +19,9 @@ class CategoriaIngreso(models.Model):
         ('SEGURO', 'Seguro'),
         ('TDC', 'Tarjeta de Crédito'),
         ('COBRO_BANCO', 'Cobro de Banco'),
+        ('INVERSION', 'Inversión'),
+        ('CREDITO_CONSUMO', 'Crédito de Consumo'),
+        ('CREDITO_HIPOTECARIO', 'Crédito Hipotecario'),
     ]
 
     user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='categorias_ingresos')
@@ -33,6 +36,14 @@ class CategoriaIngreso(models.Model):
         on_delete=models.SET_NULL,
         related_name='categorias_ingresos'
     )
+    producto_asociado = models.ForeignKey(
+        'configuracion.Producto',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='categorias_vinculadas'
+    )
+
     contabilizar = models.BooleanField(
         default=True, 
         help_text="Si es Falso, no suma al gasto total (ej. ya pagado en TDC)"
@@ -41,6 +52,10 @@ class CategoriaIngreso(models.Model):
         max_length=3, 
         choices=MONEDA_CHOICES, 
         default='CLP'
+    )
+    mostrar_en_carga_masiva = models.BooleanField(
+        default=True, 
+        help_text="Si es Falso, se oculta del modal de carga masiva"
     )
     dia_cobro = models.IntegerField(
         null=True, blank=True,
@@ -68,6 +83,9 @@ class RegistroMensual(models.Model):
         ('SEGURO', 'Seguro'),
         ('TDC', 'Tarjeta de Crédito'),
         ('COBRO_BANCO', 'Cobro de Banco'),
+        ('INVERSION', 'Inversión'),
+        ('CREDITO_CONSUMO', 'Crédito de Consumo'),
+        ('CREDITO_HIPOTECARIO', 'Crédito Hipotecario'),
     ]
 
     user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='registros_mensuales')
