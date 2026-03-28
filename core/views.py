@@ -39,6 +39,29 @@ def ensure_pasivos_for_products(user):
             )
 
 
+def ensure_departamento_categories(user):
+    """
+    Ensures each department has an INGRESO category for tracking rent payments.
+    """
+    from departamentos.models import Departamento
+    from gastos.models import CategoriaIngreso
+    
+    deptos = Departamento.objects.filter(user=user)
+    for depto in deptos:
+        cat_nombre = f"Arriendo {depto.codigo}"
+        CategoriaIngreso.objects.get_or_create(
+            user=user,
+            nombre=cat_nombre,
+            tipo='INGRESO',
+            defaults={
+                'mostrar_en_carga_masiva': True,
+                'moneda_defecto': 'CLP',
+                'contabilizar': True,
+                'activo': True,
+            }
+        )
+
+
 @login_required
 def dashboard(request):
     """Dashboard with key metrics and charts"""
@@ -437,6 +460,9 @@ def departamentos(request):
     except TipoCambio.DoesNotExist:
         valor_uf = Decimal(0)
     
+    # Sync categories for departments if missing
+    ensure_departamento_categories(user)
+    
     departamentos_qs = Departamento.objects.filter(user=user).prefetch_related(
         'arrendatario', 'credito_hipotecario'
     )
@@ -475,6 +501,10 @@ def departamentos(request):
             info['costo_admin'] = renta_esperada - ingreso_real if ingreso_real > 0 else Decimal(0)
             info['pct_admin'] = (info['costo_admin'] / renta_esperada * 100) if renta_esperada > 0 and ingreso_real > 0 else 0
             
+            # New Metric: % Ingreso vs Renta Mensual
+            info['pct_recaudacion'] = (ingreso_real / renta_esperada * 100) if renta_esperada > 0 else 0
+            info['missing_pct'] = max(0, 100 - info['pct_recaudacion'])
+            
             valor_actual_clp = d.valor_actual_uf * valor_uf
             if valor_actual_clp > 0 and ingreso_real > 0:
                 info['roi_cashflow'] = float(ingreso_real * 12 / valor_actual_clp * 100)
@@ -485,10 +515,34 @@ def departamentos(request):
             if hasattr(d, 'credito_hipotecario'):
                 amort_mensual = d.credito_hipotecario.calcular_amortizacion_mensual() * valor_uf
                 info['roi_amort'] = float(amort_mensual * 12 / valor_actual_clp * 100) if valor_actual_clp > 0 else 0
+                
+                # Dividend coverage metrics
+                dividendo_clp = d.credito_hipotecario.cuota_uf * valor_uf
+                info['dividendo_clp'] = dividendo_clp
+                info['cobertura_dividendo'] = (ingreso_real / dividendo_clp * 100) if dividendo_clp > 0 else 0
+                info['diferencia_dividendo'] = ingreso_real - dividendo_clp
+                
+                # NEW: Utilidad Patrimonial (Cash Flow + Amortización)
+                # It represents the real gain after interests (Income - Interest)
+                info['utilidad_patrimonial'] = info['diferencia_dividendo'] + amort_mensual
             else:
                 info['roi_amort'] = 0
+                info['dividendo_clp'] = 0
+                info['cobertura_dividendo'] = 0
+                info['diferencia_dividendo'] = 0
+                info['utilidad_patrimonial'] = ingreso_real  # Without debt, entire income is gain (minus admin/tax costs already accounted in real income)
             
             info['roi_total'] = info['roi_cashflow'] + info['roi_amort']
+        else:
+            info['renta_esperada'] = 0
+            info['ingreso_real'] = 0
+            info['pct_recaudacion'] = 0
+            info['missing_pct'] = 100
+            info['dividendo_clp'] = 0
+            info['cobertura_dividendo'] = 0
+            info['diferencia_dividendo'] = 0
+            info['utilidad_patrimonial'] = 0
+            info['roi_total'] = 0
         
         deptos_con_roi.append(info)
 
@@ -497,10 +551,32 @@ def departamentos(request):
         tipo='CREDITO_HIPOTECARIO', activo=True
     ).select_related('banco')
 
+    # Calculate Global Portfolio Metrics for Cards
+    total_ingreso_real = sum(i['ingreso_real'] for i in deptos_con_roi)
+    total_renta_pactada = sum(i['renta_esperada'] for i in deptos_con_roi)
+    total_cobertura_dividendo = sum(i['diferencia_dividendo'] for i in deptos_con_roi)
+    total_utilidad_patrimonial = sum(i['utilidad_patrimonial'] for i in deptos_con_roi)
+    
+    total_amort_uf = sum(
+        d.credito_hipotecario.calcular_amortizacion_mensual()
+        for d in departamentos_qs if hasattr(d, 'credito_hipotecario')
+    )
+    total_amort_clp = total_amort_uf * valor_uf
+    
+    # Average Cap Rate (weighted by current market value)
+    total_value_clp = sum(i['valor_clp'] for i in deptos_con_roi)
+    avg_cap_rate = float(total_ingreso_real * 12 / total_value_clp * 100) if total_value_clp > 0 else 0
+
     context = {
         'departamentos': departamentos_qs,
         'deptos_con_roi': deptos_con_roi,
-        'total_arriendos': total_arriendos,
+        'total_arriendos': total_renta_pactada,
+        'total_ingreso_real': total_ingreso_real,
+        'total_cobertura_dividendo': total_cobertura_dividendo,
+        'total_utilidad_patrimonial': total_utilidad_patrimonial,
+        'total_amort_clp': total_amort_clp,
+        'total_amort_uf': total_amort_uf,
+        'avg_cap_rate': avg_cap_rate,
         'promedio_arriendo': promedio_arriendo,
         'total_valor_actual': total_valor_actual,
         'tipo_cambio': valor_uf,
@@ -661,12 +737,23 @@ def crear_departamento(request):
 @login_required
 def editar_departamento(request, pk):
     depto = Departamento.objects.get(pk=pk, user=request.user)
+    old_codigo = depto.codigo
+    
     depto.codigo = request.POST.get('codigo')
     depto.piso = request.POST.get('piso')
     depto.metros_cuadrados = request.POST.get('metros_cuadrados')
     depto.valor_compra_uf = request.POST.get('valor_compra_uf')
     depto.valor_actual_uf = request.POST.get('valor_actual_uf')
     depto.save()
+    
+    # Sync category name if code changed
+    if old_codigo != depto.codigo:
+        old_cat_nombre = f"Arriendo {old_codigo}"
+        new_cat_nombre = f"Arriendo {depto.codigo}"
+        CategoriaIngreso.objects.filter(
+            user=request.user, nombre=old_cat_nombre, tipo='INGRESO'
+        ).update(nombre=new_cat_nombre)
+        
     return redirect('departamentos')
 
 

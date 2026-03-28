@@ -14,6 +14,16 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Sincronización y Métricas de Departamentos
+- **Categorías de Ingreso Automáticas**: 
+  - Se implementó `ensure_departamento_categories` para sincronizar retroactivamente las categorías de arriendo para todos los departamentos existentes.
+  - La sincronización ocurre automáticamente al visitar la página de Departamentos.
+  - Se añadió lógica en `editar_departamento` para renombrar la categoría de ingreso asociada si el código del departamento cambia, manteniendo la integridad del historial de registros.
+- **Métricas de Recaudación**:
+  - Nueva columna en la tabla de Performance & Yield: "% Recaudado" (Ingreso Real vs Renta Pactada).
+  - Visualización mejorada con barras de progreso y colores dinámicos según el cumplimiento del pago.
+  - Uso de `deptos_con_roi` en el template para mostrar Cap Rate y ROI Total calculados en el backend.
+
 ### [2026-03] Sincronización de Tarjetas de Crédito (TDC) en Pasivos
 - **Entidades Financieras → Pasivos**:
   - Se habilitó la auto-creación de `Pasivo` para productos tipo `TDC` (Tarjeta de Crédito), igualando el comportamiento de Créditos de Consumo e Hipotecarios.

@@ -16,6 +16,14 @@ def divide(value, arg):
     except (ValueError, TypeError, ZeroDivisionError):
         return 0
 
+@register.filter
+def subtract(value, arg):
+    try:
+        return float(value) - float(arg)
+    except (ValueError, TypeError):
+        return 0
+
+
 @register.filter(name='split')
 def split(value, arg):
     return value.split(arg)

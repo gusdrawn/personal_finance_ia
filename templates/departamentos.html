@@ -1,36 +1,59 @@
 {% extends 'base.html' %}
 {% load core_extras %}
+{% load l10n %}
 
 {% block title %}Departamentos - FinanzasPersonalesIA{% endblock %}
 {% block page_title %}Real Estate Portfolio{% endblock %}
 
 {% block content %}
-<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-    <div class="glass p-6 rounded-2xl border-t-4 border-sky-500 card-stat">
+<div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+    <div class="glass p-5 rounded-2xl border-t-4 border-emerald-500 card-stat">
         <div class="flex items-center justify-between mb-2">
-            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Unidades</span>
-            <i class="fas fa-building text-sky-500 text-sm"></i>
+            <span class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Recaudación</span>
+            <i class="fas fa-money-bill-get text-emerald-500 text-xs"></i>
         </div>
-        <p class="text-3xl font-bold text-white">{{ departamentos|length }}</p>
-        <p class="text-xs text-slate-500 mt-2 font-medium">Propiedades Activas</p>
+        <p class="text-xl font-bold text-white">${{ total_ingreso_real|floatformat:0 }}</p>
+        <p class="text-[9px] text-slate-500 mt-2 font-medium">Pactado: <span class="text-slate-300">${{ total_arriendos|floatformat:0 }}</span></p>
     </div>
     
-    <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500 card-stat">
+    <div class="glass p-5 rounded-2xl border-t-4 border-indigo-500 card-stat">
         <div class="flex items-center justify-between mb-2">
-            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Renta Bruta</span>
-            <i class="fas fa-money-bill-trend-up text-emerald-500 text-sm"></i>
+            <span class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Cash Flow Neto</span>
+            <i class="fas fa-hand-holding-dollar text-indigo-500 text-xs"></i>
         </div>
-        <p class="text-3xl font-bold text-white">${{ total_arriendos|floatformat:0|default:"0" }}</p>
-        <p class="text-xs text-slate-500 mt-2 font-medium">Promedio: ${{ promedio_arriendo|floatformat:0|default:"0" }}/mes</p>
+        <p class="text-xl font-bold {% if total_cobertura_dividendo >= 0 %}text-white{% else %}text-rose-400{% endif %}">
+            {% if total_cobertura_dividendo >= 0 %}+{% endif %}${{ total_cobertura_dividendo|floatformat:0 }}
+        </p>
+        <p class="text-[9px] text-slate-500 mt-2 font-medium text-indigo-400">Cobertura dividendos</p>
     </div>
-    
-    <div class="glass p-6 rounded-2xl border-t-4 border-indigo-500 card-stat">
+
+    <div class="glass p-5 rounded-2xl border-t-4 border-rose-500 card-stat">
         <div class="flex items-center justify-between mb-2">
-            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Equity Inmobiliario</span>
-            <i class="fas fa-chart-line text-indigo-500 text-sm"></i>
+            <span class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Utilidad Patrimonial</span>
+            <i class="fas fa-gem text-rose-500 text-xs"></i>
         </div>
-        <p class="text-3xl font-bold text-white">${{ total_valor_actual|floatformat:0|default:"0" }}</p>
-        <p class="text-xs text-slate-500 mt-2 font-medium">Valuación estimada actual</p>
+        <p class="text-xl font-bold text-emerald-400">
+            +${{ total_utilidad_patrimonial|floatformat:0 }}
+        </p>
+        <p class="text-[9px] text-slate-500 mt-2 font-medium">Resultado neto real</p>
+    </div>
+
+    <div class="glass p-5 rounded-2xl border-t-4 border-sky-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Cap Rate Avg</span>
+            <i class="fas fa-percent text-sky-500 text-xs"></i>
+        </div>
+        <p class="text-xl font-bold text-white">{{ avg_cap_rate|floatformat:2 }}%</p>
+        <p class="text-[9px] text-slate-500 mt-2 font-medium">Rendimiento anual</p>
+    </div>
+
+    <div class="glass p-5 rounded-2xl border-t-4 border-amber-500 card-stat">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Amortización Mes</span>
+            <i class="fas fa-shield-heart text-amber-500 text-xs"></i>
+        </div>
+        <p class="text-xl font-bold text-white">${{ total_amort_clp|floatformat:0 }}</p>
+        <p class="text-[9px] text-slate-500 mt-2 font-medium">({{ total_amort_uf|floatformat:2 }} UF) Capital</p>
     </div>
 </div>
 
@@ -212,35 +235,81 @@
             <thead>
                 <tr>
                     <th class="text-left">Unidad</th>
-                    <th class="text-right">Cap Rate (Anual)</th>
-                    <th class="text-right">Ganancia Capital</th>
-                    <th class="text-right">Amortización / Mes</th>
-                    <th class="text-center">Status</th>
+                    <th class="text-right">Renta Pactada</th>
+                    <th class="text-right">Ingreso Real (Avg)</th>
+                    <th class="text-right">Cobertura Dividendo</th>
+                    <th class="text-right">Utilidad Patrimonial</th>
+                    <th class="text-right">% Recaudado</th>
+                    <th class="text-right">Cap Rate</th>
+                    <th class="text-right">Amortización</th>
+                    <th class="text-center">ROI Total</th>
                 </tr>
             </thead>
             <tbody>
-                {% for depto in departamentos %}
+                {% for item in deptos_con_roi %}
                 <tr>
-                    <td><span class="font-bold text-slate-100">{{ depto.codigo }}</span></td>
+                    <td>
+                        <div class="flex flex-col">
+                            <span class="font-bold text-slate-100">{{ item.depto.codigo }}</span>
+                            <span class="text-[9px] text-slate-500 uppercase font-black uppercase tracking-tighter line-clamp-1">{{ item.depto.piso }}</span>
+                        </div>
+                    </td>
+                    <td class="text-right text-slate-300 font-medium">
+                        ${{ item.renta_esperada|floatformat:0|default:"0" }}
+                    </td>
                     <td class="text-right text-emerald-400 font-bold">
-                        {% if depto.arrendatario %}
-                            {{ depto.arrendatario.monto_arriendo_clp|multiply:12|divide:tipo_cambio|divide:depto.valor_actual_uf|multiply:100|floatformat:2 }}%
+                        ${{ item.ingreso_real|floatformat:0|default:"0" }}
+                    </td>
+                    <td class="text-right">
+                        {% if item.dividendo_clp > 0 %}
+                        <div class="flex flex-col items-end">
+                            <span class="text-[11px] font-black {% if item.diferencia_dividendo >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                                {% if item.diferencia_dividendo >= 0 %}+{% endif %}${{ item.diferencia_dividendo|floatformat:0 }}
+                            </span>
+                            <span class="text-[9px] text-slate-500 font-bold">
+                                {{ item.cobertura_dividendo|floatformat:1 }}%
+                            </span>
+                        </div>
+                        {% else %}
+                        <span class="text-[10px] uppercase font-black text-slate-600 tracking-tighter">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right">
+                        <span class="text-[11px] font-black {% if item.utilidad_patrimonial >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                            ${{ item.utilidad_patrimonial|floatformat:0 }}
+                        </span>
+                    </td>
+                    <td class="text-right">
+                        <div class="flex flex-col items-end min-w-[110px]">
+                            <div class="flex items-center space-x-1.5 mb-1.5">
+                                <span class="text-[11px] font-black {% if item.pct_recaudacion >= 100 %}text-emerald-400{% elif item.pct_recaudacion > 0 %}text-amber-400{% else %}text-rose-400{% endif %}">
+                                    {{ item.pct_recaudacion|floatformat:1 }}%
+                                </span>
+                                <span class="text-[9px] text-slate-500 font-bold">
+                                    ({{ item.missing_pct|floatformat:1 }}%)
+                                </span>
+                            </div>
+                            <div class="w-full h-1.5 bg-slate-800/50 rounded-full overflow-hidden shadow-inner border border-white/5">
+                                <div class="h-full {% if item.pct_recaudacion >= 100 %}bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]{% elif item.pct_recaudacion > 0 %}bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]{% else %}bg-rose-500{% endif %}" style="width: {{ item.pct_recaudacion|unlocalize }}%"></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="text-right text-sky-400 font-bold">
+                        {% if item.depto.arrendatario %}
+                            {{ item.roi_cashflow|floatformat:2 }}%
                         {% else %}
                             0.00%
                         {% endif %}
                     </td>
-                    <td class="text-right">
-                        <span class="text-white font-mono font-bold">+{{ depto.ganancia_capital_uf|floatformat:0 }} UF</span>
-                    </td>
-                    <td class="text-right text-slate-400">
-                        {% if depto.credito_hipotecario %}
-                            {{ depto.credito_hipotecario.calcular_amortizacion_mensual|floatformat:2 }} UF
+                    <td class="text-right text-indigo-400">
+                        {% if item.depto.credito_hipotecario %}
+                            {{ item.depto.credito_hipotecario.calcular_amortizacion_mensual|floatformat:1 }} UF
                         {% else %}
-                            <span class="text-[10px] uppercase font-bold tracking-widest text-slate-600">Free & Clear</span>
+                            <span class="text-[9px] uppercase font-bold text-slate-600">No Debt</span>
                         {% endif %}
                     </td>
                     <td class="text-center">
-                        <span class="badge badge-primary">Active</span>
+                        <span class="badge {% if item.roi_total > 5 %}badge-emerald{% else %}badge-primary{% endif %}">{{ item.roi_total|floatformat:2 }}%</span>
                     </td>
                 </tr>
                 {% endfor %}
