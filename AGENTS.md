@@ -14,6 +14,21 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Integraciones Automáticas: Bicicletas, Hipotecas & Pasivos (Enhancement)
+- **Bicicletas de Terceros → Categoría de Ingreso + Activo**:
+  - Al crear un préstamo tipo `TERCEROS`, se auto-genera una `CategoriaIngreso` tipo INGRESO `"Cobro Bicicleta - {nombre}"` con `mostrar_en_carga_masiva=True` para poder registrar cobros en carga masiva.
+  - Simultáneamente se auto-genera un `Activo` tipo `PRESTAMO_DADO`, no líquido, horizonte corto plazo, con el mismo monto del préstamo.
+  - Al editar el préstamo, se sincronizan nombre y monto en la categoría y el activo.
+  - Al eliminar el préstamo, se eliminan la categoría y el activo vinculados.
+- **Productos CREDITO_HIPOTECARIO / CREDITO_CONSUMO → Auto-Pasivo**:
+  - Al crear un `Producto` de tipo `CREDITO_HIPOTECARIO` o `CREDITO_CONSUMO` en Entidades Financieras, se auto-genera un `Pasivo` vinculado con monto inicial $0 (para que el usuario lo actualice).
+  - Los pasivos auto-generados están protegidos contra eliminación (candado 🔒).
+- **Departamentos — Vincular Hipotecas existentes**:
+  - `CreditoHipotecario` ahora tiene FK a `Producto` (opcional), permitiendo seleccionar un crédito hipotecario existente desde Entidades Financieras.
+  - El modal de hipoteca en Departamentos cambió de "seleccionar Banco" a "Seleccionar Crédito Hipotecario (Entidad Financiera)". El banco se deriva automáticamente del producto.
+  - Propiedad `banco_display` en el modelo para obtener banco de producto o FK directa.
+- **Archivos actualizados**: `departamentos/models.py`, `prestamos/views.py`, `core/views.py`, `templates/departamentos.html`.
+
 ### [2026-03] Rework Patrimonio, Inversiones & Dashboard (Major)
 - **Modelos**:
   - Modelo `Activo` unificado: fusión de `inversiones.Inversion` + `patrimonio.Activo` en un solo modelo con campos `horizonte_temporal` (EFECTIVO / CORTO_PLAZO / MEDIANO_PLAZO / LARGO_PLAZO), `es_liquido` (boolean), y `activo` (flag).

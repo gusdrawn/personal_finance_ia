@@ -462,6 +462,11 @@ def departamentos(request):
         
         deptos_con_roi.append(info)
 
+    # Productos CREDITO_HIPOTECARIO available from Entidades Financieras
+    creditos_hip_productos = Producto.objects.filter(
+        tipo='CREDITO_HIPOTECARIO', activo=True
+    ).select_related('banco')
+
     context = {
         'departamentos': departamentos_qs,
         'deptos_con_roi': deptos_con_roi,
@@ -470,6 +475,7 @@ def departamentos(request):
         'total_valor_actual': total_valor_actual,
         'tipo_cambio': valor_uf,
         'bancos': bancos,
+        'creditos_hip_productos': creditos_hip_productos,
     }
     
     return render(request, 'departamentos.html', context)
@@ -723,9 +729,23 @@ def borrar_arrendatario(request, pk):
 @login_required
 def crear_credito(request, depto_pk):
     depto = Departamento.objects.get(pk=depto_pk, user=request.user)
+    
+    # Link to existing Producto (CREDITO_HIPOTECARIO) from Entidades Financieras
+    producto_id = request.POST.get('producto_id')
+    banco_id = request.POST.get('banco_id')
+    
+    producto = None
+    banco = None
+    if producto_id:
+        producto = Producto.objects.get(id=producto_id)
+        banco = producto.banco
+    elif banco_id:
+        banco = Banco.objects.get(id=banco_id)
+    
     CreditoHipotecario.objects.create(
         departamento=depto,
-        banco_id=request.POST.get('banco_id'),
+        producto=producto,
+        banco=banco,
         monto_original_uf=request.POST.get('monto_original_uf', 0),
         tasa_anual=request.POST.get('tasa_anual', 0),
         plazo_anos=request.POST.get('plazo_anos', 0),
@@ -752,7 +772,13 @@ def crear_credito(request, depto_pk):
 @login_required
 def editar_credito(request, pk):
     credito = CreditoHipotecario.objects.get(pk=pk, departamento__user=request.user)
-    credito.banco_id = request.POST.get('banco_id', credito.banco_id)
+    
+    # Update producto link (from Entidades Financieras)
+    producto_id = request.POST.get('producto_id')
+    if producto_id:
+        credito.producto_id = producto_id
+        credito.banco = Producto.objects.get(id=producto_id).banco
+    
     credito.monto_original_uf = request.POST.get('monto_original_uf', credito.monto_original_uf)
     credito.tasa_anual = request.POST.get('tasa_anual', credito.tasa_anual)
     credito.plazo_anos = request.POST.get('plazo_anos', credito.plazo_anos)
@@ -1135,6 +1161,22 @@ def crear_producto(request):
             dia_cobro=dia_cobro,
             activo=True
         )
+    
+    # Auto-create Pasivo for CREDITO_HIPOTECARIO and CREDITO_CONSUMO products
+    if tipo in ['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO']:
+        Pasivo.objects.get_or_create(
+            user=request.user,
+            producto=prod,
+            defaults={
+                'nombre': f"{banco.nombre} - {nombre}",
+                'tipo': tipo,
+                'monto_clp': 0,
+                'monto_usd': 0,
+                'activo': True,
+                'notas': f"Auto-generado desde Entidad Financiera: {banco.nombre} - {nombre}",
+            }
+        )
+    
     return redirect('configuracion')
 
 

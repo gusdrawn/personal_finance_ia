@@ -150,9 +150,9 @@
         <div class="px-6 pb-6 mt-auto">
             <div class="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/10">
                 <div class="flex items-center justify-between mb-3">
-                    <p class="text-[10px] uppercase font-bold text-indigo-400 flex items-center"><i class="fas fa-shield-halved mr-1"></i> {{ depto.credito_hipotecario.banco.nombre }}</p>
+                    <p class="text-[10px] uppercase font-bold text-indigo-400 flex items-center"><i class="fas fa-shield-halved mr-1"></i> {{ depto.credito_hipotecario.banco_display.nombre }}</p>
                     <div class="flex items-center space-x-2">
-                        <button onclick="editCredito('{{ depto.credito_hipotecario.id }}', '{{ depto.credito_hipotecario.banco.id }}', '{{ depto.credito_hipotecario.monto_original_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.tasa_anual|stringformat:'f' }}', '{{ depto.credito_hipotecario.plazo_anos }}', '{{ depto.credito_hipotecario.tipo_tasa }}', '{{ depto.credito_hipotecario.cuota_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.saldo_actual_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.cuotas_totales }}', '{{ depto.credito_hipotecario.cuotas_pagadas }}', '{% if depto.fecha_inicio %}{{ depto.fecha_inicio|date:'Y-m-d' }}{% endif %}', '{% if depto.fecha_ultima_cuota %}{{ depto.fecha_ultima_cuota|date:'Y-m-d' }}{% endif %}')" class="w-6 h-6 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-sky-400 transition-colors">
+                        <button onclick="editCredito('{{ depto.credito_hipotecario.id }}', '{{ depto.credito_hipotecario.producto_id|default:'' }}', '{{ depto.credito_hipotecario.monto_original_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.tasa_anual|stringformat:'f' }}', '{{ depto.credito_hipotecario.plazo_anos }}', '{{ depto.credito_hipotecario.tipo_tasa }}', '{{ depto.credito_hipotecario.cuota_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.saldo_actual_uf|stringformat:'f' }}', '{{ depto.credito_hipotecario.cuotas_totales }}', '{{ depto.credito_hipotecario.cuotas_pagadas }}', '{% if depto.fecha_inicio %}{{ depto.fecha_inicio|date:'Y-m-d' }}{% endif %}', '{% if depto.fecha_ultima_cuota %}{{ depto.fecha_ultima_cuota|date:'Y-m-d' }}{% endif %}')" class="w-6 h-6 rounded-md bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-sky-400 transition-colors">
                             <i class="fas fa-edit text-[10px]"></i>
                         </button>
                         <form action="{% url 'borrar_credito' depto.credito_hipotecario.id %}" method="POST" class="inline" onsubmit="return confirm('¿Borrar hipoteca?');">
@@ -360,10 +360,11 @@
             <div class="p-8 space-y-5">
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Banco</label>
-                        <select id="cred-banco" name="banco_id" required class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
-                            {% for banco in bancos %}
-                            <option value="{{ banco.id }}">{{ banco.nombre }}</option>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Crédito Hipotecario (Entidad Financiera)</label>
+                        <select id="cred-producto" name="producto_id" class="w-full bg-slate-950 border-slate-800 rounded-xl text-white px-4 py-3 outline-none focus:border-sky-500/50 transition-colors">
+                            <option value="">— Seleccionar Crédito —</option>
+                            {% for prod in creditos_hip_productos %}
+                            <option value="{{ prod.id }}">{{ prod.banco.nombre }} - {{ prod.nombre }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -491,9 +492,9 @@ function closeModalCredito() {
 }
 
 function newCredito(deptoId) {
-    document.getElementById('modal-credito-title').innerText = 'Nueva Hipoteca';
+    document.getElementById('modal-credito-title').innerText = 'Vincular Hipoteca';
     document.getElementById('credito-form').action = '/dashboard/departamentos/' + deptoId + '/credito/crear/';
-    document.getElementById('cred-banco').value = '';
+    document.getElementById('cred-producto').value = '';
     document.getElementById('cred-monto').value = '';
     document.getElementById('cred-tasa').value = '';
     document.getElementById('cred-plazo').value = '';
@@ -507,10 +508,10 @@ function newCredito(deptoId) {
     document.getElementById('modal-credito').classList.remove('hidden');
 }
 
-function editCredito(id, banco, monto, tasa, plazo, tipo, cuota, saldo, totales, pagadas, inicio, fin) {
+function editCredito(id, productoId, monto, tasa, plazo, tipo, cuota, saldo, totales, pagadas, inicio, fin) {
     document.getElementById('modal-credito-title').innerText = 'Editar Hipoteca';
     document.getElementById('credito-form').action = '/dashboard/departamentos/credito/editar/' + id + '/';
-    document.getElementById('cred-banco').value = banco;
+    document.getElementById('cred-producto').value = productoId || '';
     document.getElementById('cred-monto').value = monto.replace(',', '.');
     document.getElementById('cred-tasa').value = tasa.replace(',', '.');
     document.getElementById('cred-plazo').value = plazo;

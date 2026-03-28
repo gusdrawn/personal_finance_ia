@@ -110,7 +110,15 @@ class CreditoHipotecario(models.Model):
     ]
 
     departamento = models.OneToOneField(Departamento, on_delete=models.CASCADE, related_name='credito_hipotecario')
-    banco = models.ForeignKey('configuracion.Banco', on_delete=models.PROTECT)
+    producto = models.ForeignKey(
+        'configuracion.Producto',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='creditos_hipotecarios',
+        help_text="Producto de Crédito Hipotecario desde Entidades Financieras"
+    )
+    banco = models.ForeignKey('configuracion.Banco', on_delete=models.PROTECT, null=True, blank=True)
     monto_original_uf = models.DecimalField(max_digits=10, decimal_places=2)
     tasa_anual = models.DecimalField(max_digits=5, decimal_places=3, help_text="Annual interest rate %")
     plazo_anos = models.IntegerField(help_text="Loan term in years")
@@ -130,7 +138,15 @@ class CreditoHipotecario(models.Model):
         verbose_name_plural = 'Créditos Hipotecarios'
 
     def __str__(self):
-        return f"Hipoteca {self.departamento.codigo} - {self.banco.nombre}"
+        banco_name = self.producto.banco.nombre if self.producto else (self.banco.nombre if self.banco else 'N/A')
+        return f"Hipoteca {self.departamento.codigo} - {banco_name}"
+
+    @property
+    def banco_display(self):
+        """Get the bank from producto or direct banco FK"""
+        if self.producto:
+            return self.producto.banco
+        return self.banco
 
     @property
     def cuotas_restantes(self):
