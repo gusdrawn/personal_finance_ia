@@ -45,6 +45,14 @@ class Producto(models.Model):
         default=False,
         help_text="Si es Tarjeta de Crédito, indica si maneja un cupo en dólares separado"
     )
+    contabilizar = models.BooleanField(
+        default=True,
+        help_text="Si es Falso, los gastos en este producto no suman al egreso total del mes"
+    )
+    dia_cobro = models.IntegerField(
+        null=True, blank=True,
+        help_text="Día del mes (1-31) en que vence/se cobra"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -906,12 +906,17 @@ def crear_producto(request):
     nombre = request.POST.get('nombre')
     tipo = request.POST.get('tipo', 'TDC')
     tiene_cupo_usd = request.POST.get('tiene_cupo_usd') == 'on'
+    contabilizar = request.POST.get('contabilizar') == 'on'
+    dia_cobro = request.POST.get('dia_cobro')
+    dia_cobro = int(dia_cobro) if dia_cobro and dia_cobro.isdigit() else None
     
     prod = Producto.objects.create(
         banco_id=banco_id,
         nombre=nombre,
         tipo=tipo,
         tiene_cupo_usd=tiene_cupo_usd,
+        contabilizar=contabilizar,
+        dia_cobro=dia_cobro,
         activo=True
     )
     
@@ -936,6 +941,8 @@ def crear_producto(request):
         producto_asociado=prod,
         moneda_defecto='CLP',
         mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva,
+        contabilizar=contabilizar,
+        dia_cobro=dia_cobro,
         activo=True
     )
     
@@ -949,6 +956,8 @@ def crear_producto(request):
             producto_asociado=prod,
             moneda_defecto='USD',
             mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva,
+            contabilizar=contabilizar,
+            dia_cobro=dia_cobro,
             activo=True
         )
     return redirect('configuracion')
@@ -963,6 +972,11 @@ def editar_producto(request, pk):
     
     old_usd = prod.tiene_cupo_usd
     prod.tiene_cupo_usd = request.POST.get('tiene_cupo_usd') == 'on'
+    prod.contabilizar = request.POST.get('contabilizar') == 'on'
+    
+    dia_cobro = request.POST.get('dia_cobro')
+    prod.dia_cobro = int(dia_cobro) if dia_cobro and dia_cobro.isdigit() else None
+    
     prod.save()
     
     # Sync category if it exists
@@ -989,7 +1003,9 @@ def editar_producto(request, pk):
                     cat.nombre = f"{banco.nombre} - {prod.nombre}"
                     cat.tipo = cat_tipo
                     cat.banco_defecto = banco
-                    cat.save(update_fields=['nombre', 'tipo', 'banco_defecto'])
+                    cat.contabilizar = prod.contabilizar
+                    cat.dia_cobro = prod.dia_cobro
+                    cat.save(update_fields=['nombre', 'tipo', 'banco_defecto', 'contabilizar', 'dia_cobro'])
         else:
             # Update or create both
             clp_cat = categorias.filter(moneda_defecto='CLP').first()
@@ -997,11 +1013,14 @@ def editar_producto(request, pk):
                 clp_cat.nombre = f"{banco.nombre} - {prod.nombre} (CLP)"
                 clp_cat.tipo = cat_tipo
                 clp_cat.banco_defecto = banco
-                clp_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto'])
+                clp_cat.contabilizar = prod.contabilizar
+                clp_cat.dia_cobro = prod.dia_cobro
+                clp_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto', 'contabilizar', 'dia_cobro'])
             else:
                 CategoriaIngreso.objects.create(
                     user=request.user, nombre=f"{banco.nombre} - {prod.nombre} (CLP)", tipo=cat_tipo,
-                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='CLP', mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, activo=True
+                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='CLP', 
+                    mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, contabilizar=prod.contabilizar, dia_cobro=prod.dia_cobro, activo=True
                 )
             
             usd_cat = categorias.filter(moneda_defecto='USD').first()
@@ -1009,11 +1028,14 @@ def editar_producto(request, pk):
                 usd_cat.nombre = f"{banco.nombre} - {prod.nombre} (USD)"
                 usd_cat.tipo = cat_tipo
                 usd_cat.banco_defecto = banco
-                usd_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto'])
+                usd_cat.contabilizar = prod.contabilizar
+                usd_cat.dia_cobro = prod.dia_cobro
+                usd_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto', 'contabilizar', 'dia_cobro'])
             else:
                 CategoriaIngreso.objects.create(
                     user=request.user, nombre=f"{banco.nombre} - {prod.nombre} (USD)", tipo=cat_tipo,
-                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='USD', mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, activo=True
+                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='USD', 
+                    mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, contabilizar=prod.contabilizar, dia_cobro=prod.dia_cobro, activo=True
                 )
         
     return redirect('configuracion')

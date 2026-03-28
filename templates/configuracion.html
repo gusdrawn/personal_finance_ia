@@ -86,9 +86,9 @@
             <div class="px-8 pb-4 space-y-2 relative border-l-2 border-slate-800 ml-4 mt-2">
                 {% for prod in banco.productos.all %}
                 <div class="flex justify-between items-center text-[10px] bg-slate-800/30 p-2 rounded">
-                    <span><i class="fas fa-credit-card text-slate-500 mr-2"></i>{{ prod.nombre }} <span class="text-slate-500">({{ prod.get_tipo_display }})</span> {% if prod.tiene_cupo_usd %}<span class="text-[8px] border border-sky-500 text-sky-400 px-1 rounded ml-1">USD</span>{% endif %}</span>
+                    <span><i class="fas fa-credit-card text-slate-500 mr-2"></i>{{ prod.nombre }} <span class="text-slate-500">({{ prod.get_tipo_display }})</span> {% if prod.tiene_cupo_usd %}<span class="text-[8px] border border-sky-500 text-sky-400 px-1 rounded ml-1">USD</span>{% endif %} {% if not prod.contabilizar %}<span class="text-[8px] uppercase font-black text-rose-500 border border-rose-900 px-1 rounded ml-1">No Cont.</span>{% endif %} {% if prod.dia_cobro %}<span class="text-[8px] uppercase font-black text-indigo-400 border border-indigo-900 px-1 rounded ml-1"><i class="far fa-calendar-alt"></i> {{ prod.dia_cobro }}</span>{% endif %}</span>
                     <div>
-                        <button type="button" onclick="editProducto({{ prod.id }}, {{ banco.id }}, '{{ prod.nombre|escapejs }}', '{{ prod.tipo }}', {{ prod.tiene_cupo_usd|yesno:'true,false' }})" class="text-slate-400 hover:text-sky-400 mr-2"><i class="fas fa-edit"></i></button>
+                        <button type="button" onclick="editProducto({{ prod.id }}, {{ banco.id }}, '{{ prod.nombre|escapejs }}', '{{ prod.tipo }}', {{ prod.tiene_cupo_usd|yesno:'true,false' }}, {{ prod.contabilizar|yesno:'true,false' }}, '{{ prod.dia_cobro|default:'' }}')" class="text-slate-400 hover:text-sky-400 mr-2"><i class="fas fa-edit"></i></button>
                         <form action="{% url 'borrar_producto' prod.id %}" method="POST" class="inline" onsubmit="return confirm('¿Borrar producto?');">
                             {% csrf_token %}
                             <button type="submit" class="text-slate-400 hover:text-rose-400"><i class="fas fa-trash"></i></button>
@@ -369,11 +369,21 @@
                     <option value="OTRO">Otro</option>
                 </select>
             </div>
-            <div class="flex items-center">
-                <label class="flex items-center space-x-3 cursor-pointer">
-                    <input type="checkbox" name="tiene_cupo_usd" class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
-                    <span class="text-xs font-bold text-slate-300">Tiene cupo o cuenta separada en USD</span>
-                </label>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="flex flex-col justify-center">
+                    <label class="flex items-center space-x-3 cursor-pointer mb-2">
+                        <input type="checkbox" name="tiene_cupo_usd" class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
+                        <span class="text-xs font-bold text-slate-300">Cupo USD</span>
+                    </label>
+                    <label class="flex items-center space-x-3 cursor-pointer">
+                        <input type="checkbox" name="contabilizar" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
+                        <span class="text-xs font-bold text-slate-300">Contabilizar global</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Día de Cobro</label>
+                    <input type="number" name="dia_cobro" min="1" max="31" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none" placeholder="1-31">
+                </div>
             </div>
             <div class="pt-4 flex space-x-3">
                 <button type="button" onclick="document.getElementById('modal-producto').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
@@ -437,12 +447,14 @@ function newProducto(bancoId) {
     form.action = "{% url 'crear_producto' %}";
     form.reset();
     form.querySelector('[name="tiene_cupo_usd"]').checked = false;
+    form.querySelector('[name="contabilizar"]').checked = true;
+    form.querySelector('[name="dia_cobro"]').value = '';
     document.getElementById('producto-banco-id').value = bancoId;
     document.getElementById('modal-producto-title').innerHTML = '<i class="fas fa-cube text-emerald-400 mr-3"></i> Nuevo Producto';
     modal.classList.remove('hidden');
 }
 
-function editProducto(id, bancoId, nombre, tipo, tiene_cupo_usd) {
+function editProducto(id, bancoId, nombre, tipo, tiene_cupo_usd, contabilizar, dia_cobro) {
     const modal = document.getElementById('modal-producto');
     const form = document.getElementById('form-producto');
     
@@ -453,6 +465,8 @@ function editProducto(id, bancoId, nombre, tipo, tiene_cupo_usd) {
     form.querySelector('[name="nombre"]').value = nombre;
     form.querySelector('[name="tipo"]').value = tipo;
     form.querySelector('[name="tiene_cupo_usd"]').checked = tiene_cupo_usd !== undefined ? tiene_cupo_usd : false;
+    form.querySelector('[name="contabilizar"]').checked = contabilizar !== undefined ? contabilizar : true;
+    form.querySelector('[name="dia_cobro"]').value = dia_cobro || '';
     
     document.getElementById('modal-producto-title').innerHTML = '<i class="fas fa-edit text-emerald-400 mr-3"></i> Editar Producto';
     modal.classList.remove('hidden');
