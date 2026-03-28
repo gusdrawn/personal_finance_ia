@@ -14,6 +14,12 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Corrección de Layout en Departamentos (Hotfix)
+- **Templates**:
+  - Se corrigió un error en `templates/departamentos.html` donde etiquetas `</div>` mal cerradas o extra rompían el grid del portafolio inmobiliario cuando una propiedad tenía una hipoteca asociada.
+  - Se eliminaron 3 etiquetas `</div>` huérfanas que causaban comportamientos inesperados en el scroll y la alineación de las tarjetas.
+- **Archivos actualizados**: `templates/departamentos.html`.
+
 ### [2026-03] Integraciones Automáticas: Bicicletas, Hipotecas & Pasivos (Enhancement)
 - **Bicicletas de Terceros → Categoría de Ingreso + Activo**:
   - Al crear un préstamo tipo `TERCEROS`, se auto-genera una `CategoriaIngreso` tipo INGRESO `"Cobro Bicicleta - {nombre}"` con `mostrar_en_carga_masiva=True` para poder registrar cobros en carga masiva.
