@@ -12,6 +12,33 @@ from departamentos.models import Departamento, Estacionamiento, Arrendatario, Cr
 from configuracion.models import TipoCambio, Banco, Producto
 
 
+def ensure_pasivos_for_products(user):
+    """
+    Ensures that all relevant financial products (TDC, CREDITO_CONSUMO, CREDITO_HIPOTECARIO) 
+    have a corresponding Pasivo record.
+    """
+    from configuracion.models import Producto
+    from patrimonio.models import Pasivo
+    
+    productos_deuda = Producto.objects.filter(
+        tipo__in=['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO', 'TDC'],
+        activo=True
+    )
+    
+    for prod in productos_deuda:
+        if not Pasivo.objects.filter(producto=prod).exists():
+            Pasivo.objects.create(
+                user=user,
+                producto=prod,
+                nombre=f"{prod.banco.nombre} - {prod.nombre}",
+                tipo=prod.tipo,
+                monto_clp=0,
+                monto_usd=0,
+                activo=True,
+                notas=f"Auto-generado desde Entidad Financiera: {prod.banco.nombre} - {prod.nombre}"
+            )
+
+
 @login_required
 def dashboard(request):
     """Dashboard with key metrics and charts"""
@@ -351,6 +378,9 @@ def activos_view(request):
 def pasivos_view(request):
     """Liabilities dedicated page"""
     user = request.user
+    
+    # # Sync relevant products that don't have a Pasivo yet (e.g. existing TDC)
+    # ensure_pasivos_for_products(user)
     
     try:
         tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
@@ -1162,8 +1192,8 @@ def crear_producto(request):
             activo=True
         )
     
-    # Auto-create Pasivo for CREDITO_HIPOTECARIO and CREDITO_CONSUMO products
-    if tipo in ['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO']:
+    # Auto-create Pasivo for relevant products
+    if tipo in ['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO', 'TDC']:
         Pasivo.objects.get_or_create(
             user=request.user,
             producto=prod,
@@ -1195,6 +1225,10 @@ def editar_producto(request, pk):
     prod.dia_cobro = int(dia_cobro) if dia_cobro and dia_cobro.isdigit() else None
     
     prod.save()
+    
+    # Ensure Pasivo exists if type was changed to one that requires it or if it didn't exist
+    if prod.tipo in ['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO', 'TDC']:
+        ensure_pasivos_for_products(request.user)
     
     from gastos.models import CategoriaIngreso
     banco = Banco.objects.get(id=prod.banco_id)

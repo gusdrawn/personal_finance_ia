@@ -14,6 +14,13 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Sincronización de Tarjetas de Crédito (TDC) en Pasivos
+- **Entidades Financieras → Pasivos**:
+  - Se habilitó la auto-creación de `Pasivo` para productos tipo `TDC` (Tarjeta de Crédito), igualando el comportamiento de Créditos de Consumo e Hipotecarios.
+  - Se implementó un helper `ensure_pasivos_for_products` que sincroniza retroactivamente cualquier `Producto` de deuda (TDC, Consumo, Hipotecario) con su respectivo `Pasivo` si este no existe.
+  - La sincronización ocurre automáticamente al visitar la página de Pasivos (`/dashboard/pasivos/`) y al crear o editar productos en Entidades Financieras.
+- **Archivos actualizados**: `core/views.py`.
+
 ### [2026-03] Corrección de Layout en Departamentos (Hotfix)
 - **Templates**:
   - Se corrigió un error en `templates/departamentos.html` donde etiquetas `</div>` mal cerradas o extra rompían el grid del portafolio inmobiliario cuando una propiedad tenía una hipoteca asociada.
