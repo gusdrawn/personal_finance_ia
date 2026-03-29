@@ -74,26 +74,6 @@ class RegistroMensualViewSet(viewsets.ModelViewSet):
                 'contabilizar': getattr(registro.categoria, 'contabilizar', True)
             })
             
-        # Inject third-party loan deductions
-        try:
-            from prestamos.models import Prestamo
-            from django.db.models import Sum
-            terceros = Prestamo.objects.filter(user=request.user, tipo='TERCEROS', activo=True).aggregate(t=Sum('monto_total'))['t'] or 0
-            if terceros > 0:
-                if 'Tarjeta de Crédito' not in grouped:
-                    grouped['Tarjeta de Crédito'] = []
-                grouped['Tarjeta de Crédito'].append({
-                    'id': 'deduccion_terceros',
-                    'categoria_id': 0,
-                    'categoria': 'Abono Automático (Préstamos a Terceros)',
-                    'monto': str(-terceros),
-                    'moneda': 'CLP',
-                    'tipo': 'GASTO',
-                    'contabilizar': True
-                })
-        except Exception:
-            pass
-        
         # Calculate totals
         totales = {}
         for tipo, items in grouped.items():

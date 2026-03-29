@@ -1,9 +1,10 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
+from datetime import date, timedelta
 from .models import Prestamo
 from configuracion.models import Producto
-from gastos.models import CategoriaIngreso
+from gastos.models import CategoriaIngreso, RegistroMensual
 from patrimonio.models import Activo
 
 @login_required
@@ -27,6 +28,9 @@ def prestamos_index(request):
     nombres_terc = [p.nombre for p in prestamos.filter(tipo='TERCEROS', activo=True)]
     montos_terc = [float(p.monto_total) for p in prestamos.filter(tipo='TERCEROS', activo=True)]
 
+    today = date.today()
+    last_month_date = today.replace(day=1) - timedelta(days=1)
+
     context = {
         'prestamos': prestamos,
         'tarjetas': tarjetas,
@@ -38,6 +42,10 @@ def prestamos_index(request):
         'montos_personal': montos_personal,
         'nombres_terc': nombres_terc,
         'montos_terc': montos_terc,
+        'default_year': last_month_date.year,
+        'default_month': last_month_date.month,
+        'current_year': today.year,
+        'current_month': today.month,
     }
     return render(request, 'prestamos/index.html', context)
 
@@ -64,7 +72,9 @@ def crear_prestamo(request):
         
         # Auto-create CategoriaIngreso + Activo for TERCEROS loans
         if tipo == 'TERCEROS':
-            _sync_terceros_prestamo(request.user, prestamo)
+            year = request.POST.get('year')
+            month = request.POST.get('month')
+            _sync_terceros_prestamo(request.user, prestamo, year=year, month=month)
         
     return redirect('prestamos_index')
 
@@ -85,34 +95,36 @@ def editar_prestamo(request, pk):
         p.activo = request.POST.get('activo') == 'on'
         p.save()
         
-        # Sync linked Activo amount if TERCEROS
+        # Sync linked Activo and RegistroMensual if TERCEROS
         if p.tipo == 'TERCEROS':
-            cat_nombre_old = f"Cobro Bicicleta - {old_nombre}"
-            act_nombre_old = f"Bicicleta - {old_nombre}"
-            
-            # Update category name and amount
-            CategoriaIngreso.objects.filter(
-                user=request.user, nombre=cat_nombre_old
-            ).update(nombre=f"Cobro Bicicleta - {p.nombre}")
-            
-            # Update activo name and amount
+            # Update Activo
             Activo.objects.filter(
-                user=request.user, nombre=act_nombre_old
+                user=request.user, 
+                nombre=f"Bicicleta - {old_nombre}", 
+                tipo='PRESTAMO_DADO'
             ).update(
                 nombre=f"Bicicleta - {p.nombre}",
                 monto_clp=p.monto_total,
                 activo=p.activo
             )
             
-            # If it wasn't TERCEROS before, create the links now
-            if old_tipo != 'TERCEROS':
-                _sync_terceros_prestamo(request.user, p)
-        
-        # If changed from TERCEROS to PERSONAL, deactivate the linked activo
-        if old_tipo == 'TERCEROS' and p.tipo != 'TERCEROS':
+            # Sync offset records
+            year = request.POST.get('year')
+            month = request.POST.get('month')
+            _sync_terceros_prestamo(request.user, p, year=year, month=month)
+            
+        elif old_tipo == 'TERCEROS' and p.tipo != 'TERCEROS':
+            # If changed from TERCEROS to PERSONAL, deactivate linked Activo and delete offsets
             Activo.objects.filter(
-                user=request.user, nombre=f"Bicicleta - {old_nombre}", tipo='PRESTAMO_DADO'
+                user=request.user, 
+                nombre=f"Bicicleta - {old_nombre}", 
+                tipo='PRESTAMO_DADO'
             ).update(activo=False)
+            
+            RegistroMensual.objects.filter(
+                user=request.user, 
+                notas__icontains=f"Bicicleta: {p.nombre}"
+            ).delete()
         
     return redirect('prestamos_index')
 
@@ -120,46 +132,90 @@ def editar_prestamo(request, pk):
 def borrar_prestamo(request, pk):
     p = get_object_or_404(Prestamo, pk=pk, user=request.user)
     if request.method == 'POST':
-        # Clean up linked CategoriaIngreso and Activo if TERCEROS
+        # Clean up linked records if TERCEROS
         if p.tipo == 'TERCEROS':
-            CategoriaIngreso.objects.filter(
-                user=request.user, nombre=f"Cobro Bicicleta - {p.nombre}"
+            # Delete the offset record in RegistroMensual (identified by notes)
+            RegistroMensual.objects.filter(
+                user=request.user, 
+                notas__icontains=f"Bicicleta: {p.nombre}"
             ).delete()
+            
+            # Delete linked Activo
             Activo.objects.filter(
-                user=request.user, nombre=f"Bicicleta - {p.nombre}", tipo='PRESTAMO_DADO'
+                user=request.user, 
+                nombre=f"Bicicleta - {p.nombre}", 
+                tipo='PRESTAMO_DADO'
             ).delete()
         p.delete()
     return redirect('prestamos_index')
 
 
-def _sync_terceros_prestamo(user, prestamo):
-    """Create CategoriaIngreso (INGRESO) and Activo (PRESTAMO_DADO) for a TERCEROS loan."""
+def _sync_terceros_prestamo(user, prestamo, year=None, month=None):
+    """
+    Create CategoriaIngreso (INGRESO) and Activo (PRESTAMO_DADO) for a TERCEROS loan.
+    Also creates a negative RegistroMensual entry to offset the initial expense in the selected month.
+    """
     from decimal import Decimal
     
-    # Auto-create CategoriaIngreso for Carga Masiva
-    CategoriaIngreso.objects.get_or_create(
+    # Cast year/month to int if provided
+    if year: year = int(year)
+    if month: month = int(month)
+
+    # Default to previous month if not provided
+    if not year or not month:
+        today = date.today()
+        first_of_month = today.replace(day=1)
+        last_month = first_of_month - timedelta(days=1)
+        year = year or last_month.year
+        month = month or last_month.month
+
+    # Ensure monto_total is Decimal
+    monto_dec = Decimal(str(prestamo.monto_total))
+
+    # 1. Clean up ANY previous RegistroMensual records for this specific bike to avoid duplicates
+    # We use a hidden signature in the notes for tracking
+    signature = f"[BIK-{prestamo.id}]"
+    RegistroMensual.objects.filter(user=user, notas__contains=signature).delete()
+
+    # 2. Identify/Create a dedicated category for this bike of type 'TDC'
+    # This avoids unique_together collisions in RegistroMensual when multiple bikes 
+    # are on the same card, while still grouping them with credit cards in the dashboard.
+    cat_nombre = f"Bicicleta: {prestamo.nombre}"
+    cat, created = CategoriaIngreso.objects.update_or_create(
         user=user,
-        nombre=f"Cobro Bicicleta - {prestamo.nombre}",
+        nombre=cat_nombre,
         defaults={
-            'tipo': 'INGRESO',
-            'mostrar_en_carga_masiva': True,
-            'moneda_defecto': 'CLP',
+            'tipo': 'TDC',
+            'mostrar_en_carga_masiva': False,
             'contabilizar': True,
-            'activo': True,
+            'moneda_defecto': 'CLP',
+            'activo': True
         }
     )
+
+    # 3. Create the RegistroMensual offset
+    RegistroMensual.objects.create(
+        user=user,
+        year=year,
+        mes=month,
+        categoria=cat,
+        monto=-monto_dec,
+        tipo='GASTO',
+        moneda='CLP',
+        notas=f"Abono Automático {signature}"
+    )
     
-    # Auto-create Activo (non-liquid, short term)
-    Activo.objects.get_or_create(
+    # 4. Auto-create/Update Activo
+    Activo.objects.update_or_create(
         user=user,
         nombre=f"Bicicleta - {prestamo.nombre}",
         defaults={
             'tipo': 'PRESTAMO_DADO',
             'horizonte_temporal': 'CORTO_PLAZO',
             'es_liquido': False,
-            'monto_clp': prestamo.monto_total,
+            'monto_clp': monto_dec,
             'monto_usd': Decimal('0'),
             'activo': True,
-            'notas': f"Auto-generado desde Bicicleta de Terceros: {prestamo.nombre}",
+            'notas': f"Auto-generado desde Bicicleta: {prestamo.nombre}",
         }
     )

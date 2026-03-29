@@ -39,7 +39,7 @@
                 <i class="fas fa-list text-indigo-400 mr-2"></i>
                 Gestión de Bicicletas
             </h3>
-            <button onclick="document.getElementById('modal-prestamo').classList.remove('hidden')" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 rounded-xl text-white font-bold text-xs transition-colors shadow-lg shadow-indigo-500/20">
+            <button onclick="openNewModal()" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 rounded-xl text-white font-bold text-xs transition-colors shadow-lg shadow-indigo-500/20">
                 <i class="fas fa-plus mr-1"></i>Nuevo
             </button>
         </div>
@@ -152,6 +152,29 @@
                 <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Notas</label>
                 <textarea name="notas" rows="2" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none text-sm"></textarea>
             </div>
+            
+            <div id="offset-month-section" class="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-xl space-y-3">
+                <p class="text-[10px] font-black uppercase tracking-tighter text-indigo-400"><i class="fas fa-calendar-alt mr-1"></i> Mes de Registro (Compensación de Gasto)</p>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="flex flex-col p-2 bg-slate-900 border border-slate-700 rounded-lg cursor-pointer hover:border-indigo-500/50 transition-colors">
+                        <div class="flex items-center space-x-2 mb-1">
+                            <input type="radio" name="date_choice" value="prev" checked class="text-indigo-500 focus:ring-0">
+                            <span class="text-[10px] font-bold text-white">Mes Anterior</span>
+                        </div>
+                        <span class="text-[11px] text-slate-500 ml-5">{{ default_month }}/{{ default_year }}</span>
+                    </label>
+                    <label class="flex flex-col p-2 bg-slate-900 border border-slate-700 rounded-lg cursor-pointer hover:border-indigo-500/50 transition-colors">
+                        <div class="flex items-center space-x-2 mb-1">
+                            <input type="radio" name="date_choice" value="curr" class="text-indigo-500 focus:ring-0">
+                            <span class="text-[10px] font-bold text-white">Mes Actual</span>
+                        </div>
+                        <span class="text-[11px] text-slate-500 ml-5">{{ current_month }}/{{ current_year }}</span>
+                    </label>
+                </div>
+                <!-- Hidden fields that views.py expects -->
+                <input type="hidden" name="month" id="hidden_month" value="{{ default_month }}">
+                <input type="hidden" name="year" id="hidden_year" value="{{ default_year }}">
+            </div>
             <div class="flex items-center pt-2" id="div-activo">
                 <label class="flex items-center space-x-3 cursor-pointer">
                     <input type="checkbox" name="activo" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
@@ -186,7 +209,68 @@
         form.querySelector('[name="notas"]').value = notas;
         form.querySelector('[name="activo"]').checked = activo;
         
+        // Toggle offset section visibility
+        const offsetSection = document.getElementById('offset-month-section');
+        if (tipo === 'TERCEROS') {
+            offsetSection.classList.remove('hidden');
+        } else {
+            offsetSection.classList.add('hidden');
+        }
+
         document.getElementById('modal-title').innerHTML = '<i class="fas fa-edit text-indigo-400 mr-3"></i>Editar Bicicleta';
+        modal.classList.remove('hidden');
+    }
+
+    // Handle Month/Year update from radios
+    const monthPrev = "{{ default_month }}";
+    const yearPrev = "{{ default_year }}";
+    const monthCurr = "{{ current_month }}";
+    const yearCurr = "{{ current_year }}";
+
+    document.querySelectorAll('input[name="date_choice"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            if (e.target.value === 'prev') {
+                document.getElementById('hidden_month').value = monthPrev;
+                document.getElementById('hidden_year').value = yearPrev;
+            } else {
+                document.getElementById('hidden_month').value = monthCurr;
+                document.getElementById('hidden_year').value = yearCurr;
+            }
+        });
+    });
+
+    // Toggle offset section on type change
+    document.querySelector('select[name="tipo"]').addEventListener('change', (e) => {
+        const offsetSection = document.getElementById('offset-month-section');
+        if (e.target.value === 'TERCEROS') {
+            offsetSection.classList.remove('hidden');
+        } else {
+            offsetSection.classList.add('hidden');
+        }
+    });
+
+    // Reset modal for "Nuevo"
+    function openNewModal() {
+        const modal = document.getElementById('modal-prestamo');
+        const form = document.getElementById('form-prestamo');
+        form.reset();
+        form.action = "{% url 'crear_prestamo' %}";
+        document.getElementById('modal-title').innerHTML = '<i class="fas fa-bicycle text-indigo-400 mr-3"></i>Nueva Bicicleta';
+        
+        // Reset defaults
+        document.getElementById('hidden_month').value = monthPrev;
+        document.getElementById('hidden_year').value = yearPrev;
+        document.querySelector('input[name="date_choice"][value="prev"]').checked = true;
+        
+        // Initial visibility
+        const type = form.querySelector('[name="tipo"]').value;
+        const offsetSection = document.getElementById('offset-month-section');
+        if (type === 'TERCEROS') {
+            offsetSection.classList.remove('hidden');
+        } else {
+            offsetSection.classList.add('hidden');
+        }
+
         modal.classList.remove('hidden');
     }
 

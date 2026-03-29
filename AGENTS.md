@@ -14,6 +14,13 @@ Y nunca olvidar actualizar README.md si aplica.
 
 ## 📝 Bitácora de Cambios (Changelog)
 
+### [2026-03] Sincronización Mensual de Bicicletas (Fix & UX)
+- **Compensación de Gastos Real**: Se eliminó la deducción estática global de préstamos de terceros en el Dashboard. Ahora, al crear o editar una "Bicicleta" de terceros, se genera automáticamente un `RegistroMensual` (tipo GASTO, monto negativo) para compensar el gasto de la tarjeta de crédito.
+- **Corrección de Bug**: Se arregló un `TypeError` que ocurría al intentar editar una bicicleta debido a tipos de datos incompatibles (Decimal vs String).
+- **Control de Periodos**: El modal de préstamos ahora incluye una sección para elegir el mes de registro (Mes Anterior o Mes Actual), asegurando que el descuento solo aplique al mes correspondiente.
+- **Refactor de Vistas**: Limpieza y optimización de la lógica en `core/views.py` y `prestamos/views.py` para manejar periodos dinámicos.
+- **Archivos actualizados**: `core/views.py`, `prestamos/views.py`, `prestamos/templates/prestamos/index.html`.
+
 ### [2026-03] Sincronización y Métricas de Departamentos
 - **Categorías de Ingreso Automáticas**: 
   - Se implementó `ensure_departamento_categories` para sincronizar retroactivamente las categorías de arriendo para todos los departamentos existentes.

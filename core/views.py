@@ -129,19 +129,6 @@ def dashboard(request):
     suscripciones = gastos_qs.filter(categoria__tipo='SUSCRIPCION').aggregate(total=Sum('monto'))['total'] or 0
     tarjetas = gastos_qs.filter(categoria__tipo='TDC').aggregate(total=Sum('monto'))['total'] or 0
     
-    # Deduct TERCEROS loans from CC expenses
-    try:
-        from prestamos.models import Prestamo
-        prestamos_terceros_activos = Prestamo.objects.filter(user=user, tipo='TERCEROS', activo=True).aggregate(t=Sum('monto_total'))['t'] or 0
-        if tarjetas >= prestamos_terceros_activos:
-            tarjetas -= prestamos_terceros_activos
-            total_gastos -= prestamos_terceros_activos
-        else:
-            total_gastos -= tarjetas
-            tarjetas = 0
-    except Exception:
-        pass
-        
     otros = total_gastos - (gastos_fijos + suscripciones + tarjetas)
     
     # Historical Patrimonio (snapshots)
