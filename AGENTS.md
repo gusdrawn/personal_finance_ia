@@ -13,6 +13,15 @@ Y nunca olvidar actualizar README.md si aplica.
 ---
 
 ## 📝 Bitácora de Cambios (Changelog)
++
++### [2026-03] Cardstats en Calendario & Ahorro Programado
++- **Métricas de Ahorro**: Implementación de un panel de Cardstats en `/dashboard/calendario/` para visualizar el esfuerzo de ahorro mensual necesario.
++- **Cálculo de Reserva**: Los Gastos Programados con frecuencia no mensual (Anual, Semestral, etc.) ahora muestran su cuota de ahorro mensual equivalente en un Card-stat unificado (`ahorro_mensual_total`).
++- **Quick Insights**:
++  - Se añadió un contador de Gastos Activos.
++  - Se implementó un detector de "Próximo Vencimiento" que prioriza el pago más cercano en el calendario del mes actual.
++- **Archivos actualizados**: `core/views.py`, `templates/calendario.html`.
++
 
 ### [2026-03] Sincronización Mensual de Bicicletas (Fix & UX)
 - **Compensación de Gastos Real**: Se eliminó la deducción estática global de préstamos de terceros en el Dashboard. Ahora, al crear o editar una "Bicicleta" de terceros, se genera automáticamente un `RegistroMensual` (tipo GASTO, monto negativo) para compensar el gasto de la tarjeta de crédito.

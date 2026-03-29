@@ -1124,6 +1124,7 @@ def calendario(request):
     departamentos_cal = request.user.departamentos.filter(fecha_ultima_cuota__gte=date(year, month, 1))
     
     gastos_programados = GastoProgramado.objects.filter(user=request.user, activo=True)
+    ahorro_mensual_total = sum(g.ahorro_mensual for g in gastos_programados)
     
     grid_gastos = []
     current_date = date(year, month, 1)
@@ -1141,6 +1142,9 @@ def calendario(request):
             if show:
                 g.dia_cobro = g.fecha_inicio.day
                 grid_gastos.append(g)
+    
+    # Sort grid_gastos by day of the month for the "Next Payment" card
+    grid_gastos.sort(key=lambda x: x.dia_cobro)
 
     prev_month = month - 1 if month > 1 else 12
     prev_year = year if month > 1 else year - 1
@@ -1155,6 +1159,7 @@ def calendario(request):
         'categorias': categorias,
         'departamentos': departamentos_cal,
         'gastos_programados': gastos_programados,
+        'ahorro_mensual_total': ahorro_mensual_total,
         'grid_gastos': grid_gastos,
         'nav': {
             'prev_m': prev_month, 'prev_y': prev_year,
