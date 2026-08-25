@@ -18,6 +18,7 @@ urlpatterns = [
     path('api/auth/', include('rest_framework.urls')),
     path('api/gastos/', include('gastos.urls')),
     path('prestamos/', include('prestamos.urls')),
+    path('banca/', include('banca.urls')),
 ]
 
 if settings.DEBUG:

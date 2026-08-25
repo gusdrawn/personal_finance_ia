@@ -1,0 +1,33 @@
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("", views.banca_dashboard, name="banca_dashboard"),
+    path("movimientos/", views.banca_movimientos, name="banca_movimientos"),
+    path("movimientos/<int:pk>/reclasificar/", views.banca_reclasificar, name="banca_reclasificar"),
+    path("movimientos/<int:pk>/revisar/", views.banca_confirmar_revision, name="banca_confirmar_revision"),
+    path("movimientos/<int:pk>/asignar-prestamo/", views.banca_asignar_prestamo, name="banca_asignar_prestamo"),
+    path("sync/", views.banca_sync, name="banca_sync"),
+
+    # Deudas
+    path("deudas/", views.banca_deudas, name="banca_deudas"),
+
+    # Categorías temáticas
+    path("categorias/", views.banca_categorias, name="banca_categorias"),
+    path("categorias/<int:pk>/editar/", views.banca_categoria_editar, name="banca_categoria_editar"),
+    path("categorias/<int:pk>/borrar/", views.banca_categoria_borrar, name="banca_categoria_borrar"),
+    path("categorias/sembrar/", views.banca_sembrar_categorias, name="banca_sembrar_categorias"),
+
+    # Configuración (credenciales, parámetros, contrapartes)
+    path("config/", views.banca_config, name="banca_config"),
+    path("config/credencial/", views.banca_guardar_credencial, name="banca_guardar_credencial"),
+    path("config/credencial/<int:pk>/borrar/", views.banca_borrar_credencial, name="banca_borrar_credencial"),
+    path("config/parametros/", views.banca_guardar_parametros, name="banca_guardar_parametros"),
+    path("config/modelos-ia/refrescar/", views.banca_refrescar_modelos, name="banca_refrescar_modelos"),
+    path("config/contraparte/", views.banca_guardar_contraparte, name="banca_guardar_contraparte"),
+    path("config/contraparte/<int:pk>/borrar/", views.banca_borrar_contraparte, name="banca_borrar_contraparte"),
+
+    # Historial de sincronización
+    path("sync-logs/", views.banca_sync_logs, name="banca_sync_logs"),
+]

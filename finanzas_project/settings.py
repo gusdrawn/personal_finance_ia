@@ -54,7 +54,8 @@ INSTALLED_APPS = [
     'inversiones',
     'configuracion',
     'prestamos',
-    
+    'banca',
+
     'django.contrib.humanize',
 ]
 
@@ -177,3 +178,35 @@ LOGOUT_REDIRECT_URL = '/accounts/login/'
 # Custom settings
 ALLOWED_HOSTS = ['*']
 DEBUG = True
+
+# ---------------------------------------------------------------------------
+# Banca (integración bancaria) — secretos vía variables de entorno / .env
+# Ver docs/ARQUITECTURA_INTEGRACION_BANCARIA.md y .env.example
+# ---------------------------------------------------------------------------
+import os  # noqa: E402
+
+# Puente .env -> os.environ: el proyecto y la app `banca` leen con os.environ.get(),
+# pero python-decouple no inyecta el .env en os.environ. Cargamos aquí los secretos
+# del .env (si existe) para que crypto/clasificacion_ia/notificador los vean en runtime.
+from decouple import config as _config  # noqa: E402
+
+for _env_key in (
+    'BANCA_FERNET_KEY', 'OPENROUTER_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
+    'CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND', 'BANK_SYNC_SESSION_DIR',
+):
+    if not os.environ.get(_env_key):
+        _env_val = _config(_env_key, default='')
+        if _env_val:
+            os.environ[_env_key] = str(_env_val)
+
+# Llave Fernet para cifrar credenciales bancarias (NO commitear).
+BANCA_FERNET_KEY = os.environ.get('BANCA_FERNET_KEY', '')
+# OpenRouter (clasificación con IA)
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+# Telegram (avisos de presupuesto)
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+# Celery (opcional; si no hay broker, sync corre inline)
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)

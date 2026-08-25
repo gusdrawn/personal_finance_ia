@@ -1,0 +1,207 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Configuración · Banca{% endblock %}
+{% block page_title %}Configuración de Banca{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+<!-- Fuentes de datos (bancos + exchanges/wallets) -->
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h4 class="font-bold text-white mb-1"><i class="fas fa-key text-amber-400 mr-2"></i>Fuentes de datos</h4>
+    <p class="text-xs text-slate-500 mb-4">Bancos (RUT + clave) y exchanges/wallets cripto (API key de <b>solo lectura</b> o dirección pública). Todo se guarda cifrado (Fernet); requiere <code class="text-slate-400">BANCA_FERNET_KEY</code> en el entorno.</p>
+
+    {% if credenciales %}
+    <div class="space-y-2 mb-6">
+        {% for c in credenciales %}
+        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-900/50 border border-slate-700/50">
+            <div>
+                <p class="font-medium text-white">{{ c.banco.nombre }}
+                    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded {% if c.tipo_fuente == 'banco' %}bg-sky-500/20 text-sky-300{% else %}bg-purple-500/20 text-purple-300{% endif %}">{{ c.get_tipo_fuente_display }}</span>
+                    <span class="text-xs text-slate-500">· {{ c.conector }}</span>
+                </p>
+                <p class="text-xs text-slate-500">{{ c.rut|default:c.identificador_publico|default:'—' }} · {% if c.activo %}<span class="text-emerald-400">activa</span>{% else %}<span class="text-slate-500">inactiva</span>{% endif %}</p>
+            </div>
+            <form method="post" action="{% url 'banca_borrar_credencial' c.pk %}" onsubmit="return confirm('¿Eliminar la fuente {{ c.banco.nombre|escapejs }}?');">
+                {% csrf_token %}
+                <button class="text-[11px] px-3 py-1.5 rounded bg-rose-500/20 text-rose-300"><i class="fas fa-trash mr-1"></i>Eliminar</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% url 'banca_guardar_credencial' %}"
+          x-data="{ tipo: 'banco', conector: '' }"
+          class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        {% csrf_token %}
+
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">Fuente</label>
+            <select name="conector" x-model="conector"
+                    @change="tipo = $event.target.selectedOptions[0].dataset.tipo"
+                    x-init="tipo = $el.selectedOptions[0]?.dataset.tipo || 'banco'"
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none">
+                {% for c in conectores %}
+                <option value="{{ c.name }}" data-tipo="{{ c.tipo }}">{{ c.label }}{% if c.tipo != 'banco' %} · {{ c.tipo }}{% endif %}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- Institución (opcional; se auto-crea para exchanges/wallets) -->
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">Institución <span class="text-slate-600">(opcional)</span></label>
+            {{ cred_form.banco }}
+        </div>
+
+        <!-- Campos de banco -->
+        <div x-show="tipo === 'banco'">
+            <label class="block text-xs text-slate-500 mb-1">{{ cred_form.rut.label }}</label>
+            {{ cred_form.rut }}
+        </div>
+        <div x-show="tipo === 'banco'">
+            <label class="block text-xs text-slate-500 mb-1">Clave</label>
+            {{ cred_form.clave }}
+        </div>
+
+        <!-- Campos de exchange/inversión (API key/secret, o email/contraseña en Fintual) -->
+        <div x-show="tipo !== 'banco' && conector !== 'bitcoin_wallet'" x-cloak>
+            <label class="block text-xs text-slate-500 mb-1"
+                   x-text="conector === 'fintual' ? 'Email' : 'API key (solo lectura)'">API key</label>
+            {{ cred_form.api_key }}
+        </div>
+        <div x-show="tipo !== 'banco' && conector !== 'bitcoin_wallet'" x-cloak>
+            <label class="block text-xs text-slate-500 mb-1"
+                   x-text="conector === 'fintual' ? 'Contraseña' : 'API secret'">API secret</label>
+            {{ cred_form.api_secret }}
+        </div>
+
+        <!-- Campo de wallet (dirección pública) -->
+        <div x-show="conector === 'bitcoin_wallet'" x-cloak class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">{{ cred_form.identificador_publico.label }}</label>
+            {{ cred_form.identificador_publico }}
+        </div>
+
+        <div class="md:col-span-3 flex items-center justify-between">
+            <label class="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" name="activo" checked class="rounded"> Activa
+            </label>
+            <button class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm">
+                <i class="fas fa-save mr-1"></i>Guardar fuente
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Parámetros de presupuesto -->
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h4 class="font-bold text-white mb-4"><i class="fas fa-sliders-h text-sky-400 mr-2"></i>Presupuesto e IA</h4>
+    <form method="post" action="{% url 'banca_guardar_parametros' %}" class="space-y-4">
+        {% csrf_token %}
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">{{ param_form.ventana_meses_ingreso.label }}</label>
+                {{ param_form.ventana_meses_ingreso }}
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">{{ param_form.umbral_alerta_ocio.label }}</label>
+                {{ param_form.umbral_alerta_ocio }}
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">{{ param_form.tolerancia_comision_bicicleta.label }}</label>
+                {{ param_form.tolerancia_comision_bicicleta }}
+            </div>
+        </div>
+
+        <div class="border-t border-slate-700/50 pt-4">
+            <p class="text-xs text-slate-400 uppercase mb-3"><i class="fas fa-robot mr-1"></i>Proveedor de IA (compatible OpenAI)</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">{{ param_form.ia_base_url.label }}</label>
+                    {{ param_form.ia_base_url }}
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">API key {% if tiene_ia_key %}<span class="text-emerald-400">(guardada)</span>{% endif %}</label>
+                    {{ param_form.ia_api_key }}
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-500 mb-1">Modelo</label>
+                    {% if cfg.modelos_disponibles %}
+                    <select name="modelo_ia" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none">
+                        {% for m in cfg.modelos_disponibles %}
+                        <option value="{{ m }}" {% if cfg.modelo_ia == m %}selected{% endif %}>{{ m }}</option>
+                        {% endfor %}
+                    </select>
+                    {% else %}
+                    {{ param_form.modelo_ia }}
+                    {% endif %}
+                </div>
+            </div>
+            <p class="text-[11px] text-slate-600 mt-2">
+                {% if cfg.modelos_disponibles %}{{ cfg.modelos_disponibles|length }} modelos disponibles.{% else %}Guarda la API key y refresca para listar modelos.{% endif %}
+            </p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm">
+                <i class="fas fa-save mr-1"></i>Guardar parámetros
+            </button>
+        </div>
+    </form>
+    <form method="post" action="{% url 'banca_refrescar_modelos' %}" class="mt-3">
+        {% csrf_token %}
+        <button class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm">
+            <i class="fas fa-rotate mr-1"></i>Refrescar modelos desde el proveedor
+        </button>
+        <span class="text-[11px] text-slate-500 ml-2">Guarda primero la API key.</span>
+    </form>
+</div>
+
+<!-- Contrapartes (bicicleta) -->
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h4 class="font-bold text-white mb-1"><i class="fas fa-bicycle text-emerald-400 mr-2"></i>Contrapartes conocidas</h4>
+    <p class="text-xs text-slate-500 mb-4">Personas con las que haces bicicleta financiera. Sus transferencias no se cuentan como ingreso.</p>
+
+    {% if contrapartes %}
+    <div class="space-y-2 mb-6">
+        {% for cp in contrapartes %}
+        <div class="flex items-center justify-between p-3 rounded-lg bg-slate-900/50 border border-slate-700/50">
+            <div>
+                <p class="font-medium text-white">{{ cp.alias }} {% if cp.rut %}<span class="text-xs text-slate-500">· {{ cp.rut }}</span>{% endif %}</p>
+                <p class="text-xs text-slate-500">{% if cp.prestamo %}Préstamo: {{ cp.prestamo.nombre }}{% else %}Sin préstamo vinculado{% endif %} · {% if cp.activo %}<span class="text-emerald-400">activa</span>{% else %}<span class="text-slate-500">inactiva</span>{% endif %}</p>
+            </div>
+            <form method="post" action="{% url 'banca_borrar_contraparte' cp.pk %}" onsubmit="return confirm('¿Eliminar contraparte?');">
+                {% csrf_token %}
+                <button class="text-[11px] px-3 py-1.5 rounded bg-rose-500/20 text-rose-300"><i class="fas fa-trash mr-1"></i>Eliminar</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% url 'banca_guardar_contraparte' %}" class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+        {% csrf_token %}
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">{{ contraparte_form.alias.label }}</label>
+            {{ contraparte_form.alias }}
+        </div>
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">RUT</label>
+            {{ contraparte_form.rut }}
+        </div>
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">{{ contraparte_form.prestamo.label }}</label>
+            {{ contraparte_form.prestamo }}
+        </div>
+        <div class="md:col-span-4 flex items-center justify-between">
+            <label class="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" name="activo" checked class="rounded"> Activa
+            </label>
+            <button class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm">
+                <i class="fas fa-plus mr-1"></i>Agregar
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -33,6 +33,7 @@ Open your browser and navigate to: [http://localhost:8000/dashboard/](http://loc
 | **Inversiones** | Portfolio management for stocks, crypto, and mutual funds. |
 | **Préstamos** | Gestión de bicicletas personales y de terceros con cálculo de intereses. |
 | **Configuración** | Centralized management for banks, products, categories, and exchange rates. |
+| **Banca** | Integración de movimientos, deudas, presupuesto, clasificación y sincronización de fuentes. |
 
 ---
 
@@ -73,6 +74,8 @@ Open your browser and navigate to: [http://localhost:8000/dashboard/](http://loc
 - `inversiones/`: Investment portfolio and historical tracking.
 - `prestamos/`: Módulo de "Bicicletas" (préstamos personales y de terceros).
 - `configuracion/`: Global settings, banks, products, and exchange rates.
+- `banca/`: Fuente transaccional, reconciliación, presupuesto, analítica y clasificación IA.
+- `bank_sync/`: Contratos y conectores para bancos, exchanges, wallets e inversiones.
 - `templates/`: Modern HTML layout using Tailwind CSS, HTMX, and Alpine.js.
 
 ---
@@ -99,6 +102,20 @@ python manage.py migrate          # Apply database migrations
 python manage.py populate_fixtures # Load demo data
 python load_real_data.py          # Load real historical data (from images)
 ```
+
+## 🧪 Pruebas de regresión
+
+La suite usa el runner nativo de Django y una base de datos temporal. Cubre reglas
+financieras, ingesta idempotente, reconciliación de bicicletas, presupuesto, analítica,
+clasificación IA sin red, conectores, snapshots patrimoniales y aislamiento entre usuarios.
+
+```bash
+python manage.py test --verbosity 1
+```
+
+Los tests deben ser herméticos: las APIs bancarias, Telegram y proveedores de IA se
+simulan con datos locales. Cada nueva funcionalidad o modificación de lógica financiera
+debe incluir al menos un caso nominal y un caso límite o de aislamiento.
 
 ---
 

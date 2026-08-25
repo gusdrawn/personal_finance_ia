@@ -10,6 +10,38 @@ Genera un mapa mental del proyecto tambien en AGENTS.md, asi como sus cambios.
 
 Y nunca olvidar actualizar README.md si aplica.
 
+## 🔎 Uso de Graphify
+
+Graphify es la herramienta de exploración del código y la documentación del proyecto. Está disponible mediante el skill `/graphify` y genera un grafo navegable con detección de comunidades, reporte auditable y salidas para consultas posteriores.
+
+- **Construir el grafo completo**: `/graphify` (usa el directorio actual).
+- **Actualizar incrementalmente**: `/graphify . --update` después de cambios en archivos existentes o nuevos.
+- **Reconstruir con mayor profundidad**: `/graphify . --mode deep` cuando se necesiten más relaciones inferidas.
+- **Consultar la arquitectura**: `/graphify query "¿Cómo fluye la información entre X e Y?"`.
+- **Trazar una conexión**: `/graphify path "Concepto A" "Concepto B"`.
+- **Explicar un nodo**: `/graphify explain "Nombre del nodo"`.
+
+Los resultados se guardan en `graphify-out/`:
+
+- `graph.html`: visualización interactiva.
+- `graph.json`: grafo para GraphRAG y consultas automatizadas.
+- `GRAPH_REPORT.md`: comunidades, nodos principales, conexiones sorprendentes y preguntas sugeridas.
+- `manifest.json`: manifiesto utilizado por las actualizaciones incrementales.
+
+Antes de reconstruir, usar las consultas sobre el grafo existente cuando `graphify-out/graph.json` esté disponible. La extracción estructural de código no requiere API keys; Gemini es opcional para enriquecer la extracción semántica de documentación, papers o imágenes. Los archivos generados son derivados y no deben editarse manualmente.
+
+## ✅ Regla obligatoria para futuras funcionalidades
+
+Toda funcionalidad nueva, modificación de lógica financiera o corrección de bug debe
+incluir o actualizar tests automatizados antes de considerarse terminada.
+
+- Cubrir como mínimo el caso nominal y un caso límite relevante.
+- Cubrir aislamiento por usuario cuando la funcionalidad trabaje con datos de usuarios.
+- Mantener las integraciones externas herméticas mediante mocks o datos sintéticos.
+- Ejecutar `venv/bin/python manage.py test` y no cerrar el cambio con tests fallidos.
+- Registrar en esta bitácora los cambios relevantes de cobertura y los bugs descubiertos
+  por la suite.
+
 ---
 
 ## 📝 Bitácora de Cambios (Changelog)
@@ -22,6 +54,18 @@ Y nunca olvidar actualizar README.md si aplica.
 +  - Se implementó un detector de "Próximo Vencimiento" que prioriza el pago más cercano en el calendario del mes actual.
 +- **Archivos actualizados**: `core/views.py`, `templates/calendario.html`.
 +
+
+### [2026-08] Base de Tests de Regresión para Futuras Mejoras
+- **Suite ampliada**: Se añadieron tests deterministas para reconciliación, presupuesto, analítica, clasificación IA, notificaciones, snapshots patrimoniales, propiedades y bicicletas de terceros.
+- **Integraciones aisladas**: Las pruebas no acceden a bancos, Telegram ni proveedores de IA; usan mocks y datos sintéticos.
+- **Criterio de mantenimiento**: Las futuras funcionalidades deben cubrir el caso nominal, un límite financiero y el aislamiento por usuario cuando aplique.
+- **Corrección detectada por tests**: `monto_a_pagar_tdc` dejó de duplicar una tarjeta al consultar varios `SaldoSnapshot`, eliminando el orden implícito antes de aplicar `distinct()`.
+- **Documentación**: Se agregó la sección `Pruebas de regresión` a `README.md` con el comando oficial de ejecución.
+
+### [2026-08] Integración de Graphify
+- **Documentación operativa**: Se añadieron comandos y reglas para construir, actualizar y consultar el grafo de conocimiento del proyecto mediante `/graphify`.
+- **Salidas documentadas**: Se registraron `graph.html`, `graph.json`, `GRAPH_REPORT.md` y `manifest.json` dentro de `graphify-out/`.
+- **Mapa mental**: Se incorporó Graphify como herramienta transversal para explorar la arquitectura y las relaciones entre módulos.
 
 ### [2026-03] Sincronización Mensual de Bicicletas (Fix & UX)
 - **Compensación de Gastos Real**: Se eliminó la deducción estática global de préstamos de terceros en el Dashboard. Ahora, al crear o editar una "Bicicleta" de terceros, se genera automáticamente un `RegistroMensual` (tipo GASTO, monto negativo) para compensar el gasto de la tarjeta de crédito.
@@ -200,11 +244,32 @@ Y nunca olvidar actualizar README.md si aplica.
 ```mermaid
 mindmap
   root((FinanzasPersonalesIA))
+    graphify[Graphify - Grafo de conocimiento]
+      ::icon(fa fa-project-diagram)
+      Visualización HTML
+      GraphRAG JSON
+      GRAPH_REPORT.md
+      Query / Path / Explain
+      Actualizaciones incrementales
     core[core App]
       ::icon(fa fa-shield)
       Profiles
       Periodos
       Dashboard Mejorado
+    banca[banca App - Fuente transaccional]
+      ::icon(fa fa-university)
+      Movimientos bancarios
+      Reconciliación de transferencias y bicicletas
+      Presupuesto y analítica
+      Clasificación IA por reglas
+      Configuración de fuentes
+    bank_sync[bank_sync - Conectores]
+      ::icon(fa fa-plug)
+      Contrato BankConnector / AssetConnector
+      Santander
+      Binance / Buda / CryptoMKT
+      Bitcoin Wallet / Fintual
+      Registro de conectores
     gastos[gastos App]
       ::icon(fa fa-receipt)
       Categorias
@@ -241,4 +306,22 @@ mindmap
       Productos Financieros
       Divisas / Tasas Cambio
       Snapshot Manual
+    pruebas[Suite de regresión]
+      ::icon(fa fa-vial)
+      Servicios de banca
+        Reconciliación
+        Presupuesto y analítica
+        Clasificación IA sin red
+      Integraciones
+        Snapshots patrimoniales
+        Bicicletas de terceros
+      Modelos
+        Departamentos e hipotecas
+        Patrimonio
+      Regla futura
+        Caso nominal
+        Caso límite
+        Aislamiento por usuario
 ```
+
+## Imported Claude Cowork project instructions

@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Deudas · Banca{% endblock %}
+{% block page_title %}Deudas{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+<div class="flex items-center justify-between">
+    <div>
+        <h3 class="text-2xl font-bold text-white">Deudas y cupos</h3>
+        <p class="text-slate-400 text-sm">Último saldo sincronizado por producto. Alimenta los pasivos del patrimonio.</p>
+    </div>
+    <div class="text-right">
+        <p class="text-xs text-slate-500 uppercase">Deuda total</p>
+        <p class="text-2xl font-bold text-rose-400">${{ total_deuda|intcomma }}</p>
+    </div>
+</div>
+
+<!-- Tarjetas de crédito -->
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h4 class="font-bold text-white mb-4"><i class="fas fa-credit-card text-sky-400 mr-2"></i>Tarjetas de crédito</h4>
+    {% if tarjetas %}
+    <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-slate-500 text-left text-xs uppercase">
+                <th class="pb-2">Producto</th>
+                <th class="pb-2 text-right">Facturado</th>
+                <th class="pb-2 text-right">No facturado</th>
+                <th class="pb-2 text-right">Cupo total</th>
+                <th class="pb-2 text-right">Disponible</th>
+                <th class="pb-2 text-right">Cupo USD</th>
+                <th class="pb-2 text-right">Deuda USD</th>
+                <th class="pb-2 text-right">TC banco</th>
+                <th class="pb-2 text-right">Fecha</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for s in tarjetas %}
+            <tr class="border-t border-slate-700/50">
+                <td class="py-2 text-slate-200 font-medium">{{ s.producto.nombre }}
+                    <span class="block text-[11px] text-slate-500">{{ s.producto.banco.nombre }}</span>
+                </td>
+                <td class="py-2 text-right font-bold text-white">${{ s.deuda_facturada_clp|default_if_none:0|intcomma }}</td>
+                <td class="py-2 text-right text-slate-400">${{ s.deuda_no_facturada_clp|default_if_none:0|intcomma }}</td>
+                <td class="py-2 text-right text-slate-400">${{ s.cupo_total_clp|default_if_none:0|intcomma }}</td>
+                <td class="py-2 text-right text-emerald-400">${{ s.cupo_disponible_clp|default_if_none:0|intcomma }}</td>
+                <td class="py-2 text-right text-slate-300">{% if s.cupo_usd %}US${{ s.cupo_usd|intcomma }}{% else %}—{% endif %}</td>
+                <td class="py-2 text-right text-slate-300">{% if s.deuda_usd %}US${{ s.deuda_usd|intcomma }}{% else %}—{% endif %}</td>
+                <td class="py-2 text-right text-slate-500">{% if s.tipo_cambio_banco %}${{ s.tipo_cambio_banco|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+                <td class="py-2 text-right text-slate-500 whitespace-nowrap">{{ s.fecha|date:"d/m/Y" }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="text-slate-500 text-sm">Aún no hay saldos de tarjetas. Sincroniza en modo «deudas» o «full».</p>
+    {% endif %}
+</div>
+
+<!-- Créditos / hipotecario -->
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h4 class="font-bold text-white mb-4"><i class="fas fa-house text-amber-400 mr-2"></i>Créditos / hipotecario</h4>
+    {% if creditos %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    {% for s in creditos %}
+        <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-700/50">
+            <p class="font-semibold text-white">{{ s.producto.nombre }}</p>
+            <p class="text-xs text-slate-500 mb-3">{{ s.producto.banco.nombre }} · {{ s.producto.get_tipo_display }}</p>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <p class="text-xs text-slate-500 uppercase">Saldo insoluto</p>
+                    <p class="text-lg font-bold text-rose-400">${{ s.saldo_insoluto|default_if_none:0|intcomma }}</p>
+                    {% if s.saldo_insoluto_uf %}<p class="text-[11px] text-slate-500">UF {{ s.saldo_insoluto_uf|floatformat:2|intcomma }}</p>{% endif %}
+                </div>
+                <div>
+                    <p class="text-xs text-slate-500 uppercase">Próxima cuota</p>
+                    <p class="text-lg font-bold text-white">${{ s.proxima_cuota|default_if_none:0|intcomma }}</p>
+                    {% if s.proxima_cuota_uf %}<p class="text-[11px] text-slate-500">UF {{ s.proxima_cuota_uf|floatformat:4 }}</p>{% endif %}
+                </div>
+            </div>
+            {% if s.fecha_proximo_pago %}
+            <p class="text-xs text-slate-500 mt-2">Próximo pago: {{ s.fecha_proximo_pago|date:"d/m/Y" }}</p>
+            {% endif %}
+            <p class="text-[11px] text-slate-600 mt-1">Actualizado {{ s.fecha|date:"d/m/Y" }}</p>
+        </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-slate-500 text-sm">No hay créditos sincronizados.</p>
+    {% endif %}
+</div>
+{% endblock %}

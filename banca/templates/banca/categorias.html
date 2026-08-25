@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Categorías · Banca{% endblock %}
+{% block page_title %}Categorías temáticas{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+<div class="flex items-center justify-between">
+    <div>
+        <h3 class="text-2xl font-bold text-white">Categorías temáticas</h3>
+        <p class="text-slate-400 text-sm">Cada categoría trae su esencialidad por defecto (FIJO/OCIO). La IA y las reglas la usan.</p>
+    </div>
+    <form method="post" action="{% url 'banca_sembrar_categorias' %}">
+        {% csrf_token %}
+        <button class="px-4 py-2 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 font-semibold text-sm transition">
+            <i class="fas fa-seedling mr-2"></i>Sembrar por defecto
+        </button>
+    </form>
+</div>
+
+<!-- Crear nueva -->
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h4 class="font-bold text-white mb-4">Nueva categoría</h4>
+    <form method="post" action="{% url 'banca_categorias' %}" class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        {% csrf_token %}
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">Nombre</label>
+            {{ form.nombre }}
+        </div>
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">Esencialidad</label>
+            {{ form.esencialidad_defecto }}
+        </div>
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">Orden</label>
+            {{ form.orden }}
+        </div>
+        <label class="flex items-center gap-2 text-sm text-slate-300 pb-2">
+            {{ form.es_interes_o_costo_financiero }} Interés/costo financiero
+        </label>
+        <input type="hidden" name="activa" value="on">
+        <button class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm">
+            <i class="fas fa-plus mr-1"></i>Agregar
+        </button>
+    </form>
+</div>
+
+<!-- Lista -->
+<div class="p-2 rounded-2xl bg-slate-800/50 border border-slate-700/50 overflow-x-auto">
+    {% for c in categorias %}
+        <form method="post" action="{% url 'banca_categoria_editar' c.pk %}" id="cat-edit-{{ c.pk }}">{% csrf_token %}</form>
+        <form method="post" action="{% url 'banca_categoria_borrar' c.pk %}" id="cat-del-{{ c.pk }}" onsubmit="return confirm('¿Eliminar esta categoría?');">{% csrf_token %}</form>
+    {% endfor %}
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-slate-500 text-left text-xs uppercase">
+                <th class="p-3">Nombre</th><th class="p-3">Esencialidad</th>
+                <th class="p-3">Interés</th><th class="p-3">Activa</th><th class="p-3">Orden</th><th class="p-3 text-right">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for c in categorias %}
+            <tr class="border-t border-slate-700/50">
+                <td class="p-3"><input form="cat-edit-{{ c.pk }}" name="nombre" value="{{ c.nombre }}" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200 w-full"></td>
+                <td class="p-3">
+                    <select form="cat-edit-{{ c.pk }}" name="esencialidad_defecto" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200">
+                        {% for val, lbl in ESENCIALIDAD %}<option value="{{ val }}" {% if c.esencialidad_defecto == val %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+                    </select>
+                </td>
+                <td class="p-3"><input form="cat-edit-{{ c.pk }}" type="checkbox" name="es_interes_o_costo_financiero" {% if c.es_interes_o_costo_financiero %}checked{% endif %} class="rounded"></td>
+                <td class="p-3"><input form="cat-edit-{{ c.pk }}" type="checkbox" name="activa" {% if c.activa %}checked{% endif %} class="rounded"></td>
+                <td class="p-3"><input form="cat-edit-{{ c.pk }}" name="orden" type="number" value="{{ c.orden }}" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200 w-16"></td>
+                <td class="p-3 text-right whitespace-nowrap">
+                    <button form="cat-edit-{{ c.pk }}" class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300" title="Guardar"><i class="fas fa-check"></i></button>
+                    <button form="cat-del-{{ c.pk }}" class="text-[11px] px-2 py-1 rounded bg-rose-500/20 text-rose-300" title="Eliminar"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="6" class="p-6 text-center text-slate-500">No tienes categorías. Usa «Sembrar por defecto» para empezar.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

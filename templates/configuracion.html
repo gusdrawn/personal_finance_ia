@@ -4,6 +4,18 @@
 {% block page_title %}Ajustes del Sistema{% endblock %}
 
 {% block content %}
+<!-- Acceso a Banca -->
+<a href="{% url 'banca_config' %}" class="flex items-center justify-between glass p-6 rounded-2xl mb-8 hover:border-emerald-500/50 border border-transparent transition group">
+    <div class="flex items-center">
+        <i class="fas fa-building-columns text-2xl text-emerald-400 mr-4"></i>
+        <div>
+            <h3 class="text-lg font-bold text-white">Credenciales y Banca</h3>
+            <p class="text-sm text-slate-400">Credenciales bancarias cifradas, categorías, contrapartes y parámetros del presupuesto.</p>
+        </div>
+    </div>
+    <i class="fas fa-arrow-right text-slate-500 group-hover:text-emerald-400 transition"></i>
+</a>
+
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
     <!-- Tipo de Cambio -->
     <div class="glass p-8 rounded-2xl">

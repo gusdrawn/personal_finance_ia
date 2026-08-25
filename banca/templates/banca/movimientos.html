@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Movimientos · Banca{% endblock %}
+{% block page_title %}Movimientos{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+{% if bicicletas %}
+<!-- Avance de bicicletas (préstamos NEAT) -->
+<div class="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h4 class="font-bold text-white mb-3 text-sm"><i class="fas fa-bicycle text-emerald-400 mr-2"></i>Avance de bicicletas (cargos vinculados vs total)</h4>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+    {% for b in bicicletas %}
+        <div class="p-3 rounded-xl bg-slate-900/50 border border-slate-700/50">
+            <div class="flex justify-between items-baseline">
+                <span class="text-slate-200 text-sm font-medium">{{ b.prestamo.nombre }}</span>
+                <span class="text-xs text-slate-500">{{ b.pct|floatformat:0 }}%</span>
+            </div>
+            <div class="w-full h-2 rounded-full bg-slate-700 overflow-hidden my-1.5">
+                <div class="h-full bg-emerald-500" style="width: {{ b.pct|floatformat:0 }}%"></div>
+            </div>
+            <p class="text-[11px] text-slate-500">
+                Vinculado ${{ b.vinculado|intcomma }} / ${{ b.total|intcomma }}
+                · Restante ${{ b.restante|intcomma }} · Retornado ${{ b.retornado|intcomma }}
+            </p>
+        </div>
+    {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Filtros -->
+<form method="get" class="flex flex-wrap items-center gap-3 p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <select name="estado" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200">
+        <option value="">Estado: todos</option>
+        {% for val, lbl in ESTADOS %}<option value="{{ val }}" {% if f_estado == val %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+    </select>
+    <select name="naturaleza" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200">
+        <option value="">Naturaleza: todas</option>
+        {% for val, lbl in NATURALEZAS %}<option value="{{ val }}" {% if f_naturaleza == val %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+    </select>
+    <label class="flex items-center gap-2 text-sm text-slate-300">
+        <input type="checkbox" name="revisar" value="1" {% if f_revisar == '1' %}checked{% endif %} class="rounded"> Solo por revisar
+    </label>
+    <button class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm">Filtrar</button>
+</form>
+
+<div class="p-2 rounded-2xl bg-slate-800/50 border border-slate-700/50 overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-slate-500 text-left text-xs uppercase">
+                <th class="p-3">Fecha</th><th class="p-3">Detalle</th><th class="p-3">Categoría</th>
+                <th class="p-3">Estado</th><th class="p-3 text-right">Monto CLP</th><th class="p-3">Acción</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for m in movimientos %}
+            <tr class="border-t border-slate-700/50 {% if m.por_revisar %}bg-amber-500/5{% endif %}">
+                <td class="p-3 text-slate-500 whitespace-nowrap">{{ m.fecha|date:"d/m/Y" }}</td>
+                <td class="p-3 text-slate-200">
+                    {{ m.descripcion|truncatechars:44 }}
+                    {% if m.cuota_total > 1 %}<span class="text-[10px] text-slate-500">({{ m.cuota_actual }}/{{ m.cuota_total }})</span>{% endif %}
+                    {% if m.naturaleza == 'TRANSFERENCIA' %}<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400">transferencia</span>{% endif %}
+                </td>
+                <td class="p-3">
+                    {% if m.por_revisar %}
+                        <form method="post" action="{% url 'banca_confirmar_revision' m.pk %}" class="flex gap-1 mb-1">
+                            {% csrf_token %}
+                            <button name="decision" value="operacional" class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300">Es real</button>
+                            <button name="decision" value="transferencia" class="text-[11px] px-2 py-1 rounded bg-slate-700 text-slate-300">Transfer.</button>
+                        </form>
+                    {% else %}
+                        <span class="text-slate-300">{{ m.categoria.nombre|default:"—" }}</span>
+                        <span class="text-[10px] text-slate-600">{{ m.get_fuente_clasificacion_display }}</span>
+                    {% endif %}
+                    {% if m.prestamo_id %}<span class="block text-[10px] px-1.5 py-0.5 mt-1 rounded bg-emerald-500/15 text-emerald-300 w-fit"><i class="fas fa-bicycle mr-1"></i>{{ m.prestamo.nombre|truncatechars:18 }}</span>{% endif %}
+                </td>
+                <td class="p-3"><span class="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300">{{ m.get_estado_display }}</span></td>
+                <td class="p-3 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">${{ m.monto_clp|intcomma }}</td>
+                <td class="p-3">
+                    <form method="post" action="{% url 'banca_reclasificar' m.pk %}" class="flex items-center gap-1">
+                        {% csrf_token %}
+                        <select name="categoria" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                            <option value="">Reclasificar…</option>
+                            {% for c in categorias %}<option value="{{ c.id }}" {% if m.categoria_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+                        </select>
+                        <button class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300" title="Reclasificar"><i class="fas fa-check"></i></button>
+                    </form>
+                    {% if prestamos %}
+                    <form method="post" action="{% url 'banca_asignar_prestamo' m.pk %}" class="flex items-center gap-1 mt-1">
+                        {% csrf_token %}
+                        <select name="prestamo" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                            <option value="">— gasto/ingreso real —</option>
+                            {% for p in prestamos %}<option value="{{ p.id }}" {% if m.prestamo_id == p.id %}selected{% endif %}>🚲 {{ p.nombre }}</option>{% endfor %}
+                        </select>
+                        <button class="text-[11px] px-2 py-1 rounded bg-sky-500/20 text-sky-300" title="Vincular a préstamo"><i class="fas fa-link"></i></button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="6" class="p-6 text-center text-slate-500">No hay movimientos con esos filtros.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="text-xs text-slate-600">Mostrando hasta 300 movimientos. Reclasificar fija tu criterio (manual) y enseña la regla para el futuro.</p>
+{% endblock %}

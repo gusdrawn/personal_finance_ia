@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Sincronizaciones · Banca{% endblock %}
+{% block page_title %}Historial de sincronización{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+<div class="flex items-center justify-between">
+    <div>
+        <h3 class="text-2xl font-bold text-white">Historial de sincronización</h3>
+        <p class="text-slate-400 text-sm">Últimas 50 corridas: qué se bajó, cuántos movimientos y errores.</p>
+    </div>
+    <form method="post" action="{% url 'banca_sync' %}">
+        {% csrf_token %}
+        <input type="hidden" name="modo" value="full">
+        <button class="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm transition">
+            <i class="fas fa-rotate mr-2"></i>Sincronizar ahora
+        </button>
+    </form>
+</div>
+
+<div class="p-2 rounded-2xl bg-slate-800/50 border border-slate-700/50 overflow-x-auto">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-slate-500 text-left text-xs uppercase">
+                <th class="p-3">Banco</th><th class="p-3">Modo</th><th class="p-3">Inicio</th>
+                <th class="p-3">Estado</th><th class="p-3 text-right">Nuevos</th>
+                <th class="p-3 text-right">Actualizados</th><th class="p-3 text-right">IA</th><th class="p-3">Mensaje</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for log in logs %}
+            <tr class="border-t border-slate-700/50">
+                <td class="p-3 text-slate-200">{{ log.banco.nombre }}</td>
+                <td class="p-3 text-slate-400">{{ log.get_modo_display }}</td>
+                <td class="p-3 text-slate-500 whitespace-nowrap">{{ log.iniciado|date:"d/m/Y H:i" }}</td>
+                <td class="p-3">
+                    {% if log.exito %}
+                        <span class="text-[11px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">OK</span>
+                    {% else %}
+                        <span class="text-[11px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300">ERROR</span>
+                    {% endif %}
+                </td>
+                <td class="p-3 text-right font-semibold text-white">{{ log.nuevos }}</td>
+                <td class="p-3 text-right text-slate-400">{{ log.actualizados }}</td>
+                <td class="p-3 text-right text-slate-400">{{ log.clasificados_ia }}</td>
+                <td class="p-3 text-slate-500 max-w-xs truncate" title="{{ log.mensaje }}">{{ log.mensaje|truncatechars:60 }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="8" class="p-6 text-center text-slate-500">Sin sincronizaciones todavía.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

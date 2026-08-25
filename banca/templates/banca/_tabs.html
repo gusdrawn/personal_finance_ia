@@ -1,0 +1,10 @@
+{% with url=request.resolver_match.url_name %}
+<div class="flex flex-wrap items-center gap-1 p-1 rounded-xl bg-slate-800/50 border border-slate-700/50 w-fit">
+    <a href="{% url 'banca_dashboard' %}" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if url == 'banca_dashboard' %}bg-emerald-500 text-white{% else %}text-slate-400 hover:text-white{% endif %}"><i class="fas fa-gauge-high mr-1.5"></i>Dashboard</a>
+    <a href="{% url 'banca_movimientos' %}" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if url == 'banca_movimientos' %}bg-emerald-500 text-white{% else %}text-slate-400 hover:text-white{% endif %}"><i class="fas fa-list mr-1.5"></i>Movimientos</a>
+    <a href="{% url 'banca_deudas' %}" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if url == 'banca_deudas' %}bg-emerald-500 text-white{% else %}text-slate-400 hover:text-white{% endif %}"><i class="fas fa-credit-card mr-1.5"></i>Deudas</a>
+    <a href="{% url 'banca_categorias' %}" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if url == 'banca_categorias' %}bg-emerald-500 text-white{% else %}text-slate-400 hover:text-white{% endif %}"><i class="fas fa-tags mr-1.5"></i>Categorías</a>
+    <a href="{% url 'banca_sync_logs' %}" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if url == 'banca_sync_logs' %}bg-emerald-500 text-white{% else %}text-slate-400 hover:text-white{% endif %}"><i class="fas fa-rotate mr-1.5"></i>Sync</a>
+    <a href="{% url 'banca_config' %}" class="px-3 py-1.5 rounded-lg text-sm font-medium transition {% if url == 'banca_config' %}bg-emerald-500 text-white{% else %}text-slate-400 hover:text-white{% endif %}"><i class="fas fa-sliders-h mr-1.5"></i>Configuración</a>
+</div>
+{% endwith %}

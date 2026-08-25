@@ -1,0 +1,168 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Banca · FinanzasIA{% endblock %}
+{% block page_title %}Banca{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+<div class="flex items-center justify-between">
+    <div>
+        <h3 class="text-2xl font-bold text-white">Resumen bancario</h3>
+        <p class="text-slate-400 text-sm">Presupuesto en devengo, deudas y movimientos en vivo desde tu banco.</p>
+    </div>
+    <form method="post" action="{% url 'banca_sync' %}">
+        {% csrf_token %}
+        <input type="hidden" name="modo" value="full">
+        <button class="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm shadow-lg shadow-emerald-500/20 transition">
+            <i class="fas fa-rotate mr-2"></i>Sincronizar ahora
+        </button>
+    </form>
+</div>
+
+{% if not tiene_credencial %}
+<div class="p-4 rounded-xl bg-amber-500/10 border-l-4 border-amber-500 text-amber-300 text-sm">
+    <i class="fas fa-triangle-exclamation mr-2"></i>
+    Aún no configuras credenciales bancarias. Créalas en <a href="{% url 'banca_config' %}" class="underline font-semibold">Configuración</a> (se guardan cifradas).
+</div>
+{% endif %}
+
+<!-- Presupuesto -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2 p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <div class="flex items-center justify-between mb-4">
+            <h4 class="font-bold text-white">Presupuesto Ocio · {{ presupuesto.month }}/{{ presupuesto.year }}</h4>
+            {% if presupuesto.alerta %}
+            <span class="px-3 py-1 rounded-full bg-rose-500/20 text-rose-400 text-xs font-bold">Sobre el {{ presupuesto.umbral|floatformat:0 }}%</span>
+            {% else %}
+            <span class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">En rango</span>
+            {% endif %}
+        </div>
+        <div class="grid grid-cols-3 gap-4 mb-4">
+            <div>
+                <p class="text-xs text-slate-500 uppercase">Disponible</p>
+                <p class="text-xl font-bold text-white">${{ presupuesto.disponible_ocio|intcomma }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-slate-500 uppercase">Gastado (Ocio)</p>
+                <p class="text-xl font-bold text-amber-400">${{ presupuesto.ocio_gastado|intcomma }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-slate-500 uppercase">Restante</p>
+                <p class="text-xl font-bold {% if presupuesto.ocio_restante < 0 %}text-rose-400{% else %}text-emerald-400{% endif %}">${{ presupuesto.ocio_restante|intcomma }}</p>
+            </div>
+        </div>
+        <div class="w-full h-3 rounded-full bg-slate-700 overflow-hidden">
+            <div class="h-full {% if presupuesto.alerta %}bg-rose-500{% else %}bg-emerald-500{% endif %}" style="width: {% if presupuesto.porcentaje_usado > 100 %}100{% else %}{{ presupuesto.porcentaje_usado }}{% endif %}%"></div>
+        </div>
+        <p class="text-xs text-slate-500 mt-3">
+            Ingreso prom. {{ presupuesto.ventana_meses }}m: <span class="text-slate-300">${{ presupuesto.promedio_ingresos|intcomma }}</span>
+            · Comprometido (Fijo + cuotas): <span class="text-slate-300">${{ presupuesto.comprometido|intcomma }}</span>
+        </p>
+    </div>
+
+    <div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <h4 class="font-bold text-white mb-4">Fijo vs Ocio (mes)</h4>
+        <div class="space-y-3">
+            <div class="flex justify-between items-center">
+                <span class="text-slate-400 text-sm"><i class="fas fa-lock text-sky-400 mr-2"></i>Fijo</span>
+                <span class="font-bold text-white">${{ fijo_ocio.fijo|intcomma }}</span>
+            </div>
+            <div class="flex justify-between items-center">
+                <span class="text-slate-400 text-sm"><i class="fas fa-martini-glass text-amber-400 mr-2"></i>Ocio</span>
+                <span class="font-bold text-white">${{ fijo_ocio.ocio|intcomma }}</span>
+            </div>
+            <div class="border-t border-slate-700 pt-3 flex justify-between items-center">
+                <span class="text-slate-400 text-sm">Intereses</span>
+                <span class="font-bold text-rose-400">${{ intereses|intcomma }}</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Pagar TDC + por revisar -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2 p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <h4 class="font-bold text-white mb-4">A pagar por tarjeta</h4>
+        {% if pagar_tdc %}
+        <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left text-xs uppercase">
+                <th class="pb-2">Producto</th><th class="pb-2 text-right">Facturado</th><th class="pb-2 text-right">No facturado</th>
+            </tr></thead>
+            <tbody>
+            {% for t in pagar_tdc %}
+                <tr class="border-t border-slate-700/50">
+                    <td class="py-2 text-slate-300">{{ t.producto }}</td>
+                    <td class="py-2 text-right font-bold text-white">${{ t.facturado_clp|intcomma }}</td>
+                    <td class="py-2 text-right text-slate-400">${{ t.no_facturado_clp|intcomma }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-slate-500 text-sm">Aún no hay estados de cuenta sincronizados.</p>
+        {% endif %}
+    </div>
+
+    <a href="{% url 'banca_movimientos' %}?revisar=1" class="p-6 rounded-2xl border transition {% if por_revisar %}bg-amber-500/10 border-amber-500/40 hover:bg-amber-500/20{% else %}bg-slate-800/50 border-slate-700/50{% endif %} flex flex-col justify-center">
+        <p class="text-xs text-slate-400 uppercase">Por revisar</p>
+        <p class="text-4xl font-bold {% if por_revisar %}text-amber-400{% else %}text-white{% endif %}">{{ por_revisar }}</p>
+        <p class="text-xs text-slate-500 mt-1">Abonos ambiguos sin confirmar (no cuentan como ingreso).</p>
+    </a>
+</div>
+
+<!-- Categorías + suscripciones -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <h4 class="font-bold text-white mb-4">Gasto por categoría (mes)</h4>
+        {% for c in categorias_mes %}
+        <div class="flex justify-between items-center py-1.5 text-sm">
+            <span class="text-slate-300">{{ c.categoria }}
+                <span class="text-[10px] px-1.5 py-0.5 rounded {% if c.esencialidad == 'FIJO' %}bg-sky-500/20 text-sky-300{% else %}bg-amber-500/20 text-amber-300{% endif %}">{{ c.esencialidad }}</span>
+            </span>
+            <span class="font-semibold text-white">${{ c.total|intcomma }}</span>
+        </div>
+        {% empty %}
+        <p class="text-slate-500 text-sm">Sin movimientos clasificados aún.</p>
+        {% endfor %}
+    </div>
+
+    <div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <h4 class="font-bold text-white mb-4">Suscripciones detectadas</h4>
+        {% for s in suscripciones %}
+        <div class="flex justify-between items-center py-1.5 text-sm">
+            <span class="text-slate-300 truncate">{{ s.comercio }} <span class="text-slate-500">({{ s.meses }} meses)</span></span>
+            <span class="font-semibold text-white">${{ s.monto_promedio|intcomma }}</span>
+        </div>
+        {% empty %}
+        <p class="text-slate-500 text-sm">No se detectan cargos recurrentes todavía.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Últimos movimientos -->
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <div class="flex items-center justify-between mb-4">
+        <h4 class="font-bold text-white">Últimos movimientos</h4>
+        <a href="{% url 'banca_movimientos' %}" class="text-emerald-400 text-sm hover:underline">Ver todos →</a>
+    </div>
+    <table class="w-full text-sm">
+        <tbody>
+        {% for m in ultimos %}
+            <tr class="border-t border-slate-700/50">
+                <td class="py-2 text-slate-500 w-20">{{ m.fecha|date:"d/m" }}</td>
+                <td class="py-2 text-slate-300">{{ m.descripcion|truncatechars:40 }}</td>
+                <td class="py-2 text-slate-400 text-xs">{{ m.categoria.nombre|default:"—" }}</td>
+                <td class="py-2 text-xs">
+                    {% if m.naturaleza == 'TRANSFERENCIA' %}<span class="text-slate-500">transf.</span>{% endif %}
+                </td>
+                <td class="py-2 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">${{ m.monto_clp|intcomma }}</td>
+            </tr>
+        {% empty %}
+            <tr><td class="py-4 text-slate-500 text-center">Sin movimientos. Sincroniza para empezar.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

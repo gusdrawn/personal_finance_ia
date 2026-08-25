@@ -31,6 +31,8 @@
         input[type=number] {
             -moz-appearance: textfield;
         }
+        /* Evita el parpadeo de elementos Alpine (x-show) antes de inicializar */
+        [x-cloak] { display: none !important; }
         {% block extra_css %}{% endblock %}
     </style>
 </head>
