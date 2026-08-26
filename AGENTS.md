@@ -55,6 +55,16 @@ incluir o actualizar tests automatizados antes de considerarse terminada.
 +- **Archivos actualizados**: `core/views.py`, `templates/calendario.html`.
 +
 
+### [2026-08-26] Despliegue automático mediante GitHub Actions
+- **Workflow**: Se añadió `.github/workflows/deploy-cpanel.yml`, activado por `push` a `main` y por ejecución manual.
+- **Validación previa**: El workflow instala dependencias, ejecuta `manage.py check`, los tests y `collectstatic` antes de publicar.
+- **Publicación**: `.github/scripts/deploy_cpanel.py` sube y extrae un paquete sin secretos ni datos locales mediante la API de cPanel, ejecuta migraciones con un cron temporal, reinicia Passenger y limpia los temporales.
+- **Documentación**: `README.md` y `.env.example` enumeran los cinco secretos requeridos (`CPANEL_HOST`, `CPANEL_USERNAME`, `CPANEL_API_TOKEN`, `CPANEL_APP_ROOT` y `CPANEL_PYTHON_BIN`).
+
+### [2026-08-26] Exclusión de artefactos locales
+- **Git**: Se añadieron al `.gitignore` el backup local `db.sqlite3.backup`, el estado regenerable de Celery Beat (`celerybeat-schedule*`) y las salidas derivadas/cache de Graphify (`graphify-out/`).
+- **Protección de datos**: Estos archivos permanecen disponibles localmente, pero no deben formar parte del código versionado ni de los despliegues.
+
 ### [2026-08-25] Sincronización de la versión local con cPanel
 - **Despliegue**: Se subió el código local actualizado a `/home/gustzyif/finance_app` mediante la API de cPanel, incluyendo templates, migraciones, dependencias y estáticos recolectados.
 - **Protección de producción**: Se conservaron el `.env`, `db.sqlite3` y `media/` existentes; los archivos temporales de subida y migración se retiraron al finalizar.
@@ -392,6 +402,11 @@ mindmap
       Subdominio finance.gustavoguillen.com
       passenger_wsgi.py
       WhiteNoise + collectstatic
+      GitHub Actions
+        Tests antes de publicar
+        Fileman upload/extract
+        Migraciones con cron temporal
+        Reinicio y smoke test
     pruebas[Suite de regresión]
       ::icon(fa fa-vial)
       Servicios de banca

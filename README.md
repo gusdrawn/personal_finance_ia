@@ -143,6 +143,30 @@ Si el servidor usa LiteSpeed, el proveedor debe habilitar la integración de
 Python/Passenger a nivel del servidor; registrar la aplicación mediante la API de
 cPanel no modifica esa configuración global.
 
+### Despliegue automático con GitHub Actions
+
+El workflow `.github/workflows/deploy-cpanel.yml` se ejecuta al hacer `push` a `main`
+o manualmente desde **Actions → Test and deploy to cPanel → Run workflow**. Antes de
+publicar instala las dependencias en el runner, ejecuta `manage.py check`, la suite de
+tests y `collectstatic`. Después sube un archivo limpio mediante la API de cPanel,
+lo extrae en la carpeta de la aplicación, ejecuta las migraciones mediante un cron
+temporal y reinicia Passenger.
+
+En GitHub, abre **Settings → Secrets and variables → Actions → New repository secret**
+y crea estos secretos:
+
+| Secreto | Valor |
+| --- | --- |
+| `CPANEL_HOST` | Host de cPanel sin `https://`, por ejemplo `server199.web-hosting.com` |
+| `CPANEL_USERNAME` | Usuario de cPanel, por ejemplo `gustzyif` |
+| `CPANEL_API_TOKEN` | API Token creado en cPanel (**no** la contraseña de acceso) |
+| `CPANEL_APP_ROOT` | `/home/gustzyif/finance_app` |
+| `CPANEL_PYTHON_BIN` | `/home/gustzyif/virtualenv/finance_app/3.13/bin/python` |
+
+El token debe permitir File Manager y Cron; no se requiere habilitar SSH. El workflow
+no empaqueta `.env`, la base de datos SQLite ni `media/`, por lo que conserva la
+configuración y los datos existentes en producción.
+
 ## 📄 Importación de estados de cuenta (POC)
 
 Desde **Banca → Importar estados** (`/banca/importar/`) se pueden subir varios PDFs

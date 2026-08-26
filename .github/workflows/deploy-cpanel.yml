@@ -1,0 +1,97 @@
+name: Test and deploy to cPanel
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-cpanel-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and deploy production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      DJANGO_SETTINGS_MODULE: finanzas_project.settings
+      DJANGO_SECRET_KEY: ci-only-key-not-used-in-production
+      DJANGO_DEBUG: "1"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+      CSRF_TRUSTED_ORIGINS: http://localhost,http://testserver
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Django checks and tests
+        run: |
+          python manage.py check
+          python manage.py test --verbosity 1
+
+      - name: Collect static files
+        env:
+          DJANGO_DEBUG: "0"
+        run: python manage.py collectstatic --noinput
+
+      - name: Build deployment archive
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/finance_app.tar.gz"
+          tar -czf "$archive" \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./.env' \
+            --exclude='./venv' \
+            --exclude='./.venv' \
+            --exclude='./graphify-out' \
+            --exclude='./.opencode' \
+            --exclude='./db.sqlite3*' \
+            --exclude='./media' \
+            --exclude='./__pycache__' \
+            --exclude='./*/__pycache__' \
+            --exclude='./*.pyc' \
+            --exclude='./*/*.pyc' \
+            --exclude='./*.log' \
+            --exclude='./celerybeat-schedule*' \
+            --exclude='./.DS_Store' \
+            .
+          test -s "$archive"
+          tar -tzf "$archive" | grep -q './passenger_wsgi.py'
+          echo "DEPLOY_ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Upload, migrate, and restart cPanel application
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
+          CPANEL_API_TOKEN: ${{ secrets.CPANEL_API_TOKEN }}
+          CPANEL_APP_ROOT: ${{ secrets.CPANEL_APP_ROOT }}
+          CPANEL_PYTHON_BIN: ${{ secrets.CPANEL_PYTHON_BIN }}
+          DEPLOY_ID: ${{ github.sha }}-${{ github.run_id }}
+        run: python .github/scripts/deploy_cpanel.py
+
+      - name: Smoke test production URL
+        env:
+          DEPLOY_URL: https://finance.gustavoguillen.com/
+        run: |
+          curl --fail --silent --show-error --location --max-time 60 \
+            --output /dev/null \
+            --write-out 'Production response: %{http_code} %{url_effective}\n' \
+            "$DEPLOY_URL"

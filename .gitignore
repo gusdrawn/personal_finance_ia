@@ -29,10 +29,17 @@ ENV/
 # Django
 db.sqlite3
 db.sqlite3-journal
+db.sqlite3.backup
 local_settings.py
 staticfiles/
 media/
 *.log
+
+# Celery Beat runtime state
+celerybeat-schedule*
+
+# Graphify generated outputs and local cache
+graphify-out/
 
 # IDEs
 .vscode/
