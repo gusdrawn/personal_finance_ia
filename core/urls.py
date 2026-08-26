@@ -50,6 +50,8 @@ urlpatterns = [
     path('configuracion/crear-producto/', views.crear_producto, name='crear_producto'),
     path('configuracion/editar-producto/<int:pk>/', views.editar_producto, name='editar_producto'),
     path('configuracion/borrar-producto/<int:pk>/', views.borrar_producto, name='borrar_producto'),
+    path('configuracion/apple-pay/key/crear/', views.crear_apple_pay_key, name='crear_apple_pay_key'),
+    path('configuracion/apple-pay/key/<int:pk>/revocar/', views.revocar_apple_pay_key, name='revocar_apple_pay_key'),
     
     # Calendario
     path('calendario/programado/crear/', views.crear_gasto_programado, name='crear_gasto_programado'),

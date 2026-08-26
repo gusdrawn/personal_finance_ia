@@ -16,6 +16,36 @@ All API endpoints require authentication. Use the Django admin login credentials
 
 ## Endpoints
 
+### Apple Pay (POC)
+
+#### Recepción de un pago desde Apple Shortcuts
+
+```text
+POST /banca/api/apple-pay/ingest/
+Authorization: Bearer <API_KEY>
+Content-Type: application/json
+```
+
+```json
+{
+  "event_id": "uuid-generado-por-shortcuts",
+  "occurred_at": "2026-08-24T14:32:00-04:00",
+  "merchant": "Supermercado Central",
+  "amount": "12990",
+  "currency": "CLP",
+  "notify": true
+}
+```
+
+La API key puede generarse desde **Configuración → Apple Pay y Atajos** (`/dashboard/configuracion/`)
+o con `venv/bin/python manage.py generate_apple_pay_key <usuario>`. Desde la misma pantalla se
+puede revisar el prefijo/último uso y revocar una key. El secreto completo se muestra una sola vez.
+`event_id` es obligatorio e idempotente por usuario: un reintento responde `200` y no
+duplica ni vuelve a notificar. La respuesta incluye el movimiento, categoría/fuente de
+clasificación (`REGLA`, `IA` o `PENDIENTE`) y el estado del aviso Telegram. Ver el flujo
+completo y el ejemplo de configuración del Atajo en
+[docs/APPLE_PAY_POC.md](docs/APPLE_PAY_POC.md).
+
 ### Gastos (Expenses & Income)
 
 #### 1. Categories (`/gastos/categorias/`)

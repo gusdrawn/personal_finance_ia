@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Importar estados · Banca{% endblock %}
+{% block page_title %}Importar estados de cuenta{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+<div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+    <div>
+        <p class="text-xs uppercase tracking-widest text-emerald-400 font-bold">Prueba de concepto</p>
+        <h3 class="text-2xl font-bold text-white mt-1">Analiza varios estados de cuenta juntos</h3>
+        <p class="text-slate-400 text-sm mt-2 max-w-3xl">
+            Sube PDFs de Itaú, Banco Falabella o Santander. Detectamos banco, tarjeta, período,
+            montos y movimientos, los deduplicamos y los dejamos listos para clasificar.
+        </p>
+    </div>
+    <a href="{% url 'banca_movimientos' %}" class="text-emerald-400 hover:text-emerald-300 text-sm whitespace-nowrap">Revisar todos los movimientos →</a>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    {% csrf_token %}
+    <div class="flex flex-col md:flex-row md:items-center gap-4">
+        <label class="flex-1 flex items-center gap-3 p-4 rounded-xl border border-dashed border-slate-600 bg-slate-900/40 cursor-pointer hover:border-emerald-500/60 transition">
+            <i class="fas fa-file-pdf text-rose-400 text-2xl"></i>
+            <span>
+                <span class="block text-sm font-semibold text-white">Seleccionar estados de cuenta</span>
+                <span class="block text-xs text-slate-500">Puedes elegir múltiples archivos PDF · máximo 15 MB por archivo</span>
+            </span>
+            <input type="file" name="archivos" accept="application/pdf,.pdf" multiple required class="sr-only">
+        </label>
+        <button class="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm shadow-lg shadow-emerald-500/20 transition">
+            <i class="fas fa-wand-magic-sparkles mr-2"></i>Analizar archivos
+        </button>
+    </div>
+    <p class="text-xs text-slate-600 mt-3">Los PDFs quedan vinculados a tu usuario para poder auditar el origen de cada movimiento. No se usan credenciales bancarias.</p>
+</form>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <p class="text-xs uppercase text-slate-500">Archivos recientes</p>
+        <p class="text-3xl font-bold text-white mt-1">{{ importaciones|length }}</p>
+    </div>
+    <div class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <p class="text-xs uppercase text-slate-500">Movimientos en vista</p>
+        <p class="text-3xl font-bold text-white mt-1">{{ total_movimientos }}</p>
+    </div>
+    <div class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <p class="text-xs uppercase text-slate-500">Pendientes de categoría</p>
+        <p class="text-3xl font-bold {% if pendientes %}text-amber-400{% else %}text-emerald-400{% endif %} mt-1">{{ pendientes }}</p>
+    </div>
+    <div class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <p class="text-xs uppercase text-slate-500">Bancos detectados</p>
+        <p class="text-3xl font-bold text-white mt-1">{{ bancos_detectados }}</p>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+    <div class="lg:col-span-3 p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h4 class="font-bold text-white">Resumen por categoría</h4>
+                <p class="text-xs text-slate-500 mt-1">Cargos operacionales detectados en los archivos seleccionados.</p>
+            </div>
+            {% if seleccionada %}<a href="{% url 'banca_importar' %}" class="text-xs text-slate-400 hover:text-white">Ver todos</a>{% endif %}
+        </div>
+        {% if categorias %}
+        <div class="h-64"><canvas id="categoriasImportadasChart"></canvas></div>
+        <div class="mt-4 space-y-2">
+            {% for c in categorias %}
+            <div class="flex justify-between text-sm border-t border-slate-700/50 pt-2">
+                <span class="text-slate-300">{{ c.nombre }} <span class="text-xs text-slate-600">({{ c.n }})</span></span>
+                <span class="font-semibold text-white">${{ c.total|intcomma }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="h-64 flex items-center justify-center text-sm text-slate-500">Aún no hay cargos operacionales para graficar.</div>
+        {% endif %}
+    </div>
+
+    <div class="lg:col-span-2 p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+        <h4 class="font-bold text-white mb-4">Archivos analizados</h4>
+        <div class="space-y-3 max-h-80 overflow-y-auto pr-1">
+        {% for i in importaciones %}
+            <a href="{% url 'banca_importar' %}?importacion={{ i.pk }}" class="block p-3 rounded-xl border {% if seleccionada.pk == i.pk %}border-emerald-500/50 bg-emerald-500/10{% else %}border-slate-700/50 bg-slate-900/30 hover:border-slate-600{% endif %}">
+                <div class="flex items-start justify-between gap-2">
+                    <span class="text-sm text-slate-200 truncate">{{ i.nombre_archivo }}</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full {% if i.estado == 'PROCESADO' %}bg-emerald-500/15 text-emerald-300{% elif i.estado == 'DUPLICADO' %}bg-sky-500/15 text-sky-300{% else %}bg-rose-500/15 text-rose-300{% endif %}">{{ i.get_estado_display }}</span>
+                </div>
+                <p class="text-xs text-slate-500 mt-1">{{ i.banco_detectado|default:'Banco no detectado' }}{% if i.tarjeta_ultimos4 %} · ••••{{ i.tarjeta_ultimos4 }}{% endif %}</p>
+                <p class="text-xs text-slate-500 mt-1">{{ i.operaciones_nuevas }} nuevos · {{ i.operaciones_detectadas }} detectados{% if i.fecha_estado %} · {{ i.fecha_estado|date:'d/m/Y' }}{% endif %}</p>
+                {% if i.mensaje and i.estado == 'ERROR' %}<p class="text-xs text-rose-300 mt-2">{{ i.mensaje }}</p>{% endif %}
+            </a>
+        {% empty %}
+            <p class="text-sm text-slate-500">Todavía no has importado estados de cuenta.</p>
+        {% endfor %}
+        </div>
+    </div>
+</div>
+
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50 overflow-x-auto">
+    <div class="flex items-center justify-between mb-4">
+        <div>
+            <h4 class="font-bold text-white">Movimientos para revisar</h4>
+            <p class="text-xs text-slate-500 mt-1">La recategorización manual aprende la glosa para futuras importaciones.</p>
+        </div>
+        {% if seleccionada %}<span class="text-xs text-slate-500">{{ seleccionada.nombre_archivo }}</span>{% endif %}
+    </div>
+    <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 text-left text-xs uppercase"><th class="p-3">Fecha</th><th class="p-3">Banco / detalle</th><th class="p-3">Categoría</th><th class="p-3 text-right">Monto</th><th class="p-3">Acción</th></tr></thead>
+        <tbody>
+        {% for m in movimientos %}
+            <tr class="border-t border-slate-700/50 {% if m.por_revisar %}bg-amber-500/5{% endif %}">
+                <td class="p-3 text-slate-500 whitespace-nowrap">{{ m.fecha|date:'d/m/Y' }}</td>
+                <td class="p-3"><span class="block text-slate-200">{{ m.descripcion|truncatechars:52 }}</span><span class="text-[11px] text-slate-500">{{ m.producto }}</span></td>
+                <td class="p-3 text-slate-300">{{ m.categoria.nombre|default:'Sin categoría' }}{% if m.fuente_clasificacion != 'PENDIENTE' %}<span class="block text-[10px] text-slate-600">{{ m.get_fuente_clasificacion_display }}</span>{% endif %}</td>
+                <td class="p-3 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">${{ m.monto_clp|intcomma }}</td>
+                <td class="p-3">
+                    <form method="post" action="{% url 'banca_reclasificar' m.pk %}" class="flex items-center gap-1">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{% url 'banca_importar' %}">
+                        <select name="categoria" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                            <option value="">Reclasificar…</option>
+                            {% for c in categorias_tematicas %}<option value="{{ c.id }}" {% if m.categoria_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+                        </select>
+                        <button class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300" title="Reclasificar"><i class="fas fa-check"></i></button>
+                    </form>
+                </td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="5" class="p-8 text-center text-slate-500">Importa un estado de cuenta para comenzar.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ categoria_chart|json_script:'categoria-importada-data' }}
+<script>
+    const categoriaData = JSON.parse(document.getElementById('categoria-importada-data').textContent);
+    const chartCanvas = document.getElementById('categoriasImportadasChart');
+    if (chartCanvas && categoriaData.length) {
+        new Chart(chartCanvas.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: categoriaData.map(item => item.label),
+                datasets: [{
+                    data: categoriaData.map(item => item.total),
+                    backgroundColor: ['#34d399', '#60a5fa', '#fbbf24', '#f472b6', '#a78bfa', '#fb7185', '#22d3ee'],
+                    borderColor: '#0f172a',
+                    borderWidth: 3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'right', labels: { color: '#cbd5e1', boxWidth: 12 } } }
+            }
+        });
+    }
+</script>
+{% endblock %}

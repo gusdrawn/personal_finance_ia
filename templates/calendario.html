@@ -259,7 +259,7 @@ function newGastoProgramado() {
 
 function editGastoProgramado(id, nombre, monto, fecha, frecuencia, notas, activo) {
     document.getElementById('modal-title').innerText = 'Editar Gasto Programado';
-    document.getElementById('form-programado').action = `/dashboard/calendario/programado/editar/${id}/`;
+    document.getElementById('form-programado').action = `${window.APP_BASE_PATH}/dashboard/calendario/programado/editar/${id}/`;
     document.getElementById('input-nombre').value = nombre;
     document.getElementById('input-monto').value = monto;
     document.getElementById('input-fecha').value = fecha;

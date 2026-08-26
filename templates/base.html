@@ -20,6 +20,9 @@
     <!-- Custom CSS -->
     {% load static %}
     <link rel="stylesheet" href="{% static 'css/modern.css' %}">
+    <script>
+        window.APP_BASE_PATH = "{{ request.script_name|default:'' }}";
+    </script>
     
     <style>
         /* Ocultar flechas de inputs numéricos */
@@ -53,6 +56,7 @@
                 </a>
             </div>
 
+            <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
             <nav class="sidebar-nav mt-6">
                 <a href="{% url 'dashboard' %}" class="sidebar-item {% if 'dashboard' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-chart-line w-6"></i>
@@ -99,6 +103,28 @@
                     <span class="font-medium">Configuración</span>
                 </a>
             </nav>
+
+            <section class="sidebar-quick-links" aria-labelledby="quick-links-title">
+                <div class="sidebar-section-label" id="quick-links-title">
+                    <i class="fas fa-arrow-up-right-from-square"></i>
+                    <span>Accesos rápidos</span>
+                </div>
+                <ul class="space-y-1">
+                    <li><a href="https://banco.santander.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-building-columns quick-link-icon"></i><span class="truncate">Santander</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.scotiabankchile.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-building-columns quick-link-icon"></i><span class="truncate">Scotiabank</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.bci.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-building-columns quick-link-icon"></i><span class="truncate">Bci</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.bancofalabella.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-building-columns quick-link-icon"></i><span class="truncate">Banco Falabella</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.itau.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-building-columns quick-link-icon"></i><span class="truncate">Itaú</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.uno.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-piggy-bank quick-link-icon"></i><span class="truncate">AFP Uno</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.afc.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-shield-halved quick-link-icon"></i><span class="truncate">AFC</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://conocetudeuda.cmfchile.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-file-invoice-dollar quick-link-icon"></i><span class="truncate">CMF deudas</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://fintual.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-chart-line quick-link-icon"></i><span class="truncate">Fintual</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.dvacapital.com/home" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-layer-group quick-link-icon"></i><span class="truncate">DVA</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.soyfocus.com/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-bullseye quick-link-icon"></i><span class="truncate">SoyFocus</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                    <li><a href="https://www.btgpactual.cl/" target="_blank" rel="noopener noreferrer" class="quick-link"><i class="fas fa-chart-pie quick-link-icon"></i><span class="truncate">BTG Pactual</span><i class="fas fa-arrow-up-right-from-square quick-link-external"></i></a></li>
+                </ul>
+            </section>
+            </div>
 
             <div class="p-4 mt-auto border-t border-slate-800">
                 <div class="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50 flex items-center space-x-4">

@@ -246,7 +246,7 @@
     function changeMonth() {
         const val = document.getElementById('month-selector').value;
         const [year, month] = val.split('-');
-        window.location.href = '/dashboard/?year=' + year + '&month=' + month;
+        window.location.href = window.APP_BASE_PATH + '/dashboard/?year=' + year + '&month=' + month;
     }
 
     // Ingresos vs Gastos Bar Chart

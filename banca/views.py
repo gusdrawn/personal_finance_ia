@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
+import json
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods, require_POST
 
 from banca.forms import (
     CategoriaTematicaForm,
@@ -18,14 +22,23 @@ from banca.forms import (
 )
 from banca.models import (
     CategoriaTematica,
+    ApplePayApiKey,
     ConfiguracionBanca,
     ContraparteConocida,
     CredencialBanco,
+    ImportacionEstadoCuenta,
     MovimientoBancario,
     SaldoSnapshot,
     SyncLog,
 )
-from banca.services import analisis, presupuesto
+from banca.services import analisis, presupuesto, reconciliacion
+from banca.services.apple_pay import (
+    ApplePayEventConflict,
+    ApplePayPayloadError,
+    autenticar_api_key,
+    registrar_pago,
+)
+from banca.services.estados_cuenta import importar_estado_cuenta
 
 
 @login_required
@@ -53,6 +66,108 @@ def banca_dashboard(request):
         ).exists(),
     }
     return render(request, "banca/dashboard.html", context)
+
+
+def _apple_pay_error(message: str, *, code: str, status: int, field: str | None = None):
+    error = {"code": code, "message": message}
+    if field:
+        error["field"] = field
+    return JsonResponse({"ok": False, "error": error}, status=status)
+
+
+@csrf_exempt
+@require_POST
+def banca_apple_pay_ingest(request):
+    """Recibe un pago desde Apple Shortcuts usando `Authorization: Bearer ...`."""
+    authorization = request.headers.get("Authorization", "")
+    secreto = ""
+    if authorization.lower().startswith("bearer "):
+        secreto = authorization[7:].strip()
+    secreto = secreto or request.headers.get("X-API-Key", "")
+    api_key = autenticar_api_key(secreto)
+    if not api_key:
+        response = _apple_pay_error(
+            "API key ausente, inválida o revocada.",
+            code="invalid_api_key",
+            status=401,
+        )
+        response["WWW-Authenticate"] = "Bearer"
+        return response
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _apple_pay_error(
+            "El cuerpo debe ser JSON válido.", code="invalid_json", status=400
+        )
+
+    try:
+        resultado = registrar_pago(api_key.user, payload, api_key=api_key)
+    except ApplePayPayloadError as exc:
+        return _apple_pay_error(
+            str(exc), code="invalid_payload", status=422, field=exc.field
+        )
+    except ApplePayEventConflict as exc:
+        return _apple_pay_error(str(exc), code="event_id_conflict", status=409)
+
+    return JsonResponse(
+        {"ok": True, **resultado},
+        status=200 if resultado["duplicated"] else 201,
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def banca_apple_pay_keys(request):
+    """Lista llaves propias o crea una nueva y devuelve el secreto una sola vez."""
+    if request.method == "GET":
+        keys = ApplePayApiKey.objects.filter(user=request.user)
+        return JsonResponse(
+            {
+                "keys": [
+                    {
+                        "id": key.id,
+                        "name": key.nombre,
+                        "prefix": key.prefijo,
+                        "active": bool(key.activo and not key.revocado_at),
+                        "last_used_at": key.ultimo_uso_at.isoformat()
+                        if key.ultimo_uso_at
+                        else None,
+                        "created_at": key.created_at.isoformat(),
+                    }
+                    for key in keys
+                ]
+            }
+        )
+
+    nombre = request.POST.get("name", "Atajo iPhone")
+    if request.content_type.startswith("application/json"):
+        try:
+            body = json.loads(request.body.decode("utf-8"))
+            nombre = body.get("name", nombre)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _apple_pay_error("El cuerpo debe ser JSON válido.", code="invalid_json", status=400)
+    key, secreto = ApplePayApiKey.crear(request.user, nombre=nombre)
+    return JsonResponse(
+        {
+            "id": key.id,
+            "name": key.nombre,
+            "prefix": key.prefijo,
+            "api_key": secreto,
+            "warning": "Guárdala ahora en el iPhone; no volverá a mostrarse.",
+        },
+        status=201,
+    )
+
+
+@login_required
+@require_POST
+def banca_apple_pay_key_revoke(request, pk):
+    key = get_object_or_404(ApplePayApiKey, pk=pk, user=request.user)
+    key.activo = False
+    key.revocado_at = timezone.now()
+    key.save(update_fields=["activo", "revocado_at", "updated_at"])
+    return JsonResponse({"ok": True, "revoked": True, "id": key.id})
 
 
 @login_required
@@ -84,6 +199,116 @@ def banca_movimientos(request):
         "NATURALEZAS": MovimientoBancario._meta.get_field("naturaleza").choices,
     }
     return render(request, "banca/movimientos.html", context)
+
+
+@login_required
+def banca_importar(request):
+    """Carga masiva de PDFs y resumen auditable de lo que fue detectado."""
+    user = request.user
+    if request.method == "POST":
+        archivos = request.FILES.getlist("archivos")
+        if not archivos:
+            messages.error(request, "Selecciona al menos un estado de cuenta PDF.")
+            return redirect("banca_importar")
+
+        procesados = []
+        rechazados = 0
+        duplicados = 0
+        for archivo in archivos:
+            nombre = (archivo.name or "").lower()
+            if not nombre.endswith(".pdf"):
+                rechazados += 1
+                messages.error(request, f"{archivo.name}: solo se aceptan archivos PDF.")
+                continue
+            if archivo.size > 15 * 1024 * 1024:
+                rechazados += 1
+                messages.error(request, f"{archivo.name}: supera el límite de 15 MB.")
+                continue
+            resultado = importar_estado_cuenta(user, archivo, nombre_archivo=archivo.name)
+            procesados.append(resultado)
+            duplicados += int(getattr(resultado, "fue_duplicado", False))
+
+        importaciones_ok = [i for i in procesados if i.estado == "PROCESADO"]
+        ids = list(
+            MovimientoBancario.objects.filter(
+                user=user, importaciones__in=importaciones_ok
+            )
+            .values_list("id", flat=True)
+            .distinct()
+        )
+        if ids:
+            reconciliacion.reconciliar(user, ids=ids)
+            from banca.services.clasificacion_ia import clasificar_pendientes
+
+            clasificar_pendientes(user, ids=ids)
+        if importaciones_ok:
+            nuevos = sum(i.operaciones_nuevas for i in importaciones_ok)
+            messages.success(
+                request,
+                f"{len(importaciones_ok)} estado(s) procesado(s): {nuevos} movimiento(s) nuevo(s).",
+            )
+        if rechazados:
+            messages.warning(request, f"{rechazados} archivo(s) no se procesaron.")
+        if duplicados:
+            messages.info(request, f"{duplicados} archivo(s) ya estaban importados y no se duplicaron.")
+        return redirect("banca_importar")
+
+    importaciones = list(
+        ImportacionEstadoCuenta.objects.filter(user=user)
+        .select_related("banco", "producto")[:20]
+    )
+    seleccion = request.GET.get("importacion")
+    seleccionada = None
+    if seleccion:
+        seleccionada = next(
+            (item for item in importaciones if str(item.pk) == str(seleccion)), None
+        )
+    scope = (
+        MovimientoBancario.objects.filter(user=user, importaciones=seleccionada)
+        if seleccionada
+        else MovimientoBancario.objects.filter(
+            user=user, importaciones__in=importaciones
+        )
+    )
+    movimientos_scope = scope.select_related("categoria", "producto").distinct()
+    por_categoria = defaultdict(lambda: {"total": Decimal("0"), "n": 0})
+    for mov in movimientos_scope.iterator():
+        if not mov.es_gasto_ocio and not (
+            mov.contabiliza and mov.es_cargo and mov.monto_clp > 0
+        ):
+            continue
+        categoria = mov.categoria.nombre if mov.categoria else "Sin categoría"
+        por_categoria[categoria]["total"] += mov.monto_clp
+        por_categoria[categoria]["n"] += 1
+    movimientos = list(movimientos_scope[:80])
+    categorias = [
+        {
+            "nombre": nombre,
+            "total": valores["total"],
+            "n": valores["n"],
+        }
+        for nombre, valores in sorted(
+            por_categoria.items(), key=lambda item: item[1]["total"], reverse=True
+        )
+    ]
+    total_movimientos = scope.distinct().count()
+    pendientes = scope.filter(categoria__isnull=True, naturaleza="OPERACIONAL").distinct().count()
+    contexto = {
+        "importaciones": importaciones,
+        "seleccionada": seleccionada,
+        "movimientos": movimientos,
+        "categorias": categorias,
+        "categoria_chart": [
+            {"label": item["nombre"], "total": float(item["total"])} for item in categorias
+        ],
+        "total_movimientos": total_movimientos,
+        "pendientes": pendientes,
+        "bancos_detectados": len({i.banco_detectado for i in importaciones if i.banco_detectado}),
+        "categorias_tematicas": CategoriaTematica.objects.filter(
+            user=user, activa=True
+        ),
+    }
+    return render(request, "banca/importar.html", contexto)
 
 
 def _prestamos_activos(user):

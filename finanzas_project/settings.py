@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -61,6 +62,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -183,8 +185,6 @@ DEBUG = True
 # Banca (integración bancaria) — secretos vía variables de entorno / .env
 # Ver docs/ARQUITECTURA_INTEGRACION_BANCARIA.md y .env.example
 # ---------------------------------------------------------------------------
-import os  # noqa: E402
-
 # Puente .env -> os.environ: el proyecto y la app `banca` leen con os.environ.get(),
 # pero python-decouple no inyecta el .env en os.environ. Cargamos aquí los secretos
 # del .env (si existe) para que crypto/clasificacion_ia/notificador los vean en runtime.
@@ -210,3 +210,52 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 # Celery (opcional; si no hay broker, sync corre inline)
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)
+
+# ---------------------------------------------------------------------------
+# Configuración configurable para despliegues (mantiene defaults de desarrollo)
+# ---------------------------------------------------------------------------
+def _env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', SECRET_KEY)
+DEBUG = _env_bool('DJANGO_DEBUG', default=DEBUG)
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', ','.join(ALLOWED_HOSTS)).split(',')
+    if host.strip()
+]
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+
+# Passenger puede montar la aplicación en la raíz de un subdominio o bajo un prefijo.
+FORCE_SCRIPT_NAME = os.environ.get('FORCE_SCRIPT_NAME') or None
+STATIC_URL = os.environ.get('STATIC_URL', STATIC_URL)
+MEDIA_URL = os.environ.get('MEDIA_URL', MEDIA_URL)
+LOGIN_REDIRECT_URL = os.environ.get('LOGIN_REDIRECT_URL', LOGIN_REDIRECT_URL)
+LOGOUT_REDIRECT_URL = os.environ.get('LOGOUT_REDIRECT_URL', LOGOUT_REDIRECT_URL)
+
+# Seguridad detrás del proxy HTTPS de Cloudflare/Passenger.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', default=False)
+CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', default=False)
+
+# WhiteNoise permite servir los assets recolectados cuando DEBUG está desactivado.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': (
+            'whitenoise.storage.CompressedManifestStaticFilesStorage'
+            if not DEBUG
+            else 'django.contrib.staticfiles.storage.StaticFilesStorage'
+        ),
+    },
+}

@@ -228,7 +228,7 @@
     }
 
     function openEditPasivoModal(id, nombre, tipo, clp, usd, notas, productoId) {
-        document.getElementById('pasivo-form').action = "/dashboard/pasivos/editar/" + id + "/";
+        document.getElementById('pasivo-form').action = window.APP_BASE_PATH + "/dashboard/pasivos/editar/" + id + "/";
         document.getElementById('pasivo-modal-title').innerText = "Editar Pasivo";
         document.getElementById('pas-nombre').value = nombre;
         document.getElementById('pas-tipo').value = tipo;

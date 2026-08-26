@@ -306,7 +306,7 @@
     }
 
     function openEditActivoModal(id, nombre, tipo, horizonte, esLiquido, clp, usd, notas) {
-        document.getElementById('activo-form').action = "/dashboard/activos/editar/" + id + "/";
+        document.getElementById('activo-form').action = window.APP_BASE_PATH + "/dashboard/activos/editar/" + id + "/";
         document.getElementById('activo-modal-title').innerText = "Editar Activo";
         document.getElementById('act-nombre').value = nombre;
         document.getElementById('act-tipo').value = tipo;

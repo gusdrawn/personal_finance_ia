@@ -514,7 +514,7 @@ function newDepto() {
 
 function editDepto(id, codigo, piso, metros, compra, actual) {
     document.getElementById('modal-depto-title').innerText = 'Editar Departamento';
-    document.getElementById('depto-form').action = '/dashboard/departamentos/editar/' + id + '/';
+    document.getElementById('depto-form').action = window.APP_BASE_PATH + '/dashboard/departamentos/editar/' + id + '/';
     document.getElementById('depto-codigo').value = codigo;
     document.getElementById('depto-piso').value = piso;
     document.getElementById('depto-metros').value = metros.replace(',', '.');
@@ -529,7 +529,7 @@ function closeModalArrendatario() {
 
 function newArrendatario(deptoId) {
     document.getElementById('modal-arrendatario-title').innerText = 'Nuevo Arrendatario';
-    document.getElementById('arrendatario-form').action = '/dashboard/departamentos/' + deptoId + '/arrendatario/crear/';
+    document.getElementById('arrendatario-form').action = window.APP_BASE_PATH + '/dashboard/departamentos/' + deptoId + '/arrendatario/crear/';
     document.getElementById('arr-nombre').value = '';
     document.getElementById('arr-rut').value = '';
     document.getElementById('arr-inicio').value = '';
@@ -542,7 +542,7 @@ function newArrendatario(deptoId) {
 
 function editArrendatario(id, nombre, rut, inicio, clp, usd, telefono, email) {
     document.getElementById('modal-arrendatario-title').innerText = 'Editar Arrendatario';
-    document.getElementById('arrendatario-form').action = '/dashboard/departamentos/arrendatario/editar/' + id + '/';
+    document.getElementById('arrendatario-form').action = window.APP_BASE_PATH + '/dashboard/departamentos/arrendatario/editar/' + id + '/';
     document.getElementById('arr-nombre').value = nombre;
     document.getElementById('arr-rut').value = rut;
     document.getElementById('arr-inicio').value = inicio || '';
@@ -559,7 +559,7 @@ function closeModalCredito() {
 
 function newCredito(deptoId) {
     document.getElementById('modal-credito-title').innerText = 'Vincular Hipoteca';
-    document.getElementById('credito-form').action = '/dashboard/departamentos/' + deptoId + '/credito/crear/';
+    document.getElementById('credito-form').action = window.APP_BASE_PATH + '/dashboard/departamentos/' + deptoId + '/credito/crear/';
     document.getElementById('cred-producto').value = '';
     document.getElementById('cred-monto').value = '';
     document.getElementById('cred-tasa').value = '';
@@ -576,7 +576,7 @@ function newCredito(deptoId) {
 
 function editCredito(id, productoId, monto, tasa, plazo, tipo, cuota, saldo, totales, pagadas, inicio, fin) {
     document.getElementById('modal-credito-title').innerText = 'Editar Hipoteca';
-    document.getElementById('credito-form').action = '/dashboard/departamentos/credito/editar/' + id + '/';
+    document.getElementById('credito-form').action = window.APP_BASE_PATH + '/dashboard/departamentos/credito/editar/' + id + '/';
     document.getElementById('cred-producto').value = productoId || '';
     document.getElementById('cred-monto').value = monto.replace(',', '.');
     document.getElementById('cred-tasa').value = tasa.replace(',', '.');

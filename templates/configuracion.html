@@ -16,6 +16,70 @@
     <i class="fas fa-arrow-right text-slate-500 group-hover:text-emerald-400 transition"></i>
 </a>
 
+<!-- Apple Pay / Atajos -->
+<div class="glass p-8 rounded-2xl mb-8 border border-emerald-500/20">
+    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
+        <div>
+            <div class="flex items-center gap-3 mb-2">
+                <h3 class="text-xl font-bold text-white flex items-center">
+                    <i class="fab fa-apple text-slate-200 mr-3"></i>Apple Pay y Atajos
+                </h3>
+                <span class="px-2 py-1 rounded-full bg-amber-500/10 text-amber-400 text-[9px] font-black uppercase tracking-wider">POC</span>
+            </div>
+            <p class="text-sm text-slate-400 max-w-2xl">Crea una key para que el Atajo del iPhone registre automáticamente tus pagos, los clasifique y active las alertas configuradas.</p>
+            <p class="text-[11px] text-slate-500 mt-2"><i class="fas fa-lock mr-1"></i>La key completa solo se muestra una vez. En adelante solo verás su prefijo.</p>
+        </div>
+        <a href="{% url 'banca_config' %}" class="text-xs text-emerald-400 hover:text-emerald-300 whitespace-nowrap">Configuración avanzada de Banca <i class="fas fa-arrow-right ml-1"></i></a>
+    </div>
+
+    {% if apple_pay_new_key %}
+    <div class="mt-6 p-5 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+        <div class="flex items-start gap-3">
+            <i class="fas fa-circle-check text-emerald-400 mt-1"></i>
+            <div class="min-w-0 flex-1">
+                <p class="font-bold text-emerald-300">Key creada: {{ apple_pay_new_key.nombre }}</p>
+                <p class="text-xs text-slate-400 mt-1">Cópiala ahora y guárdala en el Atajo. Por seguridad no se volverá a mostrar.</p>
+                <div class="mt-3 flex flex-col sm:flex-row gap-2">
+                    <code id="apple-pay-new-key" class="flex-1 min-w-0 overflow-x-auto rounded-lg bg-slate-950/70 border border-slate-700 px-3 py-2 text-xs text-emerald-300 whitespace-nowrap">{{ apple_pay_new_key.secret }}</code>
+                    <button type="button" onclick="copyApplePayKey(this)" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black whitespace-nowrap"><i class="fas fa-copy mr-1"></i>Copiar key</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="mt-6 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6 items-start">
+        <form method="POST" action="{% url 'crear_apple_pay_key' %}" class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30">
+            {% csrf_token %}
+            <label for="apple-pay-key-name" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Nombre de la key</label>
+            <input id="apple-pay-key-name" type="text" name="nombre" maxlength="80" value="Atajo iPhone" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none">
+            <button type="submit" class="w-full mt-3 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-black"><i class="fas fa-plus mr-1"></i>Agregar key</button>
+        </form>
+
+        <div class="space-y-2">
+            {% for key in apple_pay_keys %}
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-slate-800/30 border border-slate-700/30">
+                <div class="min-w-0">
+                    <p class="font-bold text-slate-200 truncate">{{ key.nombre }}</p>
+                    <p class="text-xs text-slate-500 font-mono">{{ key.prefijo }}… <span class="font-sans">· creada {{ key.created_at|date:"d/m/Y" }}</span></p>
+                    {% if key.ultimo_uso_at %}<p class="text-[10px] text-slate-600">Último uso: {{ key.ultimo_uso_at|date:"d/m/Y H:i" }}</p>{% endif %}
+                </div>
+                {% if key.activo and not key.revocado_at %}
+                <form method="POST" action="{% url 'revocar_apple_pay_key' key.id %}" onsubmit="return confirm('¿Revocar esta key? El Atajo dejará de registrar pagos.');">
+                    {% csrf_token %}
+                    <button type="submit" class="px-3 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 hover:bg-rose-500/20 text-xs font-bold whitespace-nowrap"><i class="fas fa-ban mr-1"></i>Revocar</button>
+                </form>
+                {% else %}
+                <span class="px-3 py-1.5 rounded-lg bg-slate-700/40 text-slate-500 text-xs font-bold whitespace-nowrap"><i class="fas fa-ban mr-1"></i>Revocada</span>
+                {% endif %}
+            </div>
+            {% empty %}
+            <div class="p-5 rounded-xl border border-dashed border-slate-700 text-center text-sm text-slate-500">Aún no tienes keys de Apple Pay.</div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
     <!-- Tipo de Cambio -->
     <div class="glass p-8 rounded-2xl">
@@ -492,6 +556,14 @@ function newBanco() {
     form.querySelector('[name="mostrar_en_carga_masiva"]').checked = true;
     document.getElementById('modal-banco-title').innerHTML = '<i class="fas fa-university text-indigo-400 mr-3"></i> Nuevo Banco';
     modal.classList.remove('hidden');
+}
+
+function copyApplePayKey(button) {
+    const key = document.getElementById('apple-pay-new-key')?.textContent?.trim();
+    if (!key) return;
+    navigator.clipboard.writeText(key).then(() => {
+        if (button) button.innerHTML = '<i class="fas fa-check mr-1"></i>Copiada';
+    });
 }
 </script>
 {% endblock %}

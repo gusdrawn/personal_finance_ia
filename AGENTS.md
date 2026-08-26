@@ -55,6 +55,67 @@ incluir o actualizar tests automatizados antes de considerarse terminada.
 +- **Archivos actualizados**: `core/views.py`, `templates/calendario.html`.
 +
 
+### [2026-08-25] Sincronización de la versión local con cPanel
+- **Despliegue**: Se subió el código local actualizado a `/home/gustzyif/finance_app` mediante la API de cPanel, incluyendo templates, migraciones, dependencias y estáticos recolectados.
+- **Protección de producción**: Se conservaron el `.env`, `db.sqlite3` y `media/` existentes; los archivos temporales de subida y migración se retiraron al finalizar.
+- **Base de datos**: Se ejecutó `migrate --noinput`; no había migraciones pendientes.
+- **Validación**: La versión local pasó `manage.py check`, 103 tests automatizados y `git diff --check`; Passenger fue reiniciado tras la sincronización.
+
+### [2026-08-25] Plantilla importable para el Atajo de Apple Pay
+- **Distribución**: Se generó y firmó con la utilidad nativa de macOS una plantilla `.shortcut` que configura el POST a producción, headers, JSON, `event_id` basado en fecha/entrada y notificación local.
+- **Seguridad**: El archivo no contiene una API key real; incluye una pregunta de importación y el marcador `PASTE_API_KEY_HERE` como respaldo.
+- **Compatibilidad Shortcuts 7.0**: Se corrigió un crash de importación causado por serializar variables de texto como `WFTextTokenAttachment` y el monto como tipo numérico con estado textual. Los diccionarios HTTP ahora se validan contra WorkflowKit local antes de firmar.
+- **Corrección Wallet v2**: Se comprobó localmente que el trigger entrega `Amount` como `INCurrencyAmount`; la plantilla ahora extrae `Amount → Currency Amount` y muestra la respuesta real de Django en vez de una confirmación incondicional.
+- **Documentación**: `docs/APPLE_PAY_POC.md` explica la importación en Mac, la sincronización opcional con iCloud y la configuración final de la automatización en iPhone.
+- **Archivo añadido**: `docs/shortcuts/FinanzasPersonalesIA - Registrar Apple Pay v2 - Importable.shortcut`.
+
+### [2026-08-25] Gestión visual de keys Apple Pay en Configuración
+- **Configuración**: Se añadió el panel **Apple Pay y Atajos** a `/dashboard/configuracion/` para crear keys con nombre, listar prefijo/último uso y revocarlas por usuario.
+- **Seguridad**: El secreto completo se entrega una sola vez mediante la sesión y nunca se vuelve a consultar desde la base de datos, que conserva únicamente el hash.
+- **Tests**: `core/tests.py` cubre creación, visualización única, límite de nombre, revocación y aislamiento entre usuarios.
+- **Documentación**: Se actualizaron `README.md`, `API_DOCUMENTATION.md` y `docs/APPLE_PAY_POC.md` con el flujo visual.
+- **Archivos actualizados**: `core/views.py`, `core/urls.py`, `templates/configuracion.html`, `core/tests.py`, `README.md`, `API_DOCUMENTATION.md`, `docs/APPLE_PAY_POC.md`.
+
+### [2026-08-24] Preparación y despliegue cPanel/Passenger
+- **Producción Django**: Se parametrizaron `SECRET_KEY`, `DEBUG`, hosts, CSRF, cookies seguras y `FORCE_SCRIPT_NAME` para soportar tanto subdominio raíz como montajes con prefijo.
+- **Rutas**: Se corrigieron redirecciones y acciones JavaScript que asumían la raíz del dominio; ahora respetan el prefijo de Passenger.
+- **Servidor**: Se añadió `passenger_wsgi.py`, carga opcional de `.env` sin credenciales cPanel y WhiteNoise para servir estáticos con `DEBUG=0`.
+- **Validación**: Se añadió cobertura de redirección bajo `/finance`; la suite pasó 99 tests.
+- **cPanel**: La API autenticada permite File Manager y Application Manager/Passenger. El sitio existente en `public_html` se conserva, se creó `finance.gustavoguillen.com` y la aplicación se mantiene en un directorio separado.
+- **Resolución en hosting**: La creación de la Web Application desde Python Selector activó el enrutamiento; se instalaron las dependencias en el virtualenv de Python 3.13 y la aplicación quedó operativa en el subdominio.
+
+### [2026-08-24] Corrección del destino de publicación
+- **URL final**: Se corrigió el destino solicitado desde `gustavoguillen.com/finance` a `finance.gustavoguillen.com`.
+- **Configuración Passenger**: La aplicación quedó asociada al subdominio con `base_uri=/`; las variables de entorno de producción se respaldan también en el `.env` privado del directorio de la aplicación para el caso en que el hosting no persista variables mediante la API.
+
+### [2026-08-24] Corrección de arranque en Python Selector
+- **Causa**: Python Selector generó un `passenger_wsgi.py` que se cargaba a sí mismo, provocando `RecursionError` y HTTP 500.
+- **Solución**: Se separó el WSGI real en `finance_wsgi.py` y `passenger_wsgi.py` quedó como wrapper compatible con el selector.
+- **Dependencias**: Se instaló `requirements.txt` en `/home/gustzyif/virtualenv/finance_app/3.13/`; la URL pública responde al login y los estáticos cargan correctamente.
+
+### [2026-08-24] POC Apple Pay vía Atajo de iPhone
+- **API segura**: Se añadieron `ApplePayApiKey` y el endpoint `POST /banca/api/apple-pay/ingest/`. La llave se muestra una sola vez, se almacena como hash, puede listarse y revocarse por usuario.
+- **Flujo transaccional**: El endpoint valida un payload Apple Pay, resuelve el producto/TDC, crea `MovimientoBancario`, ejecuta reglas/IA de clasificación y reutiliza el aviso Telegram existente.
+- **Idempotencia y auditoría**: `ApplePayEvent` conserva el hash del payload y evita duplicados por `user + event_id`; cambiar los datos de un evento existente devuelve conflicto `409`.
+- **Herramientas**: Se añadió `generate_apple_pay_key` y la guía `docs/APPLE_PAY_POC.md` con el contrato JSON y pasos del Atajo. `README.md` y `API_DOCUMENTATION.md` documentan la POC.
+- **Tests**: `banca/test_apple_pay.py` cubre creación, clasificación por regla e IA con aprendizaje, reintentos, conflicto, USD, límites, revocación y aislamiento entre usuarios.
+- **Archivos actualizados**: `banca/models.py`, `banca/migrations/0008_applepayapikey_applepayevent.py`, `banca/services/apple_pay.py`, `banca/views.py`, `banca/urls.py`, `banca/admin.py`, `banca/management/commands/generate_apple_pay_key.py`, `banca/test_apple_pay.py`, `docs/APPLE_PAY_POC.md`, `README.md`, `API_DOCUMENTATION.md`.
+
+### [2026-08] Menú lateral de accesos rápidos financieros
+- **Navegación**: Se agregó al sidebar autenticado una sección de accesos rápidos para Santander, Scotiabank, Bci, Banco Falabella, Itaú, AFP Uno, AFC, CMF deudas, Fintual, DVA, SoyFocus y BTG Pactual.
+- **UX/UI**: Cada acceso incluye icono Font Awesome, estado hover consistente con el tema, indicador de enlace externo y apertura segura en una pestaña nueva. El contenido principal del sidebar ahora tiene scroll interno para conservar la navegación usable en pantallas bajas.
+- **Tests**: `core/tests.py` valida la presencia de las 12 etiquetas/URLs y los atributos `target="_blank"` y `rel="noopener noreferrer"`.
+- **Archivos actualizados**: `templates/base.html`, `static/css/modern.css`, `core/tests.py`, `README.md`.
+
+### [2026-08] POC de Estados de Cuenta PDF y Carga Masiva
+- **Flujo Banca**: Se añadió `/banca/importar/` para subir múltiples estados de cuenta en una sola operación, analizar cada archivo y volver al resumen sin abrir conexiones bancarias.
+- **Detección y extracción**: Se implementó `banca/services/estados_cuenta.py` para reconocer Itaú, Banco Falabella y Santander, identificando banco, últimos cuatro dígitos de tarjeta, período, montos facturados/mínimos y movimientos CLP.
+- **Persistencia auditable**: Se añadió `ImportacionEstadoCuenta`, vínculo many-to-many con movimientos y snapshot de deuda facturada. La importación conserva la huella del archivo y es idempotente por usuario.
+- **Aislamiento**: `hash_externo` pasó a ser único por usuario, evitando que una operación igual de dos usuarios comparta registros.
+- **Clasificación y UX**: Después de un lote se ejecutan reconciliación y clasificación por reglas/IA disponible. La vista muestra resumen por categoría, gráfico, archivos detectados y recategorización manual que aprende la glosa.
+- **Límite conocido**: La POC requiere PDFs con texto extraíble; los documentos escaneados y formatos bancarios no reconocidos quedan registrados como error.
+- **Tests**: `banca/test_estados_cuenta.py` cubre formatos nominales, montos límite, banco no soportado, idempotencia, carga múltiple y aislamiento por usuario. Se añadió `pdfplumber` a `requirements.txt`.
+
 ### [2026-08] Base de Tests de Regresión para Futuras Mejoras
 - **Suite ampliada**: Se añadieron tests deterministas para reconciliación, presupuesto, analítica, clasificación IA, notificaciones, snapshots patrimoniales, propiedades y bicicletas de terceros.
 - **Integraciones aisladas**: Las pruebas no acceden a bancos, Telegram ni proveedores de IA; usan mocks y datos sintéticos.
@@ -256,12 +317,25 @@ mindmap
       Profiles
       Periodos
       Dashboard Mejorado
+      Sidebar y accesos rápidos financieros
     banca[banca App - Fuente transaccional]
       ::icon(fa fa-university)
       Movimientos bancarios
+      Apple Pay POC
+        Atajo iPhone → API key Bearer
+        Plantilla .shortcut importable
+        Payload normalizado + event_id idempotente
+        Auditoría ApplePayEvent
+        Alertas Telegram
+      Estados de cuenta PDF
+        Carga masiva multiarchivo
+        Detección Itaú / Falabella / Santander
+        Importación auditable e idempotente
+        Resumen por categoría y gráfico
       Reconciliación de transferencias y bicicletas
       Presupuesto y analítica
       Clasificación IA por reglas
+      Aprendizaje por glosa/comercio
       Configuración de fuentes
     bank_sync[bank_sync - Conectores]
       ::icon(fa fa-plug)
@@ -306,6 +380,18 @@ mindmap
       Productos Financieros
       Divisas / Tasas Cambio
       Snapshot Manual
+      Apple Pay y Atajos
+        Crear key desde Configuración
+        Listar prefijo y último uso
+        Revocar key
+    despliegue[Despliegue cPanel]
+      ::icon(fa fa-cloud-upload-alt)
+      API UAPI autenticada
+      File Manager
+      Application Manager / Passenger
+      Subdominio finance.gustavoguillen.com
+      passenger_wsgi.py
+      WhiteNoise + collectstatic
     pruebas[Suite de regresión]
       ::icon(fa fa-vial)
       Servicios de banca

@@ -1,9 +1,9 @@
 """
 Ingesta idempotente: objetos normalizados de bank_sync -> ORM de banca.
 
-Clave anti-duplicación: el upsert es por `hash_externo` (huella estable entre NO_FACTURADO
-y FACTURADO). Si el movimiento ya existe, se ACTUALIZA su estado/período; no se inserta de
-nuevo. La clasificación manual del usuario nunca se pisa.
+Clave anti-duplicación: el upsert es por `user + hash_externo` (huella estable entre
+NO_FACTURADO y FACTURADO). Si el movimiento ya existe, se ACTUALIZA su estado/período;
+no se inserta de nuevo. La clasificación manual del usuario nunca se pisa.
 """
 
 from __future__ import annotations

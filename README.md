@@ -20,6 +20,12 @@ Open your browser and navigate to: [http://localhost:8000/dashboard/](http://loc
 - **Username:** `demo_user`
 - **Password:** `demo1234`
 
+### Quick access menu
+The authenticated sidebar includes quick links to the financial institutions and
+investment platforms used most often: Santander, Scotiabank, Bci, Banco Falabella,
+Itaú, AFP Uno, AFC, CMF deudas, Fintual, DVA, SoyFocus, and BTG Pactual. Each link
+opens the official site in a new tab.
+
 ---
 
 ## 📊 Core Modules
@@ -32,8 +38,8 @@ Open your browser and navigate to: [http://localhost:8000/dashboard/](http://loc
 | **Departamentos** | Rental property ROI analysis, mortgage amortization, and tenant tracking. |
 | **Inversiones** | Portfolio management for stocks, crypto, and mutual funds. |
 | **Préstamos** | Gestión de bicicletas personales y de terceros con cálculo de intereses. |
-| **Configuración** | Centralized management for banks, products, categories, and exchange rates. |
-| **Banca** | Integración de movimientos, deudas, presupuesto, clasificación y sincronización de fuentes. |
+| **Configuración** | Centralized management for banks, products, categories, exchange rates, and Apple Pay API keys. |
+| **Banca** | Integración de movimientos, deudas, presupuesto, clasificación, sincronización de fuentes, importación masiva de estados de cuenta PDF y POC Apple Pay vía Atajo de iPhone. |
 
 ---
 
@@ -87,6 +93,7 @@ For more specialized information, refer to:
 - [REST API Reference](API_DOCUMENTATION.md) - Endpoints and authentication.
 - [Frontend Architecture](FRONTEND_DOCUMENTATION.md) - UI components and patterns.
 - [Implementation Status](IMPLEMENTATION_STATUS.md) - Roadmap and technical decisions.
+- [POC Apple Pay](docs/APPLE_PAY_POC.md) - API key, payload y configuración del Atajo de iPhone.
 - [AI Agent Guide](AGENTS.md) - High-density context for AI assistants.
 
 ---
@@ -110,12 +117,57 @@ financieras, ingesta idempotente, reconciliación de bicicletas, presupuesto, an
 clasificación IA sin red, conectores, snapshots patrimoniales y aislamiento entre usuarios.
 
 ```bash
-python manage.py test --verbosity 1
+venv/bin/python manage.py test --verbosity 1
 ```
 
 Los tests deben ser herméticos: las APIs bancarias, Telegram y proveedores de IA se
 simulan con datos locales. Cada nueva funcionalidad o modificación de lógica financiera
 debe incluir al menos un caso nominal y un caso límite o de aislamiento.
+
+## 🌐 Despliegue en cPanel
+
+La aplicación puede ejecutarse con **Application Manager/Passenger** en
+`https://finance.gustavoguillen.com/`. El archivo `passenger_wsgi.py` es el punto de
+entrada y el código debe residir fuera de `public_html`; los archivos estáticos se
+sirven mediante WhiteNoise con `collectstatic`.
+
+Para producción se deben configurar en Passenger `DJANGO_SECRET_KEY`,
+`DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`,
+`STATIC_URL=/static/` y `MEDIA_URL=/media/`; `FORCE_SCRIPT_NAME` debe quedar vacío
+al publicar en la raíz del subdominio. También se deben configurar los secretos de
+Banca. El `.env` real, `.git`, `venv` y las credenciales de cPanel no se empaquetan
+ni se exponen bajo `public_html`; el `.env` privado solo se mantiene junto al código
+para que Passenger pueda iniciar la aplicación.
+
+Si el servidor usa LiteSpeed, el proveedor debe habilitar la integración de
+Python/Passenger a nivel del servidor; registrar la aplicación mediante la API de
+cPanel no modifica esa configuración global.
+
+## 📄 Importación de estados de cuenta (POC)
+
+Desde **Banca → Importar estados** (`/banca/importar/`) se pueden subir varios PDFs
+simultáneamente. La POC detecta el banco, la tarjeta, el período y los montos del estado,
+crea o reutiliza el producto financiero, importa los movimientos sin duplicarlos y muestra
+un resumen gráfico por categoría. Los movimientos se pueden recategorizar desde la misma
+vista; el criterio manual queda como regla para futuras cargas.
+
+Actualmente se soportan los formatos de texto de **Itaú, Banco Falabella y Santander**.
+No se envían credenciales ni se conecta a los bancos, y los PDFs escaneados sin capa de
+texto quedan registrados como no procesables hasta incorporar OCR.
+
+## 📱 POC Apple Pay vía Atajo
+
+El endpoint `POST /banca/api/apple-pay/ingest/` recibe un pago normalizado desde Apple
+Shortcuts usando una API key Bearer. Persiste el movimiento, reutiliza las reglas aprendidas
+y la clasificación IA de Banca, e intenta alertar por Telegram. Los reintentos son seguros
+mediante `event_id`; las keys se crean y revocan desde **Configuración → Apple Pay y Atajos**
+y el secreto completo solo se muestra una vez.
+
+La plantilla importable v2 extrae el valor numérico del objeto de Wallet mediante
+`Amount → Currency Amount` y muestra la respuesta real del endpoint en la notificación.
+
+Consulta [docs/APPLE_PAY_POC.md](docs/APPLE_PAY_POC.md) para crear la llave, importar la
+plantilla firmada del Atajo, construir el JSON y conocer los límites actuales de esta prueba.
 
 ---
 

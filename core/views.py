@@ -1,8 +1,10 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
+from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.db.models import Sum, Q, F, Avg
 from django.urls import reverse
+from django.utils import timezone
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -10,6 +12,7 @@ from gastos.models import RegistroMensual, GastoProgramado, CategoriaIngreso
 from patrimonio.models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio
 from departamentos.models import Departamento, Estacionamiento, Arrendatario, CreditoHipotecario
 from configuracion.models import TipoCambio, Banco, Producto
+from banca.models import ApplePayApiKey
 
 
 def ensure_pasivos_for_products(user):
@@ -589,9 +592,44 @@ def configuracion(request):
         'tipo_cambio': tipo_cambio,
         'bancos': bancos,
         'categorias': categorias,
+        'apple_pay_keys': ApplePayApiKey.objects.filter(user=user).order_by('-created_at'),
+        'apple_pay_new_key': request.session.pop('apple_pay_new_key', None),
     }
     
     return render(request, 'configuracion.html', context)
+
+
+@require_http_methods(["POST"])
+@login_required
+def crear_apple_pay_key(request):
+    """Crea una llave para el Atajo y conserva el secreto en sesión una sola vez."""
+    key, secreto = ApplePayApiKey.crear(
+        request.user,
+        nombre=request.POST.get('nombre', 'Atajo iPhone'),
+    )
+    request.session['apple_pay_new_key'] = {
+        'id': key.id,
+        'nombre': key.nombre,
+        'prefijo': key.prefijo,
+        'secret': secreto,
+    }
+    messages.success(request, 'API key creada. Cópiala ahora: no volverá a mostrarse.')
+    return redirect('configuracion')
+
+
+@require_http_methods(["POST"])
+@login_required
+def revocar_apple_pay_key(request, pk):
+    key = ApplePayApiKey.objects.filter(pk=pk, user=request.user).first()
+    if not key:
+        from django.http import Http404
+
+        raise Http404
+    key.activo = False
+    key.revocado_at = timezone.now()
+    key.save(update_fields=['activo', 'revocado_at', 'updated_at'])
+    messages.success(request, f'API key «{key.nombre}» revocada.')
+    return redirect('configuracion')
 
 
 # ===================== ACTIVOS CRUD =====================
@@ -952,7 +990,7 @@ def bulk_gastos(request):
                         }
                     )
         
-        return redirect(f'/dashboard/gastos/?year={year}&month={month}')
+        return redirect(f'{reverse("gastos-table")}?year={year}&month={month}')
 
     today = date.today()
     last_month_date = today.replace(day=1) - timedelta(days=1)

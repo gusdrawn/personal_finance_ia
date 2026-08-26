@@ -2,15 +2,34 @@ from django import forms
 from django.contrib import admin
 
 from .models import (
+    ApplePayApiKey,
+    ApplePayEvent,
     CategoriaTematica,
     ConfiguracionBanca,
     ContraparteConocida,
     CredencialBanco,
+    ImportacionEstadoCuenta,
     MapeoComercio,
     MovimientoBancario,
     SaldoSnapshot,
     SyncLog,
 )
+
+
+@admin.register(ApplePayApiKey)
+class ApplePayApiKeyAdmin(admin.ModelAdmin):
+    list_display = ["nombre", "prefijo", "user", "activo", "ultimo_uso_at", "created_at"]
+    list_filter = ["activo", "created_at"]
+    search_fields = ["nombre", "prefijo", "user__username"]
+    readonly_fields = ["prefijo", "clave_hash", "ultimo_uso_at", "created_at", "updated_at"]
+
+
+@admin.register(ApplePayEvent)
+class ApplePayEventAdmin(admin.ModelAdmin):
+    list_display = ["event_id", "user", "estado", "movimiento", "received_at", "processed_at"]
+    list_filter = ["estado", "received_at"]
+    search_fields = ["event_id", "user__username", "movimiento__descripcion"]
+    readonly_fields = ["payload_hash", "received_at", "processed_at", "respuesta"]
 
 
 class CredencialBancoAdminForm(forms.ModelForm):
@@ -74,6 +93,22 @@ class MovimientoBancarioAdmin(admin.ModelAdmin):
     list_select_related = ["categoria", "producto"]
     readonly_fields = ["hash_externo", "created_at", "updated_at"]
     list_per_page = 50
+
+
+@admin.register(ImportacionEstadoCuenta)
+class ImportacionEstadoCuentaAdmin(admin.ModelAdmin):
+    list_display = [
+        "nombre_archivo",
+        "banco_detectado",
+        "tarjeta_ultimos4",
+        "estado",
+        "operaciones_nuevas",
+        "created_at",
+        "user",
+    ]
+    list_filter = ["estado", "banco_detectado", "created_at"]
+    search_fields = ["nombre_archivo", "hash_archivo", "tarjeta_ultimos4", "user__username"]
+    readonly_fields = ["hash_archivo", "created_at", "procesado_at"]
 
 
 @admin.register(SaldoSnapshot)

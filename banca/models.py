@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+import hashlib
+import secrets
 
 from django.db import models
 
@@ -284,7 +286,13 @@ class MovimientoBancario(models.Model):
         help_text="El usuario fijó naturaleza/préstamo a mano; el sync no lo pisa",
     )
 
-    hash_externo = models.CharField(max_length=64, unique=True)
+    hash_externo = models.CharField(max_length=64)
+    importaciones = models.ManyToManyField(
+        "ImportacionEstadoCuenta",
+        blank=True,
+        related_name="movimientos",
+        help_text="Estados de cuenta PDF desde los que se detectó este movimiento.",
+    )
     notificado_telegram = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -297,6 +305,12 @@ class MovimientoBancario(models.Model):
             models.Index(fields=["user", "estado", "fecha"]),
             models.Index(fields=["user", "naturaleza", "fecha"]),
             models.Index(fields=["categoria", "fecha"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "hash_externo"],
+                name="banca_movimiento_hash_user_unico",
+            )
         ]
 
     def __str__(self):
@@ -315,6 +329,69 @@ class MovimientoBancario(models.Model):
     @property
     def es_gasto_ocio(self) -> bool:
         return self.contabiliza and self.es_cargo and self.esencialidad == "OCIO"
+
+
+class ImportacionEstadoCuenta(models.Model):
+    """Archivo de estado de cuenta analizado y su resultado auditable."""
+
+    ESTADO_CHOICES = [
+        ("PROCESADO", "Procesado"),
+        ("DUPLICADO", "Duplicado"),
+        ("ERROR", "Error"),
+    ]
+
+    user = models.ForeignKey(
+        "auth.User", on_delete=models.CASCADE, related_name="importaciones_estado_cuenta"
+    )
+    archivo = models.FileField(upload_to="estados_cuenta/%Y/%m/")
+    nombre_archivo = models.CharField(max_length=255)
+    hash_archivo = models.CharField(max_length=64)
+    estado = models.CharField(max_length=12, choices=ESTADO_CHOICES, default="PROCESADO")
+    banco_detectado = models.CharField(max_length=100, blank=True)
+    banco = models.ForeignKey(
+        "configuracion.Banco",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="importaciones_estado_cuenta",
+    )
+    producto = models.ForeignKey(
+        "configuracion.Producto",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="importaciones_estado_cuenta",
+    )
+    tarjeta_ultimos4 = models.CharField(max_length=4, blank=True)
+    fecha_estado = models.DateField(null=True, blank=True)
+    periodo_inicio = models.DateField(null=True, blank=True)
+    periodo_fin = models.DateField(null=True, blank=True)
+    monto_facturado = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    monto_minimo = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True
+    )
+    operaciones_detectadas = models.PositiveIntegerField(default=0)
+    operaciones_nuevas = models.PositiveIntegerField(default=0)
+    operaciones_actualizadas = models.PositiveIntegerField(default=0)
+    mensaje = models.TextField(blank=True)
+    procesado_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Importación de Estado de Cuenta"
+        verbose_name_plural = "Importaciones de Estados de Cuenta"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "hash_archivo"],
+                name="banca_importacion_estado_hash_user_unico",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.nombre_archivo} · {self.banco_detectado or 'No detectado'}"
 
 
 class SaldoSnapshot(models.Model):
@@ -486,3 +563,101 @@ class ConfiguracionBanca(models.Model):
         from banca.crypto import decrypt
 
         return decrypt(self.ia_api_key_cifrada)
+
+
+class ApplePayApiKey(models.Model):
+    """Token de acceso para el Atajo de Apple Pay (POC).
+
+    El token en texto plano solo se devuelve al crearlo. En la base de datos se conserva
+    únicamente su hash SHA-256, por lo que una filtración de esta tabla no permite copiar
+    directamente el secreto del iPhone.
+    """
+
+    user = models.ForeignKey(
+        "auth.User", on_delete=models.CASCADE, related_name="apple_pay_api_keys"
+    )
+    nombre = models.CharField(max_length=80, default="Atajo iPhone")
+    prefijo = models.CharField(
+        max_length=16,
+        help_text="Prefijo no secreto para identificar la llave sin mostrarla completa.",
+    )
+    clave_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    activo = models.BooleanField(default=True)
+    ultimo_uso_at = models.DateTimeField(null=True, blank=True)
+    revocado_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "API key de Apple Pay"
+        verbose_name_plural = "API keys de Apple Pay"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        estado = "activa" if self.activo and not self.revocado_at else "revocada"
+        return f"{self.nombre} · {self.prefijo}… ({estado})"
+
+    @staticmethod
+    def hash_clave(clave: str) -> str:
+        return hashlib.sha256(clave.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def crear(cls, user, *, nombre: str = "Atajo iPhone") -> tuple["ApplePayApiKey", str]:
+        """Crea una llave y devuelve `(registro, secreto)` una sola vez."""
+        secreto = f"fpa_apple_{secrets.token_urlsafe(32)}"
+        registro = cls.objects.create(
+            user=user,
+            nombre=(nombre or "Atajo iPhone").strip()[:80] or "Atajo iPhone",
+            prefijo=secreto[:16],
+            clave_hash=cls.hash_clave(secreto),
+        )
+        return registro, secreto
+
+
+class ApplePayEvent(models.Model):
+    """Auditoría e idempotencia de eventos recibidos desde Apple Shortcuts."""
+
+    ESTADO_CHOICES = [
+        ("PROCESADO", "Procesado"),
+        ("DUPLICADO", "Duplicado"),
+        ("ERROR", "Error"),
+    ]
+
+    user = models.ForeignKey(
+        "auth.User", on_delete=models.CASCADE, related_name="apple_pay_events"
+    )
+    api_key = models.ForeignKey(
+        ApplePayApiKey,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="eventos",
+    )
+    event_id = models.CharField(max_length=120)
+    payload_hash = models.CharField(max_length=64)
+    movimiento = models.ForeignKey(
+        MovimientoBancario,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="apple_pay_eventos",
+    )
+    estado = models.CharField(max_length=12, choices=ESTADO_CHOICES, default="PROCESADO")
+    respuesta = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Evento Apple Pay"
+        verbose_name_plural = "Eventos Apple Pay"
+        ordering = ["-received_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "event_id"],
+                name="banca_apple_pay_event_user_id_unico",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.event_id} · {self.estado}"

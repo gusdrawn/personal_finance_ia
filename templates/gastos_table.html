@@ -193,7 +193,7 @@ function loadMonthData() {
     const year = document.getElementById('year-select').value;
     const month = document.getElementById('month-select').value;
     
-    fetch(`/api/gastos/registros/by_month/?year=${year}&mes=${month}`)
+    fetch(`${window.APP_BASE_PATH}/api/gastos/registros/by_month/?year=${year}&mes=${month}`)
         .then(response => response.json())
         .then(data => {
             const tbody = document.getElementById('gastos-tbody');
@@ -264,7 +264,7 @@ function loadMonthData() {
 
 function showCategoryChart(catId) {
     document.getElementById('modal-chart').classList.remove('hidden');
-    fetch(`/dashboard/gastos/categoria-stats/${catId}/`)
+        fetch(`${window.APP_BASE_PATH}/dashboard/gastos/categoria-stats/${catId}/`)
         .then(res => res.json())
         .then(data => {
             document.getElementById('chart-cat-name').textContent = data.name;
@@ -326,7 +326,7 @@ function showCategoryChart(catId) {
 function editGasto(id) {
     const newMonto = prompt('Ingrese el nuevo monto para este registro:');
     if (newMonto && !isNaN(newMonto)) {
-        fetch(`/api/gastos/registros/${id}/`, {
+        fetch(`${window.APP_BASE_PATH}/api/gastos/registros/${id}/`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
@@ -357,7 +357,7 @@ function getCookie(name) {
 
 function exportToExcel() {
     // Implementar si existe el endpoint
-    window.location.href = `/api/gastos/registros/export_excel/?year=${document.getElementById('year-select').value}&mes=${document.getElementById('month-select').value}`;
+    window.location.href = `${window.APP_BASE_PATH}/api/gastos/registros/export_excel/?year=${document.getElementById('year-select').value}&mes=${document.getElementById('month-select').value}`;
 }
 
 // Initial load

@@ -4,7 +4,11 @@ from . import views
 
 urlpatterns = [
     path("", views.banca_dashboard, name="banca_dashboard"),
+    path("api/apple-pay/ingest/", views.banca_apple_pay_ingest, name="banca_apple_pay_ingest"),
+    path("api/apple-pay/keys/", views.banca_apple_pay_keys, name="banca_apple_pay_keys"),
+    path("api/apple-pay/keys/<int:pk>/revoke/", views.banca_apple_pay_key_revoke, name="banca_apple_pay_key_revoke"),
     path("movimientos/", views.banca_movimientos, name="banca_movimientos"),
+    path("importar/", views.banca_importar, name="banca_importar"),
     path("movimientos/<int:pk>/reclasificar/", views.banca_reclasificar, name="banca_reclasificar"),
     path("movimientos/<int:pk>/revisar/", views.banca_confirmar_revision, name="banca_confirmar_revision"),
     path("movimientos/<int:pk>/asignar-prestamo/", views.banca_asignar_prestamo, name="banca_asignar_prestamo"),

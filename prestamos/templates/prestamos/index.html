@@ -200,7 +200,7 @@
         const modal = document.getElementById('modal-prestamo');
         const form = document.getElementById('form-prestamo');
         
-        form.action = `/prestamos/editar/${id}/`;
+        form.action = `${window.APP_BASE_PATH}/prestamos/editar/${id}/`;
         form.querySelector('[name="nombre"]').value = nombre;
         form.querySelector('[name="tipo"]').value = tipo;
         form.querySelector('[name="monto_total"]').value = monto;
