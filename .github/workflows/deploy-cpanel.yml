@@ -74,7 +74,9 @@ jobs:
             --exclude='./.DS_Store' \
             .
           test -s "$archive"
-          tar -tzf "$archive" | grep -q './passenger_wsgi.py'
+          # No usar grep -q aquí: con pipefail cerraría la tubería antes de
+          # que tar termine y produciría "tar: stdout: write error".
+          tar -tzf "$archive" | grep -F './passenger_wsgi.py' >/dev/null
           echo "DEPLOY_ARCHIVE=$archive" >> "$GITHUB_ENV"
 
       - name: Upload, migrate, and restart cPanel application

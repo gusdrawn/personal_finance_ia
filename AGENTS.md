@@ -55,6 +55,9 @@ incluir o actualizar tests automatizados antes de considerarse terminada.
 +- **Archivos actualizados**: `core/views.py`, `templates/calendario.html`.
 +
 
+### [2026-08-26] Corrección del smoke check del archivo de despliegue
+- **Workflow**: Se reemplazó `grep -q` por una lectura completa de la salida de `tar` en `.github/workflows/deploy-cpanel.yml`; con `pipefail`, el cierre temprano de `grep` provocaba el falso error `tar: stdout: write error`.
+
 ### [2026-08-26] Despliegue automático mediante GitHub Actions
 - **Workflow**: Se añadió `.github/workflows/deploy-cpanel.yml`, activado por `push` a `main` y por ejecución manual.
 - **Validación previa**: El workflow instala dependencias, ejecuta `manage.py check`, los tests y `collectstatic` antes de publicar.
