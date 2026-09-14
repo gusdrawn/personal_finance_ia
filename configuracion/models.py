@@ -1,6 +1,55 @@
 from django.db import models
 
 
+class CredencialIntegracion(models.Model):
+    """API keys globales cifradas para proveedores externos del sistema."""
+
+    PROVIDER_COINMARKETCAP = "COINMARKETCAP"
+    PROVIDER_COINGECKO = "COINGECKO"
+    PROVIDER_TOKENOMIST = "TOKENOMIST"
+    PROVIDER_BRAVE_SEARCH = "BRAVE_SEARCH"
+    PROVIDER_CHOICES = (
+        (PROVIDER_COINGECKO, "CoinGecko"),
+        (PROVIDER_COINMARKETCAP, "CoinMarketCap"),
+        (PROVIDER_TOKENOMIST, "Tokenomist"),
+        (PROVIDER_BRAVE_SEARCH, "Brave Search"),
+    )
+
+    provider = models.CharField(max_length=40, choices=PROVIDER_CHOICES, unique=True)
+    api_key_cifrada = models.BinaryField(null=True, blank=True)
+    key_prefix = models.CharField(max_length=12, blank=True)
+    active = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(
+        "auth.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="credenciales_integracion_actualizadas",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Credencial de integración"
+        verbose_name_plural = "Credenciales de integraciones"
+
+    def __str__(self):
+        return self.get_provider_display()
+
+    def set_api_key(self, api_key: str):
+        from banca.crypto import encrypt
+
+        value = (api_key or "").strip()
+        self.api_key_cifrada = encrypt(value) if value else None
+        self.key_prefix = value[:6]
+
+    def get_api_key(self) -> str:
+        if not self.api_key_cifrada:
+            return ""
+        from banca.crypto import decrypt
+
+        return decrypt(self.api_key_cifrada)
+
+
 class Banco(models.Model):
     """Banks and financial institutions"""
     nombre = models.CharField(max_length=100)
@@ -36,11 +85,30 @@ class Producto(models.Model):
         ('OTRO', 'Otro'),
     ]
 
+    user = models.ForeignKey(
+        "auth.User",
+        on_delete=models.CASCADE,
+        related_name="productos_financieros",
+    )
     banco = models.ForeignKey(Banco, on_delete=models.CASCADE, related_name='productos')
     nombre = models.CharField(max_length=150)
     tipo = models.CharField(max_length=20, choices=PRODUCTO_TIPOS)
     orden = models.IntegerField(default=0)
     activo = models.BooleanField(default=True)
+    ultimos4 = models.CharField(max_length=4, blank=True, db_index=True)
+    origen = models.CharField(
+        max_length=12,
+        choices=[("MANUAL", "Manual"), ("IMPORTACION", "Importación"), ("CONECTOR", "Conector")],
+        default="MANUAL",
+    )
+    requiere_revision = models.BooleanField(default=False)
+    reemplazado_por = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="productos_reemplazados",
+    )
     tiene_cupo_usd = models.BooleanField(
         default=False,
         help_text="Si es Tarjeta de Crédito, indica si maneja un cupo en dólares separado"
@@ -60,6 +128,13 @@ class Producto(models.Model):
         verbose_name = 'Producto'
         verbose_name_plural = 'Productos'
         ordering = ['banco__orden', 'orden', 'nombre']
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "banco", "tipo", "ultimos4"],
+                condition=models.Q(ultimos4__gt=""),
+                name="config_producto_usuario_banco_tipo_ult4",
+            )
+        ]
 
     def __str__(self):
         return f"{self.banco.nombre} - {self.nombre}"
@@ -122,4 +197,3 @@ class ConfiguracionGeneral(models.Model):
 
     def __str__(self):
         return f"Configuration for {self.user.username}"
-

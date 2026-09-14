@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import MinValueValidator
 from decimal import Decimal
 
 MONEDA_CHOICES = [
@@ -10,111 +10,89 @@ MONEDA_CHOICES = [
 ]
 
 
-class CategoriaIngreso(models.Model):
-    """Income and expense categories (dynamic and editable)"""
-    TIPO_CATEGORIA = [
-        ('INGRESO', 'Ingreso'),
-        ('GASTO_FIJO', 'Gasto Fijo'),
-        ('SUSCRIPCION', 'Suscripción'),
-        ('SEGURO', 'Seguro'),
-        ('TDC', 'Tarjeta de Crédito'),
-        ('COBRO_BANCO', 'Cobro de Banco'),
-        ('INVERSION', 'Inversión'),
-        ('CREDITO_CONSUMO', 'Crédito de Consumo'),
-        ('CREDITO_HIPOTECARIO', 'Crédito Hipotecario'),
+class MovimientoManual(models.Model):
+    """Movimiento de caja que todavía no proviene de una fuente importada."""
+
+    DIRECCIONES = [("INGRESO", "Ingreso"), ("EGRESO", "Egreso")]
+    NATURALEZAS = [
+        ("OPERACIONAL", "Operacional"),
+        ("ACTIVO_RECUPERABLE", "Conversión a activo recuperable"),
+        ("INVERSION", "Inversión"),
+        ("TRANSFERENCIA_INTERNA", "Transferencia interna"),
     ]
 
-    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='categorias_ingresos')
-    nombre = models.CharField(max_length=150)
-    tipo = models.CharField(max_length=20, choices=TIPO_CATEGORIA)
-    orden = models.IntegerField(default=0)
-    activo = models.BooleanField(default=True)
-    banco_defecto = models.ForeignKey(
-        'configuracion.Banco',
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="movimientos_manuales"
+    )
+    fecha = models.DateField(db_index=True)
+    periodo = models.DateField(db_index=True, help_text="Primer día del mes contable")
+    direccion = models.CharField(max_length=8, choices=DIRECCIONES)
+    monto = models.DecimalField(
+        max_digits=15, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))]
+    )
+    moneda = models.CharField(max_length=3, choices=MONEDA_CHOICES, default="CLP")
+    monto_clp = models.DecimalField(max_digits=15, decimal_places=2)
+    tipo_cambio = models.DecimalField(
+        max_digits=12, decimal_places=4, null=True, blank=True
+    )
+    monto_clp_estimado = models.BooleanField(default=False)
+    categoria = models.ForeignKey(
+        "banca.CategoriaTematica",
+        on_delete=models.PROTECT,
+        related_name="movimientos_manuales",
+    )
+    departamento = models.ForeignKey(
+        "departamentos.Departamento",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name='categorias_ingresos'
+        related_name="movimientos_manuales",
     )
-    producto_asociado = models.ForeignKey(
-        'configuracion.Producto',
-        null=True,
-        blank=True,
-        on_delete=models.CASCADE,
-        related_name='categorias_vinculadas'
+    naturaleza = models.CharField(
+        max_length=24, choices=NATURALEZAS, default="OPERACIONAL"
     )
-
-    contabilizar = models.BooleanField(
-        default=True, 
-        help_text="Si es Falso, no suma al gasto total (ej. ya pagado en TDC)"
-    )
-    moneda_defecto = models.CharField(
-        max_length=3, 
-        choices=MONEDA_CHOICES, 
-        default='CLP'
-    )
-    mostrar_en_carga_masiva = models.BooleanField(
-        default=True, 
-        help_text="Si es Falso, se oculta del modal de carga masiva"
-    )
-    dia_cobro = models.IntegerField(
-        null=True, blank=True,
-        help_text="Día del mes (1-31) en que se cobra/paga esta categoría"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = 'Categoría de Ingreso'
-        verbose_name_plural = 'Categorías de Ingreso'
-        ordering = ['tipo', 'orden', 'nombre']
-        unique_together = ('user', 'nombre', 'tipo')
-
-    def __str__(self):
-        return f"{self.get_tipo_display()}: {self.nombre}"
-
-
-class RegistroMensual(models.Model):
-    """Monthly income/expense records"""
-    TIPO_REGISTRO = [
-        ('INGRESO', 'Ingreso'),
-        ('GASTO', 'Gasto'),
-        ('SUSCRIPCION', 'Suscripción'),
-        ('SEGURO', 'Seguro'),
-        ('TDC', 'Tarjeta de Crédito'),
-        ('COBRO_BANCO', 'Cobro de Banco'),
-        ('INVERSION', 'Inversión'),
-        ('CREDITO_CONSUMO', 'Crédito de Consumo'),
-        ('CREDITO_HIPOTECARIO', 'Crédito Hipotecario'),
-    ]
-
-    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='registros_mensuales')
-    year = models.IntegerField()
-    mes = models.IntegerField(choices=[(i, f'Month {i}') for i in range(1, 13)])
-    categoria = models.ForeignKey(CategoriaIngreso, on_delete=models.PROTECT, related_name='registros')
-    monto = models.DecimalField(max_digits=15, decimal_places=2)
-    monto_contable_clp = models.DecimalField(
-        max_digits=15, decimal_places=2, null=True, blank=True,
-        help_text="Valor fijo convertido a CLP al momento de crearse si moneda es USD/UF"
-    )
-    moneda = models.CharField(max_length=3, choices=MONEDA_CHOICES, default='CLP')
-    tipo = models.CharField(max_length=20, choices=TIPO_REGISTRO)
+    descripcion = models.CharField(max_length=255)
     notas = models.TextField(blank=True)
+    es_resumen_mensual = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = 'Registro Mensual'
-        verbose_name_plural = 'Registros Mensuales'
-        ordering = ['year', 'mes', 'categoria']
+        verbose_name = "Movimiento manual"
+        verbose_name_plural = "Movimientos manuales"
+        ordering = ["-fecha", "-id"]
         indexes = [
-            models.Index(fields=['user', 'year', 'mes']),
-            models.Index(fields=['categoria', 'year', 'mes']),
+            models.Index(fields=["user", "periodo", "direccion"]),
+            models.Index(fields=["user", "categoria", "periodo"]),
         ]
-        unique_together = ('user', 'year', 'mes', 'categoria')
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "periodo", "categoria", "direccion"],
+                condition=models.Q(es_resumen_mensual=True),
+                name="gastos_resumen_manual_categoria_mes_un",
+            )
+        ]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        if self.periodo.day != 1:
+            raise ValidationError({"periodo": "El período debe usar el primer día del mes."})
+        if self.categoria_id and self.categoria.user_id != self.user_id:
+            raise ValidationError({"categoria": "La categoría debe pertenecer al usuario."})
+        if self.departamento_id and self.departamento.user_id != self.user_id:
+            raise ValidationError({"departamento": "La propiedad debe pertenecer al usuario."})
+
+    @property
+    def contabiliza_caja(self):
+        return self.naturaleza != "TRANSFERENCIA_INTERNA"
+
+    @property
+    def contabiliza_consumo(self):
+        return self.direccion == "EGRESO" and self.naturaleza == "OPERACIONAL"
 
     def __str__(self):
-        return f"{self.categoria} - {self.year}-{self.mes:02d}: {self.monto} {self.moneda}"
+        return f"{self.fecha} · {self.descripcion} · {self.monto} {self.moneda}"
 
 
 FRECUENCIA_CHOICES = [
@@ -154,4 +132,3 @@ class GastoProgramado(models.Model):
         elif self.frecuencia == 'SEMESTRAL': return self.monto / Decimal('6.0')
         elif self.frecuencia == 'ANUAL': return self.monto / Decimal('12.0')
         return self.monto
-

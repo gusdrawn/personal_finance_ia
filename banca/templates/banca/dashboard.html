@@ -99,7 +99,7 @@
             {% for t in pagar_tdc %}
                 <tr class="border-t border-slate-700/50">
                     <td class="py-2 text-slate-300">{{ t.producto }}</td>
-                    <td class="py-2 text-right font-bold text-white">${{ t.facturado_clp|intcomma }}</td>
+                    <td class="py-2 text-right font-bold text-white">${{ t.facturado_clp|intcomma }}{% if t.facturado_usd %}<span class="block text-xs text-sky-300">US${{ t.facturado_usd|intcomma }}</span>{% endif %}</td>
                     <td class="py-2 text-right text-slate-400">${{ t.no_facturado_clp|intcomma }}</td>
                 </tr>
             {% endfor %}
@@ -116,6 +116,34 @@
         <p class="text-xs text-slate-500 mt-1">Abonos ambiguos sin confirmar (no cuentan como ingreso).</p>
     </a>
 </div>
+
+{% if cupos_tdc.tarjetas %}
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-emerald-500/20">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+        <div>
+            <h4 class="font-bold text-white"><i class="fas fa-credit-card text-emerald-400 mr-2"></i>Cupo disponible</h4>
+            <p class="text-xs text-slate-500">Total vigente según el último estado importado.</p>
+        </div>
+        <a href="{% url 'banca_deudas' %}" class="text-xs text-emerald-400 hover:underline">Ver deudas y cupos →</a>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <div><p class="text-xs text-slate-500 uppercase">Total</p><p class="text-xl font-bold text-white">${{ cupos_tdc.total_clp|intcomma }}</p></div>
+        <div><p class="text-xs text-slate-500 uppercase">Utilizado</p><p class="text-xl font-bold text-rose-300">${{ cupos_tdc.utilizado_clp|intcomma }}</p></div>
+        <div><p class="text-xs text-slate-500 uppercase">Disponible</p><p class="text-xl font-bold text-emerald-400">${{ cupos_tdc.disponible_clp|intcomma }}</p></div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {% for tarjeta in cupos_tdc.tarjetas %}
+        <div class="p-3 rounded-xl bg-slate-900/40 border border-slate-700/50">
+            <p class="text-sm font-semibold text-slate-200">{{ tarjeta.banco.nombre }}</p>
+            <p class="text-xs text-slate-500 truncate">{{ tarjeta.producto.nombre }}</p>
+            <p class="text-lg font-bold text-emerald-400 mt-2">${{ tarjeta.cupo_disponible_clp|default_if_none:0|intcomma }}</p>
+            <p class="text-[10px] text-slate-500 uppercase">Disponible</p>
+            {% if tarjeta.cupo_avance_disponible_clp is not None %}<p class="text-[11px] text-slate-400 mt-2">Avance: ${{ tarjeta.cupo_avance_disponible_clp|floatformat:0|intcomma }}</p>{% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
 
 <!-- Categorías + suscripciones -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">

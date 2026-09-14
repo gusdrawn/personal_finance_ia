@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import time as datetime_time
 from django import forms
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from bank_sync.registry import available_connectors, connector_tipo
 from configuracion.models import Banco
@@ -11,6 +13,7 @@ from prestamos.models import Prestamo
 from .models import (
     CategoriaTematica,
     ConfiguracionBanca,
+    ConfiguracionNotificaciones,
     ContraparteConocida,
     CredencialBanco,
 )
@@ -33,6 +36,8 @@ CONECTOR_LABELS = {
     "cryptomkt": "CryptoMKT",
     "bitcoin_wallet": "Bitcoin (wallet pública)",
     "fintual": "Fintual",
+    "neat": "NeatPagos",
+    "houm": "Houm",
 }
 
 
@@ -82,11 +87,17 @@ class CredencialBancoForm(forms.ModelForm):
 
     class Meta:
         model = CredencialBanco
-        fields = ["banco", "rut", "conector", "identificador_publico", "activo"]
+        fields = [
+            "banco", "rut", "conector", "identificador_publico", "base_url",
+            "sincronizacion_automatica", "hora_sincronizacion", "dia_inicio", "dia_fin",
+            "zona_horaria", "detener_al_completar", "reintentar_errores",
+            "conector_experimental", "activo",
+        ]
         labels = {
             "rut": "RUT / Usuario",
             "conector": "Fuente",
             "identificador_publico": "Dirección pública (wallet)",
+            "base_url": "Endpoint autorizado",
         }
         widgets = {
             "banco": forms.Select(attrs={"class": _INPUT}),
@@ -97,6 +108,15 @@ class CredencialBancoForm(forms.ModelForm):
             "identificador_publico": forms.TextInput(
                 attrs={"class": _INPUT, "placeholder": "dirección o xpub (BTC)"}
             ),
+            "base_url": forms.URLInput(attrs={"class": _INPUT, "placeholder": "https://api.autorizada.example"}),
+            "sincronizacion_automatica": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "hora_sincronizacion": forms.TimeInput(attrs={"class": _INPUT, "type": "time"}),
+            "dia_inicio": forms.NumberInput(attrs={"class": _INPUT, "min": 1, "max": 28}),
+            "dia_fin": forms.NumberInput(attrs={"class": _INPUT, "min": 1, "max": 28}),
+            "zona_horaria": forms.TextInput(attrs={"class": _INPUT}),
+            "detener_al_completar": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "reintentar_errores": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "conector_experimental": forms.CheckboxInput(attrs={"class": _CHECK}),
             "activo": forms.CheckboxInput(attrs={"class": _CHECK}),
         }
 
@@ -107,6 +127,9 @@ class CredencialBancoForm(forms.ModelForm):
         self.fields["conector"].choices = [
             (c["name"], c["label"]) for c in listar_conectores()
         ]
+        # Compatibilidad: fuentes existentes que no usan programación pueden omitirlos.
+        for field_name in ("hora_sincronizacion", "dia_inicio", "dia_fin", "zona_horaria"):
+            self.fields[field_name].required = False
 
     def _tipo(self) -> str:
         try:
@@ -116,9 +139,21 @@ class CredencialBancoForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        cleaned["hora_sincronizacion"] = (
+            cleaned.get("hora_sincronizacion")
+            or getattr(self.instance, "hora_sincronizacion", None)
+            or datetime_time(9, 0)
+        )
+        cleaned["dia_inicio"] = cleaned.get("dia_inicio") or getattr(self.instance, "dia_inicio", 1) or 1
+        cleaned["dia_fin"] = cleaned.get("dia_fin") or getattr(self.instance, "dia_fin", 10) or 10
+        cleaned["zona_horaria"] = cleaned.get("zona_horaria") or getattr(self.instance, "zona_horaria", "America/Santiago") or "America/Santiago"
         creando = self.instance.pk is None
         tipo = self._tipo()
         conector = cleaned.get("conector") or ""
+
+        inicio, fin = cleaned.get("dia_inicio"), cleaned.get("dia_fin")
+        if inicio and fin and inicio > fin:
+            self.add_error("dia_fin", "El día final debe ser igual o posterior al inicial.")
 
         if tipo == "banco":
             if creando and not cleaned.get("clave"):
@@ -127,6 +162,12 @@ class CredencialBancoForm(forms.ModelForm):
                 )
             if not cleaned.get("rut"):
                 self.add_error("rut", "El banco requiere RUT / usuario.")
+        elif tipo in ("pagos", "administracion_inmobiliaria"):
+            if cleaned.get("conector_experimental"):
+                if not cleaned.get("base_url"):
+                    self.add_error("base_url", "El modo experimental requiere un endpoint autorizado.")
+                if creando and not cleaned.get("api_key"):
+                    self.add_error("api_key", "El modo experimental requiere un token de solo lectura.")
         else:
             # fuentes de activos: wallet por dirección, o exchange por API key+secret
             if conector == "bitcoin_wallet":
@@ -140,8 +181,15 @@ class CredencialBancoForm(forms.ModelForm):
         return cleaned
 
     def save(self, commit=True):
+        creating = self.instance.pk is None
         instance = super().save(commit=False)
         instance.tipo_fuente = self._tipo()
+
+        if creating and instance.conector in ("neat", "houm"):
+            if "dia_inicio" not in self.data:
+                instance.dia_inicio = 1 if instance.conector == "neat" else 2
+            if "dia_fin" not in self.data:
+                instance.dia_fin = 1 if instance.conector == "neat" else 10
 
         # Institución: si no se eligió una, se crea/asocia por el nombre del connector.
         if not instance.banco_id:
@@ -159,6 +207,72 @@ class CredencialBancoForm(forms.ModelForm):
 
         if commit:
             instance.save()
+            from banca.services.fuentes_externas import calcular_proxima_sincronizacion
+
+            instance.proxima_sincronizacion = calcular_proxima_sincronizacion(instance)
+            instance.save(update_fields=["proxima_sincronizacion", "updated_at"])
+        return instance
+
+
+class ProgramacionFuenteForm(forms.ModelForm):
+    """Edición acotada de la cadencia y del modo read-only experimental."""
+
+    api_key = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(attrs={"class": _INPUT, "placeholder": "Token de solo lectura"}),
+        help_text="Déjalo vacío para conservar el token actual.",
+    )
+    session_state = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(attrs={"class": _INPUT, "placeholder": "Cookie/token de sesión renovado"}),
+        help_text="Se cifra al guardar. Déjalo vacío para conservar la sesión actual.",
+    )
+
+    class Meta:
+        model = CredencialBanco
+        fields = [
+            "sincronizacion_automatica", "hora_sincronizacion", "dia_inicio", "dia_fin",
+            "zona_horaria", "detener_al_completar", "reintentar_errores",
+            "conector_experimental", "base_url",
+        ]
+        widgets = {
+            "sincronizacion_automatica": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "hora_sincronizacion": forms.TimeInput(attrs={"class": _INPUT, "type": "time"}),
+            "dia_inicio": forms.NumberInput(attrs={"class": _INPUT, "min": 1, "max": 28}),
+            "dia_fin": forms.NumberInput(attrs={"class": _INPUT, "min": 1, "max": 28}),
+            "zona_horaria": forms.TextInput(attrs={"class": _INPUT}),
+            "detener_al_completar": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "reintentar_errores": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "conector_experimental": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "base_url": forms.URLInput(attrs={"class": _INPUT}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("dia_inicio") and cleaned.get("dia_fin") and cleaned["dia_inicio"] > cleaned["dia_fin"]:
+            self.add_error("dia_fin", "El día final debe ser igual o posterior al inicial.")
+        if cleaned.get("conector_experimental") and not cleaned.get("base_url"):
+            self.add_error("base_url", "El modo experimental requiere un endpoint autorizado.")
+        try:
+            ZoneInfo(cleaned.get("zona_horaria") or "")
+        except (ZoneInfoNotFoundError, ValueError):
+            self.add_error("zona_horaria", "Usa una zona horaria IANA válida, por ejemplo America/Santiago.")
+        return cleaned
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if self.cleaned_data.get("api_key"):
+            instance.set_api_key(self.cleaned_data["api_key"])
+        if self.cleaned_data.get("session_state"):
+            instance.set_sesion(self.cleaned_data["session_state"])
+            instance.requiere_reautenticacion = False
+            instance.errores_consecutivos = 0
+        if commit:
+            instance.save()
+            from banca.services.fuentes_externas import calcular_proxima_sincronizacion
+
+            instance.proxima_sincronizacion = calcular_proxima_sincronizacion(instance)
+            instance.save(update_fields=["proxima_sincronizacion", "updated_at"])
         return instance
 
 
@@ -232,6 +346,71 @@ class ConfiguracionBancaForm(forms.ModelForm):
         clave = self.cleaned_data.get("ia_api_key")
         if clave:
             instance.set_ia_api_key(clave)
+        if commit:
+            instance.save()
+        return instance
+
+
+class ConfiguracionNotificacionesForm(forms.ModelForm):
+    telegram_bot_token = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(
+            attrs={"class": _INPUT, "placeholder": "Token de @BotFather"},
+            render_value=False,
+        ),
+    )
+    telegram_chat_id = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={"class": _INPUT, "placeholder": "Chat ID"}),
+    )
+
+    class Meta:
+        model = ConfiguracionNotificaciones
+        fields = [
+            "telegram_activo",
+            "avisar_gasto_inmediato",
+            "monto_minimo_gasto",
+            "resumen_diario",
+            "hora_resumen_diario",
+            "resumen_importacion_pdf",
+            "avisar_ocio",
+            "avisar_limites_categoria",
+            "avisar_vencimientos",
+            "dias_anticipacion_vencimientos",
+            "avisar_provisional_atrasado",
+            "dias_provisional_atrasado",
+            "zona_horaria",
+        ]
+        widgets = {
+            "telegram_activo": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "avisar_gasto_inmediato": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "monto_minimo_gasto": forms.NumberInput(attrs={"class": _INPUT, "min": 0}),
+            "resumen_diario": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "hora_resumen_diario": forms.TimeInput(attrs={"class": _INPUT, "type": "time"}),
+            "resumen_importacion_pdf": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "avisar_ocio": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "avisar_limites_categoria": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "avisar_vencimientos": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "dias_anticipacion_vencimientos": forms.NumberInput(attrs={"class": _INPUT, "min": 0, "max": 60}),
+            "avisar_provisional_atrasado": forms.CheckboxInput(attrs={"class": _CHECK}),
+            "dias_provisional_atrasado": forms.NumberInput(attrs={"class": _INPUT, "min": 1, "max": 180}),
+            "zona_horaria": forms.TextInput(attrs={"class": _INPUT}),
+        }
+
+    def clean_zona_horaria(self):
+        value = self.cleaned_data["zona_horaria"]
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError:
+            raise forms.ValidationError("Usa una zona horaria IANA válida.")
+        return value
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        token = self.cleaned_data.get("telegram_bot_token")
+        chat_id = self.cleaned_data.get("telegram_chat_id")
+        if token or chat_id:
+            instance.set_telegram(token, chat_id)
         if commit:
             instance.save()
         return instance

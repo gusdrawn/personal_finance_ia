@@ -21,10 +21,10 @@ Open your browser and navigate to: [http://localhost:8000/dashboard/](http://loc
 - **Password:** `demo1234`
 
 ### Quick access menu
-The authenticated sidebar includes quick links to the financial institutions and
+The authenticated top navigation includes quick links to the financial institutions and
 investment platforms used most often: Santander, Scotiabank, Bci, Banco Falabella,
-Itaú, AFP Uno, AFC, CMF deudas, Fintual, DVA, SoyFocus, and BTG Pactual. Each link
-opens the official site in a new tab.
+Itaú, AFP Uno, AFC, CMF deudas, Fintual, DVA, SoyFocus, and BTG Pactual. They are grouped
+by category and each link opens the official site in a new tab.
 
 ---
 
@@ -33,13 +33,15 @@ opens the official site in a new tab.
 | Module | Description |
 | :--- | :--- |
 | **Dashboard** | Real-time overview of net worth, assets, liabilities, and liquidity. |
-| **Gastos** | Monthly income/expense tracking with pro-rata savings for annual/quarterly costs. |
-| **Patrimonio** | Asset and liability management with multi-currency support (CLP, USD, UF). |
+| **Gastos** | Centro financiero con flujo de caja oficial y consumo categorizado, integrando TDC, Houm, Neat y movimientos manuales sin doble conteo. |
+| **Patrimonio** | Asset and liability management with multi-currency support (CLP, USD, UF), including accounts receivable. |
 | **Departamentos** | Rental property ROI analysis, mortgage amortization, and tenant tracking. |
 | **Inversiones** | Portfolio management for stocks, crypto, and mutual funds. |
-| **Préstamos** | Gestión de bicicletas personales y de terceros con cálculo de intereses. |
+| **Préstamos** | Gestión de bicicletas personales y de terceros con cálculo de intereses, visible también por bicicleta en cada card. |
 | **Configuración** | Centralized management for banks, products, categories, exchange rates, and Apple Pay API keys. |
 | **Banca** | Integración de movimientos, deudas, presupuesto, clasificación, sincronización de fuentes, importación masiva de estados de cuenta PDF y POC Apple Pay vía Atajo de iPhone. |
+| **Altcoin Scanner** | Scanner histórico de 45 proyectos más cola de descubrimiento fuera del top por capitalización, dossier auditable de web/redes/tokenomics, score fundamental y grafo verificable de fundadores, operadores, inversores, sponsors e instituciones. |
+| **Trading Research Center** | Portal de investigación multi-activo con screener, temáticas, QuantPro, valor justo, consenso, divergencia, estrategias, calendario económico, ficha completa y gráficas. |
 
 ---
 
@@ -74,13 +76,16 @@ opens the official site in a new tab.
 ## 📁 Project Structure
 
 - `core/`: User profiles, periods, and audit trails.
-- `gastos/`: Monthly records, annual and quarterly expense logic.
+- `gastos/`: Resumen único de caja/consumo, taxonomía temática, movimientos manuales y gastos programados.
 - `patrimonio/`: Asset/liability tracking and net worth snapshots.
+- `patrimonio/services/cuentas_por_cobrar.py`: Monthly renewal matching and WhatsApp collection text.
 - `departamentos/`: Rental properties, mortgages, and ROI calculations.
 - `inversiones/`: Investment portfolio and historical tracking.
 - `prestamos/`: Módulo de "Bicicletas" (préstamos personales y de terceros).
 - `configuracion/`: Global settings, banks, products, and exchange rates.
 - `banca/`: Fuente transaccional, reconciliación, presupuesto, analítica y clasificación IA.
+- `altcoins/`: Scanner de proyectos cripto, snapshots de mercado, scoring, evidencias y relaciones institucionales.
+- `trading/`: Research Center multi-activo, contratos de proveedores, scoring QuantPro, estrategias, calendario, IA y APIs de gráficas.
 - `bank_sync/`: Contratos y conectores para bancos, exchanges, wallets e inversiones.
 - `templates/`: Modern HTML layout using Tailwind CSS, HTMX, and Alpine.js.
 
@@ -108,7 +113,75 @@ python manage.py makemigrations   # Generate database migrations
 python manage.py migrate          # Apply database migrations
 python manage.py populate_fixtures # Load demo data
 python load_real_data.py          # Load real historical data (from images)
+python manage.py sync_trading_data --mode full --symbols MCD  # Yahoo/Twelve Data + SEC EDGAR
+python manage.py link_altcoins_to_trading      # Migrar proyectos cripto existentes a fichas trading
 ```
+
+### Centro de Investigación de Mercado
+
+El portal está disponible en `/trading/`. Incluye `/trading/research/` (screener),
+`/trading/strategies/`, `/trading/calendar/`, watchlist, descartados y fichas en
+`/trading/instrument/<id>/`. La ficha integral muestra precio, retorno y drawdown,
+perfil del negocio, capitalización, dividend yield, valoración, consenso y estados
+financieros. También incluye gráficas de precio, ingresos anuales, dividend yield y
+P/E calculados al cierre anual, y EPS reportado/estimaciones disponibles. Cada cifra
+conserva fuente y fecha.
+
+No requiere API keys para comenzar: usa el feed público de Yahoo Finance para precios e
+históricos y la API oficial SEC EDGAR para fundamentales de compañías estadounidenses.
+Si existe `TRADING_TWELVE_DATA_API_KEY`, Twelve Data reemplaza a Yahoo como fuente de
+mercado; `TRADING_FMP_API_KEY` agrega consenso, objetivos y calendario cuando el plan del
+proveedor lo permite. Los faltantes quedan vacíos y la interfaz nunca presenta datos
+DEMO como información vigente.
+
+Una búsqueda sin coincidencia local permite guardar el símbolo y sus datos actuales.
+Los administradores tienen los botones **Actualizar información ahora** y **Vincular
+proyectos** en la misma página. El asistente de investigación entiende símbolos como
+`MCD`, empresas, temáticas y filtros de QuantPro, P/E o dividendos; responde con precio,
+fecha, fuente y motivos verificables.
+
+El módulo es deliberadamente solo de investigación: no conecta brokers, no envía
+órdenes, no automatiza trading y no genera señales de compra/venta. Watchlist y
+descartados son preferencias aisladas por usuario.
+
+### Altcoin Scanner
+
+El scanner se abre en `/altcoins/` y conserva separados el `fundamental_score` y la
+`institutional_score`. La segunda mide documentación y huella institucional, no
+rentabilidad ni seguridad. Un partner comercial, un market maker o un listado en un
+exchange no se presentan como inversión.
+
+Los administradores disponen de un **Centro de operaciones** en esa misma página. Desde
+sus botones pueden inicializar el universo histórico, actualizar precios, validar metadata
+de CoinMarketCap, guardar snapshots de scores y abrir el flujo de descubrimiento. La
+búsqueda de candidatos acepta CoinGecko, el catálogo público de Robinhood y Brave Search;
+los candidatos no entran al ranking hasta que se investiga y se promueve explícitamente.
+Los usuarios normales no ven ni pueden ejecutar estas acciones globales.
+
+Cada candidato puede pasar por tres pasos visibles: **Descubrir**, **Investigar** y
+**Promover**. Investigar crea un dossier versionado con identidad, mercado, tokenomics,
+enlaces oficiales, redes públicas y evidencias HTTPS limitadas y trazables. Luego el botón
+**Evaluar fundamentos** entrega ese dossier al modelo pequeño en JSON estricto; las citas
+deben pertenecer al dossier y los datos ausentes quedan como `UNKNOWN`. Supply, FDV/market
+cap y distancia al ATH se calculan de forma determinista antes de la IA. El score fundamental
+y la huella institucional continúan separados.
+
+Las relaciones de sponsors, fundadores, empresas, fondos, bancos y organismos públicos
+se guardan con tipo, fechas, estado y evidencia. Las fuentes se clasifican como primarias,
+corroboradas, secundarias o no verificadas; solo las dos primeras pueden publicarse como
+relaciones verificadas. Las afirmaciones políticas requieren evidencia primaria y revisión
+humana. La IA solo resume evidencias existentes y nunca aprueba relaciones.
+
+CoinGecko aporta el mercado canónico y la búsqueda de candidatos; CoinMarketCap valida
+metadata, Tokenomist enriquece supply, rondas y unlocks cuando tiene key, y Brave Search
+habilita búsqueda web citable. Sus API keys se administran exclusivamente desde
+**Configuración → Integraciones de mercado**, donde se guardan cifradas y solo son
+visibles para staff. El Altcoin Scanner no lee estos secretos desde `.env`. CoinGecko
+puede operar sin key mientras su API pública lo permita; búsqueda web queda deshabilitada
+hasta configurar Brave. Robinhood se usa inicialmente como catálogo público de disponibilidad;
+su API autenticada es opcional, está limitada a clientes elegibles de EE. UU. y requiere
+credenciales creadas en la cuenta de Robinhood, por lo que no se simula con scraping ni se
+presenta como disponibilidad universal.
 
 ## 🧪 Pruebas de regresión
 
@@ -123,6 +196,54 @@ venv/bin/python manage.py test --verbosity 1
 Los tests deben ser herméticos: las APIs bancarias, Telegram y proveedores de IA se
 simulan con datos locales. Cada nueva funcionalidad o modificación de lógica financiera
 debe incluir al menos un caso nominal y un caso límite o de aislamiento.
+
+## Gastos Mensuales unificados
+
+`/dashboard/gastos/` abre el mes calendario anterior en **Gastos por movimiento**. Las
+compras se muestran en su fecha real y se visualizan en una gráfica de distribución por
+categoría; por ejemplo, un estado que vence en septiembre conserva en agosto las compras
+realizadas durante agosto. Los estados relacionados se muestran como referencia, pero su
+facturado no se vuelve a sumar. Se excluyen pagos, transferencias, inversiones, préstamos
+y cuentas por cobrar.
+
+Una compra pagada por un tercero se vincula como **Cuenta por cobrar** desde
+**Banca → Movimientos**. Sigue siendo salida de caja y aumenta el activo pendiente, pero
+queda fuera del consumo y de su gráfica; el reintegro se registra como abono del activo y
+entrada de caja en su fecha efectiva, no como ingreso económico. En cargos agrupados de
+NeatPagos la vinculación se hace por destinatario, de
+modo que sólo la parte recuperable se excluye y el resto conserva su categoría de gasto.
+La taxonomía separa `Financiamiento / Hipoteca` para dividendos hipotecarios de
+`Arriendo / Hipoteca`, y usa `Pagos por cuenta de terceros` como etiqueta visible de
+los cargos vinculados a una cuenta por cobrar. Esta etiqueta no excluye importes por sí
+sola: la relación con la cuenta por cobrar es la fuente contable de esa decisión.
+
+La perspectiva secundaria **Pagos / flujo de caja** conserva el monto facturado del
+estado vigente en su mes de vencimiento y muestra cualquier diferencia de conciliación.
+Houm aporta una sola vez el depósito neto confirmado de propiedades vinculadas y Neat
+desglosa cargos conciliados sin sumar otro egreso. La cobertura de fuentes sigue disponible
+en la API, sin alertas persistentes en la pantalla de Gastos.
+
+Las entradas manuales viven en `MovimientoManual`: `OPERACIONAL` afecta caja y, si es
+egreso, consumo; `ACTIVO_RECUPERABLE` e `INVERSION` sólo caja;
+`TRANSFERENCIA_INTERNA` no afecta ninguna perspectiva. Productos financieros son
+cuentas aisladas por usuario y `Banco` continúa como catálogo global.
+
+API autenticada principal:
+
+```text
+GET  /api/gastos/resumen/?desde=2026-08&hasta=2026-09&perspectiva=caja
+GET  /api/gastos/detalle/?perspectiva=consumo&categoria=12
+GET  /api/gastos/exportar.xlsx?<los mismos filtros>
+CRUD /api/gastos/manuales/
+POST /api/gastos/manuales/carga_mensual/
+CRUD /api/gastos/categorias/
+POST /api/gastos/categorias/{id}/fusionar/
+POST /api/gastos/facturados/{id}/pago-real/
+```
+
+Los importes JSON se serializan como cadenas decimales. `CategoriaIngreso` y
+`RegistroMensual` fueron eliminados; `GastoProgramado` sigue siendo una previsión y no
+se suma como gasto realizado.
 
 ## 🌐 Despliegue en cPanel
 
@@ -170,14 +291,170 @@ configuración y los datos existentes en producción.
 ## 📄 Importación de estados de cuenta (POC)
 
 Desde **Banca → Importar estados** (`/banca/importar/`) se pueden subir varios PDFs
-simultáneamente. La POC detecta el banco, la tarjeta, el período y los montos del estado,
-crea o reutiliza el producto financiero, importa los movimientos sin duplicarlos y muestra
-un resumen gráfico por categoría. Los movimientos se pueden recategorizar desde la misma
-vista; el criterio manual queda como regla para futuras cargas.
+simultáneamente. La POC detecta el banco, el tipo de producto, su identificador, el período y
+los montos del estado. En tarjetas extrae los cupos total/utilizado/disponible y el subcupo de
+avances; en cartolas de cuenta corriente extrae cargos, abonos y saldo final. En ambos casos
+crea o reutiliza el producto financiero, importa sin duplicar y conserva el PDF como auditoría.
+Las pantallas de estados de cuenta y de **Banca → Houm / Neat** incluyen una zona de carga por
+arrastre: al pasar archivos sobre ella muestra una animación activa, acepta soltarlos directamente,
+informa los nombres y el tamaño seleccionados, permite limpiar la selección y conserva el selector
+tradicional como alternativa. También valida en el navegador el formato y el límite de 15 MB antes
+de iniciar el procesamiento.
+El cupo queda guardado como snapshot por usuario, banco, tarjeta y fecha: si el banco aumenta
+el cupo, el nuevo valor pasa a ser el vigente sin borrar el historial anterior. Al terminar cada lote, los movimientos operacionales
+pendientes pasan primero por las reglas aprendidas y luego por la IA configurada para el
+usuario actual en **Banca → Configuración** (por ejemplo, `demo_user`). La pantalla informa
+cuántos movimientos resolvió cada fuente y qué quedó pendiente.
 
-Actualmente se soportan los formatos de texto de **Itaú, Banco Falabella y Santander**.
+El cupo vigente se muestra en **Dashboard**, **Banca** y **Banca → Deudas**, con el total,
+utilizado, disponible y avance disponible por tarjeta. El estado se vincula al `Banco` y
+`Producto` detectados; cuando existe una credencial bancaria del usuario, se prioriza ese
+registro para evitar asociar la importación a otra entidad global con un nombre parecido.
+La fecha `Pagar hasta` también se guarda en el snapshot y se convierte en un vencimiento
+real dentro de **Calendario & Planificación**, asociado a la tarjeta y al monto facturado.
+Cada nueva importación reemplaza el vencimiento vigente de ese período, manteniendo los
+períodos anteriores para consultar el historial.
+
+Los movimientos se pueden recategorizar desde la misma vista. El usuario puede editar el
+nombre estable del comercio antes de guardar; esa relación comercio → categoría queda asociada a
+su cuenta, tiene prioridad sobre la IA en futuras cargas y no se comparte con otros usuarios.
+
+En **Banca → Movimientos** (`/banca/movimientos/`) se puede buscar por comercio, glosa,
+banco, producto, categoría o huella, además de acotar por fechas y estado. La distribución
+visual por categoría usa el mismo conjunto filtrado que la tabla: al seleccionar un segmento
+se aplica automáticamente la categoría para agilizar la reclasificación.
+Las decisiones de IA también se guardan como memoria para evitar repetir llamadas.
+
+Los cargos genéricos de NeatPagos se concilian con su detalle externo por usuario, monto,
+tarjeta disponible y una ventana cercana de fecha. Banca muestra el destinatario real y su
+categoría; Gastos sustituye el cargo genérico por ese desglose sin duplicar el total. El cruce
+se vuelve a intentar tanto al importar Neat como al importar o reanalizar la tarjeta.
+Los abonos de cuenta corriente también se cruzan con pagos Neat previos usando los tokens del
+destinatario, una ventana de cinco días hábiles y una tolerancia de monto. Cuando un subconjunto
+de pagos explica el abono, este queda como transferencia de bicicleta y no como ingreso; si no
+hay evidencia suficiente, una transferencia recibida permanece en revisión.
+
+No es necesario volver a subir un PDF para actualizar la clasificación: **Recalcular este
+estado** o **Recalcular todos** reaplican reglas e IA y protegen siempre las decisiones
+manuales. El proveedor se consulta en lotes pequeños y las respuestas incompletas se
+reintentan solo para las glosas omitidas. Si la IA rechaza la solicitud, expira o devuelve
+una respuesta inválida, la pantalla muestra el motivo y el recálculo se revierte completo:
+las categorías anteriores no quedan borradas ni parcialmente actualizadas. La URL, el
+modelo y sus políticas deben ser compatibles entre sí; en OpenCode algunos modelos exigen
+una autorización de uso de datos independiente aunque la API key sea válida.
+
+**Reanalizar archivo** vuelve a ejecutar el parser sobre el PDF guardado para
+incorporar mejoras de extracción sin borrar movimientos ni correcciones del usuario. Si el
+usuario vuelve a subir exactamente el mismo PDF, `usuario + hash del archivo` reutiliza la
+importación existente y aplica automáticamente el lector actual: actualiza metadatos,
+snapshots y movimientos recién detectados, pero nunca crea una segunda importación. Una
+versión distinta crea auditoría nueva y reutiliza movimientos ya conocidos por su huella
+bancaria.
+
+La conciliación separa los pagos de tarjeta del gasto operacional: glosas bancarias como
+`MONTO CANCELADO` se consideran transferencias y los movimientos ya vinculados a un
+préstamo conservan esa naturaleza en recálculos posteriores. Así esos pagos no distorsionan
+los totales por categoría ni vuelven a quedar pendientes.
+Cuando una TDC se paga usando otra TDC, **Banca → Movimientos** permite elegir
+`Pago de otra TDC` en el selector financiero. El movimiento queda en
+`Financiamiento / Pago de TDC`, con naturaleza de transferencia y fuera del consumo;
+no se crea una cuenta por cobrar ni un préstamo ficticio.
+
+Actualmente se soportan los formatos de texto de **Itaú, Banco Falabella, Santander,
+Scotiabank, BCI, Lider Bci y Tenpo**. En Lider Bci la detección usa señales textuales del formato porque el logotipo
+del PDF puede venir como elemento gráfico; reconoce tarjeta, período, vencimiento, cupos,
+cargos, abonos y el pago de la tarjeta sin importar subtotales ni líneas de monto cero.
+Tenpo admite descripciones partidas entre líneas y reutiliza la tarjeta configurada. Los
+estados internacionales Santander conservan movimientos, deuda y cupos en USD; se anexan
+al mismo snapshot de la tarjeta nacional y no se inventa una conversión CLP cuando el banco
+no informa tipo de cambio. La vista de importación y Calendario muestran ambas monedas por
+separado.
+Las cartolas históricas de cuenta corriente están soportadas para **Santander, Itaú, Banco
+Falabella, Scotiabank y BCI Personas**. Cada número de cuenta genera un producto `Cuenta Corriente`
+independiente y su saldo final queda versionado por período y usuario. En Scotiabank y BCI se
+reconstruye el signo de cargo/abono usando el saldo diario aun cuando el PDF omite la celda vacía.
+Las cuentas corrientes se incluyen también en la perspectiva de caja por su fecha de estado (sin
+inventar vencimientos ni diferencias contra un monto facturado), por lo que los abonos operacionales
+completan los ingresos del período.
 No se envían credenciales ni se conecta a los bancos, y los PDFs escaneados sin capa de
 texto quedan registrados como no procesables hasta incorporar OCR.
+
+## 🏠 Integración Houm y NeatPagos
+
+El panel **Banca → Houm / Neat** (`/banca/fuentes-externas/`) incorpora información de
+administración inmobiliaria y plataformas de pago como una capa explicativa. Los
+`MovimientoBancario` continúan siendo la fuente contable: un pago o liquidación externa se
+concilia con el cargo o abono existente y nunca crea un segundo gasto o ingreso.
+
+- **Houm:** importa el informe mensual XLSX/CSV/JSON, vincula cada propiedad con un
+  `Departamento`, conserva renta, administración, IVA, corretaje, promociones, reparaciones,
+  servicios, ajustes y depósito neto. El neto confirmado actualiza `Arriendo {código}`; una
+  diferencia con un registro manual queda para revisión. El formato oficial con las columnas
+  `ID Propiedad`, `Arriendo`, `Plan Houm`, `Ajustes`, `Depósito` y `Fecha de pago` se reconoce
+  aunque el encabezado no esté en la primera fila; unidades como `107F` se enlazan con el código
+  interno `F107`.
+- **Departamentos:** `/dashboard/departamentos/` usa las liquidaciones vinculadas para mostrar el
+  último período importado, arriendo informado, depósito recibido, costo de administración y
+  déficit. El gráfico conserva hasta 12 meses y los cálculos de rendimiento usan el ingreso del
+  período actual. Si el reporte mensual omite una unidad activa con renta contractual, se presenta
+  como **sin ingreso informado / vacante**, su depósito queda en cero, la renta no recibida se
+  incorpora al déficit y el dividendo hipotecario continúa como salida del mes.
+- **NeatPagos:** importa historial tabular, correos o comprobantes PDF con texto; conserva ID, estado, destinatario, tarjeta,
+  principal, comisión, total cargado y comprobante. Admite pagos divididos conciliados con un
+  solo cargo bancario y transiciones de estado idempotentes.
+- **Operación:** siempre existe un botón manual por fuente y uno global. La automatización es
+  opcional y configurable por usuario: Neat usa por defecto el día 1; Houm los días 2–10 y se
+  detiene al capturar todas las propiedades. CAPTCHA, MFA, sesión vencida o tres errores
+  consecutivos detienen la consulta y solicitan intervención.
+
+Los endpoints privados no están codificados: solo se activa la consulta experimental cuando
+el usuario dispone de una URL y token autorizados de solo lectura. La importación oficial
+permanece disponible sin navegador ni API. Consulta
+[docs/INTEGRACION_HOUM_NEAT.md](docs/INTEGRACION_HOUM_NEAT.md) para operación, comandos y el
+contrato propuesto para solicitar una API oficial.
+
+## 💸 Cuentas por cobrar
+
+Desde **Activos → Cuentas por cobrar** se pueden crear cuentas con nombre y moneda,
+agregar varias líneas de cobro y describir cada una. Una línea puede asociarse a un
+movimiento positivo de una tarjeta de crédito, a un evento de **NeatPagos** o registrarse
+manualmente. Las transacciones se encuentran escribiendo comercio, fecha o monto en un
+buscador. Los abonos se ingresan por línea o como abono general y el saldo restante se actualiza
+automáticamente. Cada abono puede quitarse desde el historial si fue ingresado por error, con
+recalculo inmediato del saldo. Al asociar una transacción, el monto se toma automáticamente y
+solo se solicita cuando el cargo es manual.
+
+La misma asociación puede hacerse directamente en **Banca → Movimientos**: un cargo
+normal se vincula completo y un cargo NeatPagos conciliado ofrece una selección separada
+para cada destinatario. Una fuente sólo puede quedar asignada a una cuenta; al cambiarla,
+la obligación y sus abonos se trasladan juntos.
+
+Si el cargo ya ocurrió pero todavía no aparece en un estado importado, la línea se
+registra como **Provisional · falta estado** con el período, fecha y monto conocidos. No
+se reutiliza el movimiento facturado del mes anterior. Cuando llega el nuevo PDF, se
+edita esa misma línea y se reemplaza la fuente provisional por el movimiento real; el
+saldo del activo se actualiza y nunca se crea una segunda obligación.
+
+Cada cuenta se refleja como un activo de tipo **Cuenta por cobrar**, por lo que el saldo
+pendiente entra en Dashboard, Patrimonio y Activos; no se convierte en gasto adicional ni
+duplica el movimiento bancario original. La tabla muestra solo el mes seleccionado, mientras
+el saldo y el texto de cobro siguen acumulando los meses anteriores que aún estén pendientes.
+El botón **Proponer mes** busca en el mes elegido una transacción futura de la misma tarjeta o
+contraparte Neat con glosa similar y toma su nuevo monto detectado. La propuesta se muestra
+antes de guardar y requiere confirmación explícita; si no hay una coincidencia segura, la línea
+queda para registro manual. Así, por ejemplo, el arriendo NeatPagos de septiembre puede
+proponer el evento distinto de octubre, sin reutilizar la transacción anterior.
+
+La pantalla genera un detalle copiable como texto, con las líneas pendientes del mes seleccionado,
+una única línea **Saldo pendiente anterior** para la deuda de meses previos, abonos generales y
+total, sin fechas para que el mensaje sea más limpio y listo para pegar en WhatsApp. Desde **Editar** se puede reemplazar un cargo manual por
+una transacción de tarjeta o NeatPagos; el monto, fecha, origen y clave de renovación se toman
+de la fuente elegida. **Ver mes** permite volver a agosto u otro período para corregir sus líneas;
+el buscador ofrece fuentes del mes visible y de hasta 10 días anteriores —para cargos automáticos
+antes del día 1— y avisa si una transacción ya está asociada a otra línea. CLP y USD se mantienen
+separados y todas las cuentas, fuentes y abonos están aislados por
+usuario. Los reportes CSV de Neat conservan el día de pago y el día de
+depósito, evitando que transacciones históricas aparezcan como si fueran de hoy.
 
 ## 📱 POC Apple Pay vía Atajo
 
@@ -186,6 +463,18 @@ Shortcuts usando una API key Bearer. Persiste el movimiento, reutiliza las regla
 y la clasificación IA de Banca, e intenta alertar por Telegram. Los reintentos son seguros
 mediante `event_id`; las keys se crean y revocan desde **Configuración → Apple Pay y Atajos**
 y el secreto completo solo se muestra una vez.
+
+La compra de Apple Pay queda `PROVISIONAL` y participa temporalmente en presupuesto y
+dashboard. Cuando llega un PDF con período explícito, el sistema confirma en la misma fila
+los calces seguros por tarjeta, monto, moneda, fecha y comercio; lo transforma en `FACTURADO`
+sin repetir la alerta. Los provisionales que no aparecen al cierre dejan de contabilizarse,
+y los calces ambiguos quedan auditados sin elegir al azar. Sin período, el PDF no cierra
+provisionales. A los 45 días —o al plazo personal elegido— puede emitirse una alerta única.
+
+En **Configuración → Telegram y alertas** cada usuario guarda token y chat ID cifrados,
+prueba la conexión y elige avisos por gasto/monto mínimo, resumen diario, importaciones PDF,
+Ocio, límites mensuales por categoría, vencimientos y provisionales atrasados. Cada envío
+queda registrado con una clave idempotente; un error de Telegram nunca revierte el gasto.
 
 La plantilla importable v2 extrae el valor numérico del objeto de Wallet mediante
 `Amount → Currency Amount` y muestra la respuesta real del endpoint en la notificación.

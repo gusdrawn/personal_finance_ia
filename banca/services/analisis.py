@@ -8,13 +8,15 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 
 from banca.models import MovimientoBancario, SaldoSnapshot
 
 
 def _operacionales(user):
-    return MovimientoBancario.objects.filter(user=user, naturaleza="OPERACIONAL", por_revisar=False)
+    return MovimientoBancario.objects.filter(
+        user=user, naturaleza="OPERACIONAL", por_revisar=False
+    ).exclude(estado="DESCARTADO_CIERRE")
 
 
 def fijo_vs_ocio(user, year: int, month: int) -> dict:
@@ -76,7 +78,8 @@ def monto_a_pagar_tdc(user) -> list[dict]:
     """Último saldo facturado por tarjeta (lo que hay que pagar)."""
     out = []
     productos = (
-        SaldoSnapshot.objects.filter(user=user, deuda_facturada_clp__isnull=False)
+        SaldoSnapshot.objects.filter(user=user)
+        .filter(Q(deuda_facturada_clp__isnull=False) | Q(deuda_usd__isnull=False))
         .order_by()
         .values_list("producto", flat=True)
         .distinct()
@@ -93,6 +96,98 @@ def monto_a_pagar_tdc(user) -> list[dict]:
                 "producto": str(snap.producto),
                 "facturado_clp": snap.deuda_facturada_clp or Decimal("0"),
                 "no_facturado_clp": snap.deuda_no_facturada_clp or Decimal("0"),
+                "facturado_usd": snap.deuda_usd or Decimal("0"),
                 "fecha": snap.fecha,
             })
     return out
+
+
+def cupos_tdc(user) -> dict:
+    """Último cupo conocido por tarjeta y resumen total del usuario.
+
+    Se consulta solo el snapshot más reciente que realmente contiene cupos. Esto
+    permite que una importación antigua que solo traía deuda no oculte el último
+    cupo leído desde un estado de cuenta posterior.
+    """
+    snapshots_con_cupo = (
+        SaldoSnapshot.objects.filter(user=user, producto__tipo="TDC")
+        .exclude(cupo_total_clp__isnull=True, cupo_disponible_clp__isnull=True)
+        .order_by()
+    )
+    producto_ids = snapshots_con_cupo.values_list("producto_id", flat=True).distinct()
+    tarjetas = []
+    for producto_id in producto_ids:
+        snapshot = (
+            snapshots_con_cupo.filter(producto_id=producto_id)
+            .select_related("producto", "producto__banco")
+            .order_by("-fecha", "-id")
+            .first()
+        )
+        if not snapshot:
+            continue
+        total = snapshot.cupo_total_clp
+        disponible = snapshot.cupo_disponible_clp
+        utilizado = snapshot.cupo_utilizado_clp
+        if utilizado is None and total is not None and disponible is not None:
+            utilizado = max(total - disponible, Decimal("0"))
+        tarjetas.append(
+            {
+                "producto": snapshot.producto,
+                "banco": snapshot.producto.banco,
+                "cupo_total_clp": total,
+                "cupo_utilizado_clp": utilizado,
+                "cupo_disponible_clp": disponible,
+                "cupo_avance_disponible_clp": snapshot.cupo_avance_disponible_clp,
+                "fecha": snapshot.fecha,
+            }
+        )
+
+    def suma(campo: str) -> Decimal:
+        return sum(
+            (tarjeta[campo] or Decimal("0") for tarjeta in tarjetas),
+            Decimal("0"),
+        )
+
+    return {
+        "tarjetas": tarjetas,
+        "total_clp": suma("cupo_total_clp"),
+        "utilizado_clp": suma("cupo_utilizado_clp"),
+        "disponible_clp": suma("cupo_disponible_clp"),
+        "fecha": max((tarjeta["fecha"] for tarjeta in tarjetas), default=None),
+    }
+
+
+def vencimientos_tdc(user, year: int, month: int) -> list[dict]:
+    """Vencimientos de tarjetas del mes, derivados de la fecha «Pagar hasta»."""
+    snapshots = (
+        SaldoSnapshot.objects.filter(
+            user=user,
+            producto__tipo="TDC",
+            fecha_vencimiento__year=year,
+            fecha_vencimiento__month=month,
+        )
+        .select_related("producto", "producto__banco")
+        .order_by("producto_id", "-fecha", "-id")
+    )
+    vencimientos = []
+    vistos: set[tuple[int, object]] = set()
+    for snapshot in snapshots:
+        fecha = snapshot.fecha_vencimiento
+        clave = (snapshot.producto_id, fecha)
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        vencimientos.append(
+            {
+                "fecha": fecha,
+                "dia_cobro": fecha.day,
+                "nombre": f"{snapshot.producto.banco.nombre} · {snapshot.producto.nombre}",
+                "banco": snapshot.producto.banco.nombre,
+                "producto": snapshot.producto.nombre,
+                "monto": snapshot.deuda_facturada_clp or Decimal("0"),
+                "monto_clp": snapshot.deuda_facturada_clp,
+                "monto_usd": snapshot.deuda_usd,
+                "tipo": "tarjeta",
+            }
+        )
+    return sorted(vencimientos, key=lambda item: (item["fecha"], item["nombre"]))

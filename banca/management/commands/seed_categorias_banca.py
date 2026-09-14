@@ -18,6 +18,9 @@ from banca.models import CategoriaTematica
 # (nombre, esencialidad, es_interes_o_costo_financiero)
 CATEGORIAS_DEFECTO = [
     ("Arriendo / Hipoteca", "FIJO", False),
+    ("Financiamiento / Hipoteca", "FIJO", False),
+    ("Financiamiento / Pago de TDC", "FIJO", False),
+    ("Pagos por cuenta de terceros", "FIJO", False),
     ("Servicios básicos", "FIJO", False),
     ("Telefonía / Internet", "FIJO", False),
     ("Seguros", "FIJO", False),
@@ -47,6 +50,8 @@ def sembrar(user) -> int:
             defaults={
                 "esencialidad_defecto": esencialidad,
                 "es_interes_o_costo_financiero": es_interes,
+                "aplica_a": "EGRESO",
+                "origen": "SISTEMA",
                 "orden": orden,
             },
         )

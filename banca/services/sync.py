@@ -26,7 +26,7 @@ os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
 
 from django.utils import timezone
 
-from bank_sync.registry import es_fuente_activos, get_connector
+from bank_sync.registry import es_fuente_activos, es_fuente_externa, get_connector
 from bank_sync.session import default_storage_path
 from banca.models import CredencialBanco, SyncLog
 from banca.services import (
@@ -54,6 +54,10 @@ def run_sync(
     """
     if es_fuente_activos(credencial.conector):
         return _run_sync_activos(credencial, modo)
+    if es_fuente_externa(credencial.conector):
+        from banca.services.fuentes_externas import run_external_sync
+
+        return run_external_sync(credencial, manual=True)
     return _run_sync_banco(credencial, modo, headless=headless, notificar=notificar)
 
 
@@ -171,7 +175,11 @@ def _run_sync_banco(
         log.nuevos = nuevos
         log.actualizados = actualizados
         log.clasificados_ia = clasificados
-        log.mensaje = "OK"
+        log.mensaje = (
+            f"OK · clasificación pendiente: {cls['error']}"
+            if cls.get("error")
+            else "OK"
+        )
     except Exception as e:
         logger.exception("Persistencia falló")
         log.exito = False

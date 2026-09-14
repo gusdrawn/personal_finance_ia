@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Banco, Producto, TipoCambio, ConfiguracionGeneral
+from .models import Banco, CredencialIntegracion, Producto, TipoCambio, ConfiguracionGeneral
 
 
 @admin.register(Banco)
@@ -13,14 +13,14 @@ class BancoAdmin(admin.ModelAdmin):
 
 @admin.register(Producto)
 class ProductoAdmin(admin.ModelAdmin):
-    list_display = ['nombre', 'banco', 'tipo', 'orden', 'activo']
-    list_filter = ['banco', 'tipo', 'activo']
-    search_fields = ['nombre', 'banco__nombre']
+    list_display = ['nombre', 'user', 'banco', 'tipo', 'ultimos4', 'origen', 'requiere_revision', 'orden', 'activo']
+    list_filter = ['banco', 'tipo', 'origen', 'requiere_revision', 'activo']
+    search_fields = ['nombre', 'banco__nombre', 'user__username', 'ultimos4']
     list_editable = ['orden', 'activo']
     readonly_fields = ['created_at', 'updated_at']
     fieldsets = (
-        ('Información', {'fields': ('banco', 'nombre', 'tipo', 'orden')}),
-        ('Estado', {'fields': ('activo',)}),
+        ('Información', {'fields': ('user', 'banco', 'nombre', 'tipo', 'ultimos4', 'origen', 'orden')}),
+        ('Estado', {'fields': ('activo', 'requiere_revision', 'reemplazado_por')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
 
@@ -51,3 +51,10 @@ class ConfiguracionGeneralAdmin(admin.ModelAdmin):
         }),
         ('Timestamps', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
+
+
+@admin.register(CredencialIntegracion)
+class CredencialIntegracionAdmin(admin.ModelAdmin):
+    list_display = ["provider", "key_prefix", "active", "updated_by", "updated_at"]
+    list_filter = ["provider", "active"]
+    readonly_fields = ["key_prefix", "updated_by", "updated_at"]

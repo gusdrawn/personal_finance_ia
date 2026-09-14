@@ -16,6 +16,39 @@ All API endpoints require authentication. Use the Django admin login credentials
 
 ## Endpoints
 
+### Centro de Investigación de Mercado
+
+Todas las rutas requieren sesión Django autenticada y no ejecutan órdenes reales.
+
+```text
+GET  /trading/api/search/?q=AAPL
+POST /trading/api/import/  symbol=AAPL
+GET  /trading/api/screener/
+GET  /trading/api/instruments/{id}/chart/?chart=price&range=1Y
+GET  /trading/api/instruments/{id}/chart/{chart_key}/?range=1Y
+POST /trading/api/instruments/{id}/watch/
+POST /trading/api/instruments/{id}/state/  action=watch|discard|restore
+POST /trading/api/ai/research/  prompt="empresas de energía con QuantPro mayor a 70"
+POST /trading/operations/sync_daily/
+POST /trading/operations/link_altcoins/
+```
+
+`/trading/api/search/` devuelve `local: true|false` por candidato y
+`live_enabled`. Los candidatos externos no se guardan automáticamente.
+`/trading/api/import/` valida el ticker, consulta Yahoo Finance sin requerir clave (o
+Twelve Data si está configurado), agrega SEC EDGAR para acciones de EE. UU. y responde
+`201` con `id`, `symbol` y `detail_url`.
+
+Las rutas `/trading/operations/*` corresponden a los botones de actualización.
+Requieren usuario staff, CSRF y método POST. `sync_daily` ejecuta la sincronización
+completa de precios, fundamentales y las fuentes opcionales configuradas. Nunca
+sustituye un fallo externo con datos demo. `link_altcoins` ejecuta la vinculación
+global y todas las acciones redirigen al dashboard con un mensaje de resultado.
+
+El endpoint de gráficas devuelve `instrument`, `range`, `as_of`, `currency`,
+`timezone`, `series`, `markers`, `warnings` y `source`. Cada serie tiene `id`,
+`label`, `type`, `unit` y puntos `{x, y}` (o OHLC `{x, o, h, l, c, v}`).
+
 ### Apple Pay (POC)
 
 #### Recepción de un pago desde Apple Shortcuts
@@ -42,11 +75,38 @@ o con `venv/bin/python manage.py generate_apple_pay_key <usuario>`. Desde la mis
 puede revisar el prefijo/último uso y revocar una key. El secreto completo se muestra una sola vez.
 `event_id` es obligatorio e idempotente por usuario: un reintento responde `200` y no
 duplica ni vuelve a notificar. La respuesta incluye el movimiento, categoría/fuente de
-clasificación (`REGLA`, `IA` o `PENDIENTE`) y el estado del aviso Telegram. Ver el flujo
+clasificación (`REGLA`, `IA` o `PENDIENTE`), estado `PROVISIONAL` y resultado del aviso
+Telegram personal. Cuando un PDF posterior confirma la compra, la misma fila pasa a
+`FACTURADO` sin repetir el aviso. Ver el flujo
 completo y el ejemplo de configuración del Atajo en
 [docs/APPLE_PAY_POC.md](docs/APPLE_PAY_POC.md).
 
 ### Gastos (Expenses & Income)
+
+La API vigente usa una sola taxonomía (`CategoriaTematica`) y separa caja de consumo:
+
+```text
+GET  /api/gastos/resumen/?desde=2026-08&hasta=2026-09&perspectiva=caja
+GET  /api/gastos/detalle/?perspectiva=consumo&categoria=12
+GET  /api/gastos/exportar.xlsx?<mismos filtros>
+GET|POST             /api/gastos/manuales/
+GET|PATCH|DELETE     /api/gastos/manuales/{id}/
+POST                 /api/gastos/manuales/carga_mensual/
+GET|POST             /api/gastos/categorias/
+GET|PATCH|DELETE     /api/gastos/categorias/{id}/
+POST                 /api/gastos/categorias/{id}/fusionar/
+POST                 /api/gastos/facturados/{id}/pago-real/
+GET|POST             /api/gastos/gastos-programados/
+```
+
+Filtros del resumen, detalle y exportación: `desde`, `hasta`, `perspectiva`,
+`direccion`, `categoria`, `banco`, `producto`, `fuente`, `esencialidad` y `estado`.
+Todos los montos JSON se entregan como strings decimales. Los endpoints históricos
+`registros`, `gastos-anuales` y `gastos-trimestrales` descritos en versiones anteriores
+fueron retirados junto con `RegistroMensual` y `CategoriaIngreso`.
+
+> El contenido antiguo que sigue a continuación se conserva temporalmente como referencia
+> de versiones previas y no describe rutas disponibles.
 
 #### 1. Categories (`/gastos/categorias/`)
 

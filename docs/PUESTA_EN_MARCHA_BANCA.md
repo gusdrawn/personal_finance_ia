@@ -33,9 +33,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | Variable | Para qué | ¿Obligatoria? |
 |----------|----------|---------------|
-| `BANCA_FERNET_KEY` | Cifra RUT/clave del banco **y la API key de IA** (Fernet) | Sí, para credenciales |
+| `BANCA_FERNET_KEY` | Cifra RUT/clave del banco, API key de IA y credenciales personales de Telegram (Fernet) | Sí, para credenciales |
 | `IA_API_KEY` / `OPENROUTER_API_KEY` | API key de IA (solo fallback; lo normal es guardarla cifrada en la UI) | Opcional |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Avisos de presupuesto y gastos | Opcional |
 | `CELERY_BROKER_URL` | Sync en background/programada | Opcional (sin broker, la sync corre inline) |
 | `BANK_SYNC_SESSION_DIR` | Dónde se guarda la sesión del navegador | Opcional (`~/.bank_sync/sessions`) |
 | `BANK_SYNC_DEBUG_DIR` | Dónde se vuelcan artefactos al fallar el login | Opcional (`~/.bank_sync/debug`) |
@@ -132,8 +131,10 @@ Tareas ya programadas (en el `beat_schedule` de `finanzas_project/celery.py`):
 
 - `configuracion.tasks.actualizar_tasas_diario` — **7:00 AM**: UF/USD del día (mindicador.cl).
 - `banca.tasks.sync_activos_diario` — **8:00 AM**: refresca cripto/inversiones vía API (sin navegador).
-- `core.tasks.recordatorios_pagos_diario` — **8:30 AM**: avisa por Telegram los pagos que
-  vencen en los próximos 3 días (desde `GastoProgramado` y `CategoriaIngreso.dia_cobro` del Calendario).
+- `core.tasks.recordatorios_pagos_diario` — **8:30 AM**: avisa por Telegram los pagos próximos
+  usando los días configurados por cada usuario.
+- `core.tasks.alertas_financieras_periodicas` — cada 15 minutos: envía a la hora local elegida
+  el resumen diario y detecta provisionales Apple Pay atrasados.
 
 Otras tareas disponibles (no programadas por defecto):
 
@@ -141,9 +142,9 @@ Otras tareas disponibles (no programadas por defecto):
   (Playwright). No se programan solas porque pueden gatillar validación de dispositivo;
   agrégalas al `beat_schedule` a conciencia si quieres.
 
-> **Para recibir los recordatorios/alertas por Telegram** define `TELEGRAM_BOT_TOKEN` y
-> `TELEGRAM_CHAT_ID` en `.env` (crea un bot con @BotFather y obtén tu chat id). Sin eso, las
-> tareas corren igual pero no envían mensaje.
+> **Para recibir recordatorios/alertas por Telegram**, crea un bot con @BotFather y guarda
+> su token y tu chat ID en **Configuración → Telegram y alertas**. Las credenciales se cifran
+> por usuario; ya no existe un chat global en `.env`.
 
 > macOS: usamos `--pool=solo` para evitar los crashes de fork de Objective-C (y no
 > necesitamos concurrencia para un uso personal).

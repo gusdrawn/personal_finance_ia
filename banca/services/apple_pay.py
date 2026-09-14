@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.db import transaction
@@ -172,18 +173,18 @@ def _payload_hash(payload: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _resolver_producto(product_id: int | None, card_last4: str):
+def _resolver_producto(user, product_id: int | None, card_last4: str):
     from configuracion.models import Banco, Producto
 
     if product_id:
-        producto = Producto.objects.filter(pk=product_id, activo=True).first()
+        producto = Producto.objects.filter(pk=product_id, user=user, activo=True).first()
         if not producto:
             raise ApplePayPayloadError("El producto indicado no existe o está inactivo.", field="product_id")
         return producto
 
     if card_last4:
         producto = (
-            Producto.objects.filter(activo=True, nombre__icontains=card_last4)
+            Producto.objects.filter(user=user, activo=True, ultimos4=card_last4)
             .order_by("id")
             .first()
         )
@@ -196,9 +197,10 @@ def _resolver_producto(product_id: int | None, card_last4: str):
     )
     nombre = f"Apple Pay · *{card_last4}" if card_last4 else "Apple Pay · POC"
     producto, _ = Producto.objects.get_or_create(
+        user=user,
         banco=banco,
         nombre=nombre,
-        defaults={"tipo": "OTRO", "activo": True},
+        defaults={"tipo": "OTRO", "activo": True, "ultimos4": card_last4, "origen": "CONECTOR"},
     )
     return producto
 
@@ -218,6 +220,8 @@ def _movimiento_response(mov: MovimientoBancario, *, event_id: str) -> dict:
         "currency": mov.moneda,
         "amount_clp": str(mov.monto_clp),
         "product_id": mov.producto_id,
+        "status": mov.estado,
+        "origin": mov.origen,
         "category": categoria,
         "classification_source": mov.fuente_clasificacion if categoria else "PENDIENTE",
         "classification_confidence": str(mov.confianza_ia) if mov.confianza_ia is not None else None,
@@ -258,7 +262,11 @@ def registrar_pago(user, payload: dict, *, api_key: ApplePayApiKey | None = None
                 "notification": {"telegram_sent": evento.movimiento.notificado_telegram},
             }
 
-    producto = _resolver_producto(datos["product_id"], datos["card_last4"])
+    producto = _resolver_producto(user, datos["product_id"], datos["card_last4"])
+    try:
+        dias_provisional = user.config_notificaciones.dias_provisional_atrasado
+    except Exception:
+        dias_provisional = 45
     movimiento, created = MovimientoBancario.objects.get_or_create(
         user=user,
         hash_externo=_movement_hash(user, event_id),
@@ -269,7 +277,9 @@ def registrar_pago(user, payload: dict, *, api_key: ApplePayApiKey | None = None
             "monto": datos["monto"],
             "moneda": datos["moneda"],
             "monto_clp": datos["monto_clp"],
-            "estado": "NO_FACTURADO",
+            "estado": "PROVISIONAL",
+            "origen": "APPLE_PAY",
+            "provisional_hasta": datos["fecha"] + timedelta(days=dias_provisional),
             "naturaleza": "OPERACIONAL",
         },
     )

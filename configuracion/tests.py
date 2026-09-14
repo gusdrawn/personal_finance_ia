@@ -4,9 +4,12 @@ from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 
-from configuracion.models import TipoCambio
+from banca.models import MovimientoBancario
+from configuracion.models import Banco, Producto, TipoCambio
+from configuracion.services.productos import vincular_producto
 
 
 class _FakeResponse:
@@ -81,3 +84,38 @@ class TipoCambioModelTest(TestCase):
         )
         # Meta.ordering = ['-fecha'] -> el primero es el más reciente
         self.assertEqual(TipoCambio.objects.first(), reciente)
+
+
+class VinculacionProductoTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("producto_user")
+        self.other = User.objects.create_user("producto_other")
+        self.bank = Banco.objects.create(nombre="Banco Vinculación")
+        self.old = Producto.objects.create(
+            user=self.user, banco=self.bank, nombre="Visa antigua", tipo="TDC",
+            activo=False, requiere_revision=True,
+        )
+        self.canonical = Producto.objects.create(
+            user=self.user, banco=self.bank, nombre="Visa importada", tipo="TDC",
+            ultimos4="1234", origen="IMPORTACION", requiere_revision=True,
+        )
+
+    def test_vincula_y_traslada_movimientos(self):
+        movement = MovimientoBancario.objects.create(
+            user=self.user, producto=self.old, fecha=date(2026, 8, 1), descripcion="Compra",
+            monto=Decimal("100"), monto_clp=Decimal("100"), hash_externo="producto-mov",
+        )
+        vincular_producto(self.user, self.old, self.canonical)
+        movement.refresh_from_db()
+        self.old.refresh_from_db()
+        self.assertEqual(movement.producto, self.canonical)
+        self.assertEqual(self.old.reemplazado_por, self.canonical)
+        self.assertFalse(self.old.activo)
+        self.assertFalse(self.canonical.requiere_revision)
+
+    def test_no_permita_cruzar_usuarios(self):
+        foreign = Producto.objects.create(
+            user=self.other, banco=self.bank, nombre="Ajena", tipo="TDC"
+        )
+        with self.assertRaises(ValueError):
+            vincular_producto(self.user, self.old, foreign)

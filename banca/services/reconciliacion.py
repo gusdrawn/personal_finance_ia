@@ -14,20 +14,36 @@ Reglas:
 from __future__ import annotations
 
 import re
+import unicodedata
 from decimal import Decimal
+from itertools import combinations
 
 from django.db.models import Sum
 
-from banca.models import ContraparteConocida, MovimientoBancario
+from banca.models import (
+    ConciliacionEventoExterno,
+    ContraparteConocida,
+    EventoFinancieroExterno,
+    MapeoComercio,
+    MovimientoBancario,
+)
 
-_RE_PAGO = re.compile(r"\bPAGO\b", re.I)
+_RE_PAGO = re.compile(r"\bPAGO\b|\bMONTO\s+CANCELADO\b", re.I)
 _RE_NEAT = re.compile(r"NEAT", re.I)
-_RE_TRANSFER = re.compile(r"TRANSFER|TEF|ABONO|DEP[OÓ]SITO", re.I)
+_RE_TRANSFER = re.compile(r"TRANSF|TRASPASO|TEF|ABONO|DEP[OÓ]SITO", re.I)
+_RE_PRODUCTO_PROPIO = re.compile(
+    r"PAGO\s+(?:TARJETA|PRESTAMO|PR[ÉE]STAMO|CUOTA\s+CR[ÉE]DITO)"
+    r"|TRANSF.*PAGO\s+TARJETA|TRASPASO.*(?:T\.\s*CR[ÉE]DITO|CTA\.?\s*CTE|L[IÍ]NEA\s+CR[ÉE]DITO)"
+    r"|(?:ABONO\s+DESDE|CARGO\s+CTACTE\s+POR\s+TRASPASO).*L[IÍ]NEA\s+DE\s+CR[ÉE]DITO",
+    re.I,
+)
 
 
 def _suma_cargos_vinculados(prestamo, *, exclude_id=None) -> Decimal:
     """Suma de cargos (montos positivos) ya vinculados a un préstamo."""
-    qs = MovimientoBancario.objects.filter(prestamo=prestamo, monto_clp__gt=0)
+    qs = MovimientoBancario.objects.filter(prestamo=prestamo, monto_clp__gt=0).exclude(
+        estado="DESCARTADO_CIERRE"
+    )
     if exclude_id is not None:
         qs = qs.exclude(id=exclude_id)
     return qs.aggregate(s=Sum("monto_clp"))["s"] or Decimal("0")
@@ -69,25 +85,179 @@ def _prestamos_activos(user):
         return []
 
 
+_TOKENS_NOMBRE_IGNORADOS = {
+    "de", "del", "la", "las", "los", "y", "a", "para", "transf", "transferencia",
+}
+
+
+def _tokens_persona(valor: str) -> set[str]:
+    normalizado = unicodedata.normalize("NFKD", valor or "")
+    normalizado = "".join(c for c in normalizado if not unicodedata.combining(c)).lower()
+    return {
+        token
+        for token in re.findall(r"[a-z]{3,}", normalizado)
+        if token not in _TOKENS_NOMBRE_IGNORADOS
+    }
+
+
+def _nombre_aparece(nombre: str, descripcion: str) -> bool:
+    nombre_tokens = _tokens_persona(nombre)
+    descripcion_tokens = _tokens_persona(descripcion)
+    return len(nombre_tokens) >= 2 and nombre_tokens.issubset(descripcion_tokens)
+
+
+def _nombre_bancario_compatible(nombre: str, descripcion: str) -> bool:
+    """Tolera nombres bancarios truncados, pero nunca sin una segunda señal de monto."""
+    nombre_tokens = _tokens_persona(nombre)
+    descripcion_tokens = _tokens_persona(descripcion)
+    if len(nombre_tokens & descripcion_tokens) >= 2:
+        return True
+    primer_nombre = next(iter(re.findall(r"[A-Za-zÁÉÍÓÚáéíóú]{3,}", nombre or "")), "")
+    return bool(primer_nombre and normalizar_nombre(primer_nombre) in descripcion_tokens)
+
+
+def normalizar_nombre(valor: str) -> str:
+    normalizado = unicodedata.normalize("NFKD", valor or "")
+    return "".join(c for c in normalizado if not unicodedata.combining(c)).lower()
+
+
+def _firmas_cuentas_propias(user) -> list[set[str]]:
+    """Infiere el titular usando traspasos espejados entre sus cuentas corrientes."""
+    movimientos = list(
+        MovimientoBancario.objects.filter(
+            user=user,
+            producto__tipo="CUENTA",
+        )
+        .exclude(estado="DESCARTADO_CIERRE")
+        .only("id", "producto_id", "fecha", "monto_clp", "descripcion")
+    )
+    firmas = []
+    for indice, primero in enumerate(movimientos):
+        if not _RE_TRANSFER.search(primero.descripcion or ""):
+            continue
+        for segundo in movimientos[indice + 1 :]:
+            if (
+                primero.producto_id == segundo.producto_id
+                or primero.fecha != segundo.fecha
+                or primero.monto_clp != -segundo.monto_clp
+                or not _RE_TRANSFER.search(segundo.descripcion or "")
+            ):
+                continue
+            comunes = _tokens_persona(primero.descripcion) & _tokens_persona(segundo.descripcion)
+            if len(comunes) >= 2 and comunes not in firmas:
+                firmas.append(comunes)
+    return firmas
+
+
+def _es_movimiento_de_producto_propio(movimiento, firmas_propias) -> bool:
+    if movimiento.producto.tipo != "CUENTA":
+        return False
+    descripcion = movimiento.descripcion or ""
+    if _RE_PRODUCTO_PROPIO.search(descripcion):
+        return True
+    tokens = _tokens_persona(descripcion)
+    return any(len(tokens & firma) >= 2 for firma in firmas_propias)
+
+
+def _subset_neat_para_abono(user, movimiento, tolerancia):
+    """Encuentra pagos Neat previos del mismo destinatario que explican un abono."""
+    desde = movimiento.fecha
+    dias = 0
+    while dias < 5:
+        desde = desde.fromordinal(desde.toordinal() - 1)
+        if desde.weekday() < 5:
+            dias += 1
+    eventos = list(
+        EventoFinancieroExterno.objects.filter(
+            user=user,
+            fuente="neat",
+            fecha_evento__range=(desde, movimiento.fecha),
+        )
+        .exclude(estado__in=("FALLIDO", "REVERSADO"))
+        .exclude(conciliaciones__rol="DEPOSITO")
+        .select_related("pago_neat")
+        .order_by("fecha_evento", "id")
+    )
+    por_destinatario = {}
+    for evento in eventos:
+        pago = getattr(evento, "pago_neat", None)
+        destinatario = (pago.destinatario if pago else "").strip()
+        if destinatario and _nombre_bancario_compatible(destinatario, movimiento.descripcion):
+            por_destinatario.setdefault(destinatario.casefold(), []).append(evento)
+
+    objetivo = abs(movimiento.monto_clp)
+    mejor = None
+    for grupo in por_destinatario.values():
+        for cantidad in range(1, min(len(grupo), 6) + 1):
+            for subconjunto in combinations(grupo, cantidad):
+                total = sum((evento.monto_neto for evento in subconjunto), Decimal("0"))
+                diferencia = abs(total - objetivo)
+                if objetivo and diferencia <= objetivo * tolerancia:
+                    clave = (diferencia, cantidad, tuple(evento.pk for evento in subconjunto))
+                    if mejor is None or clave < mejor[0]:
+                        mejor = (clave, subconjunto)
+    return list(mejor[1]) if mejor else []
+
+
+def _prestamo_por_destinatario(prestamos, eventos):
+    candidatos = []
+    for evento in eventos:
+        tokens_destinatario = _tokens_persona(evento.pago_neat.destinatario)
+        for prestamo in prestamos:
+            tokens_prestamo = _tokens_persona(prestamo.nombre) - {"bicicleta", "prestamo"}
+            if tokens_destinatario & tokens_prestamo and prestamo not in candidatos:
+                candidatos.append(prestamo)
+    return candidatos[0] if len(candidatos) == 1 else None
+
+
 def reconciliar(user, ids: list[int] | None = None) -> dict:
     """Aplica las reglas de naturaleza/bicicleta. Devuelve conteos."""
-    qs = MovimientoBancario.objects.filter(user=user)
+    qs = MovimientoBancario.objects.filter(user=user).exclude(estado="DESCARTADO_CIERRE")
     if ids is not None:
         qs = qs.filter(id__in=ids)
     # no tocar la naturaleza/préstamo que el usuario fijó a mano
     qs = qs.filter(naturaleza_es_manual=False)
 
     contrapartes = list(ContraparteConocida.objects.filter(user=user, activo=True))
+    mapeos_ingreso = list(
+        MapeoComercio.objects.filter(
+            user=user,
+            categoria__aplica_a="INGRESO",
+            categoria__activa=True,
+        ).select_related("categoria")
+    )
     prestamos = _prestamos_activos(user)
     tol = _tolerancia(user)
+    firmas_propias = _firmas_cuentas_propias(user)
 
     transferencias, por_revisar = 0, 0
     for mov in qs:
         desc = mov.descripcion or ""
         nat, prestamo, revisar = "OPERACIONAL", None, False
+        desc_normalizada = normalizar_nombre(desc)
+        ingreso_reconocido = not mov.es_cargo and any(
+            mapeo.patron and mapeo.patron in desc_normalizada
+            for mapeo in mapeos_ingreso
+        )
+
+        # 0. Un vínculo de préstamo ya resuelto no se deshace en ejecuciones posteriores.
+        if mov.prestamo_id:
+            nat, prestamo = "TRANSFERENCIA", mov.prestamo
+
+        # Un abono ya explicado por Neat conserva la decisión y no consume otro
+        # subconjunto de eventos al recalcular.
+        elif mov.conciliaciones_externas.filter(
+            evento__fuente="neat", rol="DEPOSITO"
+        ).exists():
+            nat = "TRANSFERENCIA"
+
+        # Los pagos de productos financieros y los traspasos cuyo titular fue
+        # confirmado por un movimiento espejo no son consumo ni ingreso.
+        elif _es_movimiento_de_producto_propio(mov, firmas_propias):
+            nat = "TRANSFERENCIA"
 
         # 1. Pago de TDC
-        if _RE_PAGO.search(desc) and not mov.es_cargo:
+        elif _RE_PAGO.search(desc) and not mov.es_cargo:
             nat = "TRANSFERENCIA"
 
         # 2. Contraparte conocida
@@ -96,6 +266,16 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
                 if (cp.alias and cp.alias.lower() in desc.lower()) or (cp.rut and cp.rut in desc):
                     nat, prestamo = "TRANSFERENCIA", cp.prestamo
                     break
+
+        # 2b. Abono que devuelve una bicicleta originada en NeatPagos. El nombre
+        # puede venir truncado o con apellidos invertidos, por eso se comparan
+        # tokens y además se exige que el monto calce con un subconjunto cercano.
+        eventos_devolucion = []
+        if nat == "OPERACIONAL" and not mov.es_cargo:
+            eventos_devolucion = _subset_neat_para_abono(user, mov, tol)
+            if eventos_devolucion:
+                nat = "TRANSFERENCIA"
+                prestamo = _prestamo_por_destinatario(prestamos, eventos_devolucion)
 
         # 3. Cargo NeatPagos hacia un préstamo (bicicleta). Como NEAT limita a ~3MM, un
         #    préstamo grande se parte en varios cargos: ACUMULAMOS hacia el monto total.
@@ -110,7 +290,12 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
                 revisar = True
 
         # 4. Abono ambiguo -> por revisar (jamás ingreso silencioso)
-        if nat == "OPERACIONAL" and not mov.es_cargo and _RE_TRANSFER.search(desc):
+        if (
+            nat == "OPERACIONAL"
+            and not mov.es_cargo
+            and not ingreso_reconocido
+            and _RE_TRANSFER.search(desc)
+        ):
             revisar = True
 
         cambios = []
@@ -129,5 +314,17 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
                 transferencias += 1
             if revisar:
                 por_revisar += 1
+        if eventos_devolucion:
+            for evento in eventos_devolucion:
+                ConciliacionEventoExterno.objects.get_or_create(
+                    evento=evento,
+                    movimiento=mov,
+                    rol="DEPOSITO",
+                    defaults={
+                        "monto_asignado": evento.monto_neto,
+                        "confianza": Decimal("0.900"),
+                        "metodo": "MONTO_FECHA",
+                    },
+                )
 
     return {"transferencias": transferencias, "por_revisar": por_revisar}

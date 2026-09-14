@@ -1,366 +1,70 @@
 {% extends 'base.html' %}
-
 {% block title %}Gastos Mensuales - FinanzasPersonalesIA{% endblock %}
-{% block page_title %}Control de Gastos{% endblock %}
-
+{% block page_title %}Gastos Mensuales{% endblock %}
 {% block content %}
-{% load humanize %}
-<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-    <div class="flex flex-wrap gap-3">
-        <div class="relative">
-            <select id="year-select" class="appearance-none bg-slate-800 border border-slate-700 text-white text-sm rounded-xl focus:ring-emerald-500 focus:border-emerald-500 block w-full p-2.5 pr-8 transition-all">
-                {% for year in years %}
-                    <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>{{ year }}</option>
-                {% endfor %}
-            </select>
-            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
-                <i class="fas fa-chevron-down text-xs"></i>
-            </div>
-        </div>
-        
-        <div class="relative">
-            <select id="month-select" class="appearance-none bg-slate-800 border border-slate-700 text-white text-sm rounded-xl focus:ring-emerald-500 focus:border-emerald-500 block w-full p-2.5 pr-8 transition-all">
-                <option value="1" {% if current_month == 1 %}selected{% endif %}>Enero</option>
-                <option value="2" {% if current_month == 2 %}selected{% endif %}>Febrero</option>
-                <option value="3" {% if current_month == 3 %}selected{% endif %}>Marzo</option>
-                <option value="4" {% if current_month == 4 %}selected{% endif %}>Abril</option>
-                <option value="5" {% if current_month == 5 %}selected{% endif %}>Mayo</option>
-                <option value="6" {% if current_month == 6 %}selected{% endif %}>Junio</option>
-                <option value="7" {% if current_month == 7 %}selected{% endif %}>Julio</option>
-                <option value="8" {% if current_month == 8 %}selected{% endif %}>Agosto</option>
-                <option value="9" {% if current_month == 9 %}selected{% endif %}>Septiembre</option>
-                <option value="10" {% if current_month == 10 %}selected{% endif %}>Octubre</option>
-                <option value="11" {% if current_month == 11 %}selected{% endif %}>Noviembre</option>
-                <option value="12" {% if current_month == 12 %}selected{% endif %}>Diciembre</option>
-            </select>
-            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
-                <i class="fas fa-chevron-down text-xs"></i>
-            </div>
-        </div>
-        
-        <button onclick="loadMonthData()" class="btn-premium flex items-center">
-            <i class="fas fa-filter mr-2 text-xs"></i>Aplicar
-        </button>
-    </div>
-    
-    <div class="flex gap-2">
-        <button onclick="document.getElementById('modal-cat').classList.remove('hidden')" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-xl text-sm font-semibold transition-all flex items-center">
-            <i class="fas fa-plus mr-2 text-xs"></i>Categoría
-        </button>
-        <button onclick="document.getElementById('modal-bulk').classList.remove('hidden')" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold transition-all flex items-center shadow-lg shadow-emerald-600/20">
-            <i class="fas fa-layer-group mr-2 text-xs"></i>Carga Masiva
-        </button>
-        <button onclick="exportToExcel()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center">
-            <i class="fas fa-file-export mr-2 text-xs text-sky-400"></i>Exportar Excel
-        </button>
-    </div>
+<div class="space-y-6">
+  <div class="glass rounded-2xl p-5"><div class="flex flex-wrap items-end gap-3">
+    <label class="text-xs text-slate-400">Desde<input id="desde" type="month" value="{{ current_year }}-{{ current_month|stringformat:'02d' }}" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"></label>
+    <label class="text-xs text-slate-400">Hasta<input id="hasta" type="month" value="{{ current_year }}-{{ current_month|stringformat:'02d' }}" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"></label>
+    <label class="text-xs text-slate-400">Perspectiva<select id="perspectiva" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="consumo" {% if initial_perspective == 'consumo' %}selected{% endif %}>Gastos por movimiento</option><option value="caja" {% if initial_perspective == 'caja' %}selected{% endif %}>Pagos / flujo de caja</option></select></label>
+    <label class="text-xs text-slate-400">Dirección<select id="direccion" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="">Todas</option><option>INGRESO</option><option>EGRESO</option></select></label>
+    <label class="text-xs text-slate-400">Categoría<select id="categoria" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="">Todas</option>{% for c in categorias %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}</select></label>
+    <label class="text-xs text-slate-400">Banco<select id="banco" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="">Todos</option>{% for b in bancos %}<option value="{{ b.id }}">{{ b.nombre }}</option>{% endfor %}</select></label>
+    <label class="text-xs text-slate-400">Producto<select id="producto" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="">Todos</option>{% for p in productos %}<option value="{{ p.id }}">{{ p.banco.nombre }} · {{ p.nombre }}</option>{% endfor %}</select></label>
+    <label class="text-xs text-slate-400">Fuente<select id="fuente" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="">Todas</option><option>CUENTA</option><option>TDC</option><option>HOUM</option><option>NEAT</option><option>MANUAL</option></select></label>
+    <label class="text-xs text-slate-400">Esencialidad<select id="esencialidad" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="">Todas</option><option value="FIJO">Fijo</option><option value="OCIO">Ocio</option></select></label>
+    <label class="text-xs text-slate-400">Conciliación<select id="estado" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"><option value="">Todas</option><option value="CONFIRMADO">Confirmado</option><option value="PENDIENTE">Pendiente</option><option value="DIFERENCIA">Diferencia</option></select></label>
+    <button onclick="cargar()" class="btn-premium px-4 py-2">Aplicar</button><button onclick="abrirManual()" class="px-4 py-2 rounded-lg bg-emerald-600 text-white">Movimiento manual</button><button onclick="document.getElementById('modal-bulk').classList.remove('hidden')" class="px-4 py-2 rounded-lg bg-slate-700 text-white">Carga mensual</button><button onclick="exportar()" class="px-4 py-2 rounded-lg bg-sky-700 text-white">Exportar</button>
+  </div>
+  {% if periodos_movimientos %}<div class="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500"><span>Meses con movimientos:</span>{% for p in periodos_movimientos %}<button type="button" onclick="verPeriodoMovimientos({{ p.year }},{{ p.month }})" class="px-2 py-1 rounded bg-slate-800 hover:bg-sky-500/20 hover:text-sky-300">{{ p.month|stringformat:'02d' }}/{{ p.year }}</button>{% endfor %}</div>{% endif %}
+  </div>
+  <div class="grid md:grid-cols-4 gap-4"><div class="glass rounded-xl p-5"><p id="ingresos-label" class="text-xs text-slate-400 uppercase">Ingresos</p><p id="ingresos" class="text-2xl font-bold text-emerald-400">$0</p></div><div class="glass rounded-xl p-5"><p id="egresos-label" class="text-xs text-slate-400 uppercase">Egresos</p><p id="egresos" class="text-2xl font-bold text-rose-400">$0</p></div><div class="glass rounded-xl p-5"><p class="text-xs text-slate-400 uppercase">Balance</p><p id="balance" class="text-2xl font-bold text-sky-400">$0</p></div><div class="glass rounded-xl p-5"><p class="text-xs text-slate-400 uppercase">Movimientos</p><p id="cantidad" class="text-2xl font-bold text-white">0</p></div></div>
+  <div id="grafico-panel" class="glass rounded-2xl p-5"><div class="mb-4"><h3 class="font-bold">Distribución de gastos por categoría</h3><p class="text-sm text-slate-400">Clasificación de los movimientos del período, sin duplicar el monto facturado.</p></div><div class="grid lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.7fr)] gap-6 items-center"><div class="h-72"><canvas id="categorias-chart" aria-label="Distribución de gastos por categoría"></canvas></div><div id="categorias-leyenda" class="space-y-2"></div></div></div>
+  <div id="estados-panel" class="hidden glass rounded-2xl p-5"><div class="flex items-start justify-between gap-4 mb-3"><div><h3 id="estados-titulo" class="font-bold">Estados de cuenta relacionados</h3><p id="estados-ayuda" class="text-xs text-slate-500 mt-1"></p></div><span id="estados-total" class="text-sm text-slate-400"></span></div><div id="estados-lista" class="grid md:grid-cols-2 xl:grid-cols-3 gap-3"></div></div>
+  <div class="glass rounded-2xl overflow-hidden"><div class="p-5 border-b border-slate-800"><h3 class="font-bold">Categoría → fuente/producto → movimiento</h3></div><div id="categorias-lista" class="divide-y divide-slate-800"><p class="p-8 text-slate-400">Cargando…</p></div></div>
 </div>
-
-<!-- Monthly Summary -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-    <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500">
-        <div class="flex items-center justify-between mb-2">
-            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Ingresos Totales</span>
-            <i class="fas fa-arrow-trend-up text-emerald-500 text-sm"></i>
-        </div>
-        <p class="text-2xl font-bold text-white">
-            $<span id="total-ingresos">0</span>
-        </p>
-    </div>
-    <div class="glass p-6 rounded-2xl border-t-4 border-rose-500">
-        <div class="flex items-center justify-between mb-2">
-            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Gastos del Mes</span>
-            <i class="fas fa-arrow-trend-down text-rose-500 text-sm"></i>
-        </div>
-        <p class="text-2xl font-bold text-white">
-            $<span id="total-gastos">0</span>
-        </p>
-    </div>
-    <div class="glass p-6 rounded-2xl border-t-4 border-sky-500">
-        <div class="flex items-center justify-between mb-2">
-            <span class="text-slate-400 text-xs font-bold uppercase tracking-widest">Balance Neto</span>
-            <i class="fas fa-scale-balanced text-sky-500 text-sm"></i>
-        </div>
-        <p class="text-2xl font-bold text-white">
-            $<span id="total-neto">0</span>
-        </p>
-    </div>
-</div>
-
-<!-- Gastos Table -->
-<div class="glass rounded-2xl overflow-hidden mb-8">
-    <div class="p-6 border-b border-slate-800/50">
-        <h3 class="font-bold text-white flex items-center">
-            <i class="fas fa-list-ul mr-3 text-emerald-400"></i>
-            Desglose Transaccional
-        </h3>
-    </div>
-    
-    <div class="overflow-x-auto p-4">
-        <table class="table-modern">
-            <thead>
-                <tr>
-                    <th class="text-left">Categoría</th>
-                    <th class="text-left">Subcategoría</th>
-                    <th class="text-right">Monto (CLP)</th>
-                    <th class="text-center">Moneda</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="gastos-tbody">
-                <tr class="text-center">
-                    <td colspan="5" class="py-12">
-                        <div class="flex flex-col items-center text-slate-500">
-                            <i class="fas fa-circle-notch fa-spin text-2xl mb-4"></i>
-                            <p>Sincronizando datos con la red...</p>
-                        </div>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-    </div>
-</div>
-
-<!-- Modals -->
-<div id="modal-cat" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
-    <div class="glass p-6 rounded-2xl border border-slate-700/50 w-full max-w-md mx-auto">
-        <h3 class="text-xl font-bold text-white mb-6 flex items-center">
-            <i class="fas fa-tag text-emerald-400 mr-3"></i>Nueva Categoría
-        </h3>
-        <form method="POST" action="{% url 'crear_categoria' %}" class="space-y-4">
-            {% csrf_token %}
-            <input type="hidden" name="next" value="{{ request.path }}">
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Nombre</label>
-                <input type="text" name="nombre" required placeholder="Ej: Supermercado" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none">
-            </div>
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Tipo</label>
-                <select name="tipo" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2">
-                    <option value="GASTO">Gasto Variable</option>
-                    <option value="GASTO_FIJO">Gasto Fijo</option>
-                    <option value="INGRESO">Ingreso</option>
-                </select>
-            </div>
-            <div class="pt-4 flex space-x-3">
-                <button type="button" onclick="document.getElementById('modal-cat').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
-                    Cancelar
-                </button>
-                <button type="submit" class="flex-1 py-3 px-4 rounded-xl bg-sky-500 text-white font-bold shadow-lg shadow-sky-500/20">
-                    Crear
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<div id="modal-bulk" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
-    {% include 'bulk_gastos_modal.html' %}
-</div>
-
-<div id="modal-chart" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
-    <div class="glass p-8 rounded-2xl border border-slate-700/50 w-full max-w-3xl">
-        <div class="flex items-center justify-between mb-8">
-            <h3 class="text-xl font-bold text-white flex items-center">
-                <i class="fas fa-chart-line text-emerald-400 mr-3"></i>
-                Evolución: <span id="chart-cat-name" class="ml-2 text-slate-400">Categoría</span>
-            </h3>
-            <button onclick="document.getElementById('modal-chart').classList.add('hidden')" class="text-slate-500 hover:text-white">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        <div class="h-64">
-            <canvas id="categoryHistoryChart"></canvas>
-        </div>
-    </div>
-</div>
-
+<div id="modal-manual" class="fixed inset-0 z-50 hidden bg-slate-950/80 p-4 flex items-center justify-center"><form id="form-manual" class="glass rounded-2xl p-6 w-full max-w-lg space-y-4"><div class="flex justify-between"><h3 class="font-bold text-lg">Nuevo movimiento manual</h3><button type="button" onclick="cerrarManual()">×</button></div><div class="grid grid-cols-2 gap-3">
+  <label class="text-xs text-slate-400">Fecha<input name="fecha" type="date" required class="block w-full mt-1 bg-slate-900 rounded-lg"></label><label class="text-xs text-slate-400">Dirección<select name="direccion" class="block w-full mt-1 bg-slate-900 rounded-lg"><option>EGRESO</option><option>INGRESO</option></select></label><label class="text-xs text-slate-400">Monto<input name="monto" type="number" min="0.01" step="0.01" required class="block w-full mt-1 bg-slate-900 rounded-lg"></label><label class="text-xs text-slate-400">Moneda<select name="moneda" class="block w-full mt-1 bg-slate-900 rounded-lg"><option>CLP</option><option>USD</option><option>UF</option></select></label><label class="text-xs text-slate-400">Categoría<select name="categoria" required class="block w-full mt-1 bg-slate-900 rounded-lg">{% for c in categorias %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}</select></label><label class="text-xs text-slate-400">Naturaleza<select name="naturaleza" class="block w-full mt-1 bg-slate-900 rounded-lg"><option value="OPERACIONAL">Operacional</option><option value="ACTIVO_RECUPERABLE">Activo recuperable</option><option value="INVERSION">Inversión</option><option value="TRANSFERENCIA_INTERNA">Transferencia interna</option></select></label></div><label class="text-xs text-slate-400">Descripción<input name="descripcion" required class="block w-full mt-1 bg-slate-900 rounded-lg"></label><p id="manual-error" class="text-sm text-rose-400"></p><button class="w-full py-2 rounded-lg bg-emerald-600 text-white">Guardar</button></form></div>
+<div id="modal-bulk" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80">{% include 'bulk_gastos_modal.html' %}</div>
 <script>
-let historyChart = null;
-
-function formatCLP(value) {
-    return new Intl.NumberFormat('es-CL', {
-        style: 'currency',
-        currency: 'CLP',
-        minimumFractionDigits: 0
-    }).format(value);
+const apiBase=`${window.APP_BASE_PATH}/api/gastos`,clp=v=>new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(Number(v||0)),filterIds=['desde','hasta','perspectiva','direccion','categoria','banco','producto','fuente','esencialidad','estado'];
+let categoriasChart=null;
+function params(){const p=new URLSearchParams;filterIds.forEach(id=>{const v=document.getElementById(id).value;if(v)p.set(id,v)});return p} function esc(v){const d=document.createElement('div');d.textContent=v??'';return d.innerHTML}
+function renderGraficoCategorias(categorias){
+  const filas=categorias.filter(g=>g.direccion==='EGRESO'&&Number(g.total_clp)>0).sort((a,b)=>Number(b.total_clp)-Number(a.total_clp));
+  const principales=filas.slice(0,8),resto=filas.slice(8).reduce((s,g)=>s+Number(g.total_clp),0);
+  const etiquetas=principales.map(g=>g.categoria),valores=principales.map(g=>Number(g.total_clp));if(resto>0){etiquetas.push('Otros');valores.push(resto)}
+  const colores=['#38bdf8','#34d399','#f472b6','#fbbf24','#a78bfa','#fb7185','#2dd4bf','#60a5fa','#94a3b8'];
+  if(categoriasChart)categoriasChart.destroy();
+  const panel=document.getElementById('grafico-panel'),leyenda=document.getElementById('categorias-leyenda');
+  if(!valores.length){panel.classList.add('hidden');leyenda.innerHTML='';return}panel.classList.remove('hidden');
+  categoriasChart=new Chart(document.getElementById('categorias-chart'),{type:'doughnut',data:{labels:etiquetas,datasets:[{data:valores,backgroundColor:colores.slice(0,valores.length),borderColor:'#0f172a',borderWidth:3,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.label}: ${clp(c.raw)}`}}}}});
+  const total=valores.reduce((s,v)=>s+v,0);leyenda.innerHTML=etiquetas.map((label,i)=>`<div class="flex items-center justify-between gap-3 text-sm"><span class="flex items-center gap-2 min-w-0"><i class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${colores[i]}"></i><span class="truncate">${esc(label)}</span></span><span class="text-right"><b>${clp(valores[i])}</b><small class="block text-slate-500">${total?((valores[i]/total)*100).toFixed(1):0}%</small></span></div>`).join('');
 }
-
-function loadMonthData() {
-    const year = document.getElementById('year-select').value;
-    const month = document.getElementById('month-select').value;
-    
-    fetch(`${window.APP_BASE_PATH}/api/gastos/registros/by_month/?year=${year}&mes=${month}`)
-        .then(response => response.json())
-        .then(data => {
-            const tbody = document.getElementById('gastos-tbody');
-            tbody.innerHTML = '';
-            
-            let totalCLP = 0;
-            
-            if (!data.registros || Object.keys(data.registros).length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="py-12 text-slate-500">No hay registros para este período</td></tr>';
-            } else {
-                const typeOrder = {'Ingreso': 0, 'Gasto Fijo': 1, 'Gasto': 2, 'Tarjeta de Crédito': 3, 'Suscripción': 4, 'Cobro de Banco': 5, 'Seguro': 6};
-                const sortedEntries = Object.entries(data.registros).sort((a,b) => (typeOrder[a[0]]||99) - (typeOrder[b[0]]||99));
-                
-                sortedEntries.forEach(([tipo, items], groupIndex) => {
-                    if (groupIndex > 0) {
-                        const spacer = document.createElement('tr');
-                        spacer.innerHTML = '<td colspan="5" class="h-4 border-b-0 border-transparent"></td>';
-                        tbody.appendChild(spacer);
-                    }
-                    
-                    items.forEach((item, idx) => {
-                        const monto = parseFloat(item.monto);
-                        // No sumar si 'contabilizar' es False
-                        if (item.moneda === 'CLP' && item.contabilizar !== false) {
-                            totalCLP += monto;
-                        }
-                        
-                        const row = document.createElement('tr');
-                        row.className = 'group';
-                        row.innerHTML = `
-                            <td><span class="font-bold text-white">${tipo}</span></td>
-                            <td>
-                                <span class="text-slate-400 text-sm">${item.categoria}</span>
-                                ${item.contabilizar === false ? '<span class="ml-2 text-[9px] text-slate-500 bg-slate-800 px-1 rounded">No Contabilizado</span>' : ''}
-                            </td>
-                            <td class="text-right font-mono font-bold text-slate-200">${formatCLP(monto)}</td>
-                            <td class="text-center"><span class="badge ${item.moneda === 'CLP' ? 'badge-primary' : 'badge-secondary'}">${item.moneda}</span></td>
-                            <td class="text-center">
-                                <div class="flex items-center justify-center space-x-2">
-                                    <button onclick="showCategoryChart(${item.categoria_id})" title="Ver Evolución" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-sky-400 hover:bg-sky-500/10 transition-all">
-                                        <i class="fas fa-chart-area text-xs"></i>
-                                    </button>
-                                    <button onclick="editGasto(${item.id})" title="Editar" class="w-8 h-8 rounded-lg bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all">
-                                        <i class="fas fa-pen-to-square text-xs"></i>
-                                    </button>
-                                </div>
-                            </td>
-                        `;
-                        tbody.appendChild(row);
-                    });
-                });
-            }
-            
-            document.getElementById('total-ingresos').textContent = formatCLP(data.totales['Ingreso']?.clp || 0).replace('$', '');
-            
-            let totalGastos = 0;
-            Object.entries(data.totales).forEach(([tipo, valores]) => {
-                if (tipo !== 'Ingreso') {
-                    totalGastos += parseFloat(valores.clp || 0);
-                }
-            });
-            
-            document.getElementById('total-gastos').textContent = formatCLP(totalGastos).replace('$', '');
-            document.getElementById('total-neto').textContent = formatCLP(parseFloat(data.totales['Ingreso']?.clp || 0) - totalGastos).replace('$', '');
-            document.getElementById('footer-total').textContent = formatCLP(totalCLP);
-        });
+const direccionLabels={EGRESO:'Egresos',INGRESO:'Ingresos'};
+function agruparPorDireccion(categorias){
+  return categorias.reduce((grupos,categoria)=>{
+    const direccion=categoria.direccion||'OTRO';
+    (grupos[direccion]??=[]).push(categoria);
+    return grupos;
+  },{});
 }
-
-function showCategoryChart(catId) {
-    document.getElementById('modal-chart').classList.remove('hidden');
-        fetch(`${window.APP_BASE_PATH}/dashboard/gastos/categoria-stats/${catId}/`)
-        .then(res => res.json())
-        .then(data => {
-            document.getElementById('chart-cat-name').textContent = data.name;
-            const ctx = document.getElementById('categoryHistoryChart').getContext('2d');
-            
-            if (historyChart) historyChart.destroy();
-            
-            historyChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.labels,
-                    datasets: [{
-                        label: 'Gasto Mensual',
-                        data: data.values,
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                        borderWidth: 3,
-                        pointBackgroundColor: '#10b981',
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 2,
-                        pointRadius: 5,
-                        pointHoverRadius: 7
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return formatCLP(context.raw);
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                            ticks: { 
-                                color: '#94a3b8',
-                                callback: function(value) { return formatCLP(value); }
-                            }
-                        },
-                        x: {
-                            grid: { display: false },
-                            ticks: { color: '#94a3b8' }
-                        }
-                    }
-                }
-            });
-        });
+function renderCategorias(categorias){
+  const grupos=agruparPorDireccion(categorias);
+  return Object.entries(grupos).map(([direccion,filas])=>{
+    const total=filas.reduce((s,g)=>s+Number(g.total_clp||0),0);
+    const etiqueta=direccionLabels[direccion]||direccion;
+    const montoClass=direccion==='INGRESO'?'text-emerald-300':'text-rose-300';
+    return `<section data-direccion="${esc(direccion)}" class="border-b border-slate-800 last:border-b-0"><div class="p-5 bg-slate-900/30 flex justify-between items-center gap-4"><div><h4 class="font-bold text-white">${esc(etiqueta)}</h4><p class="text-xs text-slate-500 mt-1">${filas.length} categoría${filas.length===1?'':'s'}</p></div><b class="${montoClass}">${clp(total)}</b></div><div class="divide-y divide-slate-800/70">${filas.map((g,i)=>`<details ${i<3?'open':''}><summary class="cursor-pointer p-5 flex justify-between gap-4"><span><b>${esc(g.categoria)}</b> <small class="text-slate-500">(${g.cantidad})</small></span><b>${clp(g.total_clp)}</b></summary><div class="px-5 pb-5 overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-slate-500"><th class="text-left">Fecha</th><th class="text-left">Fuente / producto</th><th class="text-left">Movimiento</th><th class="text-left">Estado</th><th class="text-right">Monto</th></tr></thead><tbody>${g.movimientos.map(m=>`<tr class="border-t border-slate-800"><td class="py-2">${esc(m.fecha)}</td><td>${esc(m.fuente)}${m.producto?' · '+esc(m.producto):''}</td><td>${esc(m.descripcion)}${m.naturaleza!=='OPERACIONAL'?` <span class="text-xs text-violet-300">${esc(m.naturaleza)}</span>`:''}</td><td>${esc(m.estado)}${m.estimado?' · estimado':''}</td><td class="text-right">${clp(m.monto_clp)}</td></tr>`).join('')}</tbody></table></div></details>`).join('')}</div></section>`;
+  }).join('');
 }
-
-function editGasto(id) {
-    const newMonto = prompt('Ingrese el nuevo monto para este registro:');
-    if (newMonto && !isNaN(newMonto)) {
-        fetch(`${window.APP_BASE_PATH}/api/gastos/registros/${id}/`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCookie('csrftoken')
-            },
-            body: JSON.stringify({ monto: newMonto })
-        }).then(() => {
-            // Animación de éxito o recarga
-            loadMonthData();
-        });
-    }
-}
-
-function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
-        }
-    }
-    return cookieValue;
-}
-
-function exportToExcel() {
-    // Implementar si existe el endpoint
-    window.location.href = `${window.APP_BASE_PATH}/api/gastos/registros/export_excel/?year=${document.getElementById('year-select').value}&mes=${document.getElementById('month-select').value}`;
-}
-
-// Initial load
-loadMonthData();
+async function cargar(){const r=await fetch(`${apiBase}/resumen/?${params()}`),d=await r.json(),root=document.getElementById('categorias-lista');if(!r.ok){root.innerHTML=`<p class="p-6 text-rose-400">${esc(JSON.stringify(d))}</p>`;return}document.getElementById('ingresos').textContent=clp(d.totales.ingresos_clp);document.getElementById('egresos').textContent=clp(d.totales.egresos_clp);document.getElementById('balance').textContent=clp(d.totales.balance_clp);document.getElementById('cantidad').textContent=d.cantidad;
+const esCaja=d.perspectiva==='caja';document.getElementById('ingresos-label').textContent=esCaja?'Entradas de caja':'Ingresos';document.getElementById('egresos-label').textContent=esCaja?'Salidas de caja':'Egresos';
+renderGraficoCategorias(d.categorias);
+const panel=document.getElementById('estados-panel'),lista=document.getElementById('estados-lista'),esConsumo=d.perspectiva==='consumo';if(d.estados_cuenta.length){panel.classList.remove('hidden');document.getElementById('estados-titulo').textContent=esConsumo?'Estados que contienen estos movimientos':'Estados pagaderos en el período';document.getElementById('estados-ayuda').textContent=esConsumo?'El total facturado es sólo una referencia: los gastos se calculan con cada movimiento y no se duplica.':'Vista secundaria organizada por fecha de vencimiento o fecha de estado.';document.getElementById('estados-total').textContent=`${d.estados_cuenta.length} importado${d.estados_cuenta.length===1?'':'s'}`;lista.innerHTML=d.estados_cuenta.map(e=>`<div class="rounded-xl bg-slate-900/60 border border-slate-700/50 p-4"><div class="flex justify-between gap-3"><div><p class="font-bold text-white">${esc(e.banco)} · ${esc(e.producto)}</p><p class="text-xs text-slate-500">${e.ultimos4?'••••'+esc(e.ultimos4)+' · ':''}${e.es_cuenta?'estado':'vence'} ${esc(e.es_cuenta?e.fecha_estado:e.fecha_vencimiento)}</p></div><span class="text-xs text-slate-400">${esc(e.moneda)}</span></div><p class="text-xl font-bold text-rose-300 mt-3">${e.es_cuenta?`Saldo final ${clp(e.saldo_final_clp)}`:clp(e.monto_clp)}</p><p class="text-xs text-slate-500 mt-1">${e.es_cuenta?'Saldo disponible informado por la cartola.':`Facturado de referencia: ${esc(e.monto_facturado)} ${esc(e.moneda)}${e.estimado?' · CLP estimado':''}${e.pago_real_registrado?' · pago real registrado':''}`}</p></div>`).join('')}else{panel.classList.add('hidden');lista.innerHTML=''}
+root.innerHTML=d.categorias.length?renderCategorias(d.categorias):`<div class="p-8 text-slate-400"><p>No hay movimientos para este período y perspectiva.</p>${document.getElementById('perspectiva').value==='caja'?'<p class="text-xs mt-2">Esta vista secundaria organiza los pagos de tarjeta por vencimiento.</p>':'<p class="text-xs mt-2">Los gastos se muestran según la fecha real de cada movimiento.</p>'}</div>`}
+function verPeriodoMovimientos(year,month){const value=`${year}-${String(month).padStart(2,'0')}`;document.getElementById('desde').value=value;document.getElementById('hasta').value=value;document.getElementById('perspectiva').value='consumo';cargar()}
+function exportar(){location.href=`${apiBase}/exportar.xlsx?${params()}`}function abrirManual(){const f=document.getElementById('form-manual');f.fecha.value=new Date().toISOString().slice(0,10);document.getElementById('modal-manual').classList.remove('hidden')}function cerrarManual(){document.getElementById('modal-manual').classList.add('hidden')}
+document.getElementById('form-manual').addEventListener('submit',async e=>{e.preventDefault();const body=Object.fromEntries(new FormData(e.target));body.periodo=body.fecha.slice(0,7)+'-01';const r=await fetch(`${apiBase}/manuales/`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':'{{ csrf_token }}'},body:JSON.stringify(body)});if(r.ok){cerrarManual();e.target.reset();cargar()}else document.getElementById('manual-error').textContent=JSON.stringify(await r.json())});['desde','hasta','perspectiva'].forEach(id=>document.getElementById(id).addEventListener('change',cargar));cargar();
 </script>
 {% endblock %}

@@ -30,7 +30,9 @@
                 <th class="pb-2 text-right">Facturado</th>
                 <th class="pb-2 text-right">No facturado</th>
                 <th class="pb-2 text-right">Cupo total</th>
+                <th class="pb-2 text-right">Utilizado</th>
                 <th class="pb-2 text-right">Disponible</th>
+                <th class="pb-2 text-right">Avance disp.</th>
                 <th class="pb-2 text-right">Cupo USD</th>
                 <th class="pb-2 text-right">Deuda USD</th>
                 <th class="pb-2 text-right">TC banco</th>
@@ -46,11 +48,13 @@
                 <td class="py-2 text-right font-bold text-white">${{ s.deuda_facturada_clp|default_if_none:0|intcomma }}</td>
                 <td class="py-2 text-right text-slate-400">${{ s.deuda_no_facturada_clp|default_if_none:0|intcomma }}</td>
                 <td class="py-2 text-right text-slate-400">${{ s.cupo_total_clp|default_if_none:0|intcomma }}</td>
+                <td class="py-2 text-right text-rose-300">{% if s.cupo_utilizado_mostrar is not None %}${{ s.cupo_utilizado_mostrar|intcomma }}{% else %}—{% endif %}</td>
                 <td class="py-2 text-right text-emerald-400">${{ s.cupo_disponible_clp|default_if_none:0|intcomma }}</td>
+                <td class="py-2 text-right text-slate-400">{% if s.cupo_avance_disponible_clp is not None %}${{ s.cupo_avance_disponible_clp|intcomma }}{% else %}—{% endif %}</td>
                 <td class="py-2 text-right text-slate-300">{% if s.cupo_usd %}US${{ s.cupo_usd|intcomma }}{% else %}—{% endif %}</td>
                 <td class="py-2 text-right text-slate-300">{% if s.deuda_usd %}US${{ s.deuda_usd|intcomma }}{% else %}—{% endif %}</td>
                 <td class="py-2 text-right text-slate-500">{% if s.tipo_cambio_banco %}${{ s.tipo_cambio_banco|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
-                <td class="py-2 text-right text-slate-500 whitespace-nowrap">{{ s.fecha|date:"d/m/Y" }}</td>
+                <td class="py-2 text-right text-slate-500 whitespace-nowrap">{{ s.fecha|date:"d/m/Y" }}{% if s.fecha_vencimiento %}<span class="block text-[10px] text-emerald-400">Paga {{ s.fecha_vencimiento|date:"d/m/Y" }}</span>{% endif %}</td>
             </tr>
         {% endfor %}
         </tbody>

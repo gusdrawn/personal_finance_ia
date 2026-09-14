@@ -18,26 +18,28 @@ from bank_sync.models import DeudaResumen, EstadoCuenta, MovimientoNormalizado
 from banca.models import MovimientoBancario, SaldoSnapshot
 
 
-def _resolver_producto(banco, tarjeta_id: Optional[str], tipo: str = "TDC", nombre_hint: str = ""):
+def _resolver_producto(user, banco, tarjeta_id: Optional[str], tipo: str = "TDC", nombre_hint: str = ""):
     """Mapea un identificador de tarjeta/crédito a un configuracion.Producto (get_or_create)."""
     from configuracion.models import Producto
 
     tid = (tarjeta_id or "").strip()
     if tid:
         prod = (
-            Producto.objects.filter(banco=banco, tipo=tipo, nombre__icontains=tid).first()
-            or Producto.objects.filter(banco=banco, nombre__icontains=tid).first()
+            Producto.objects.filter(user=user, banco=banco, tipo=tipo, ultimos4=tid[-4:]).first()
+            or Producto.objects.filter(user=user, banco=banco, tipo=tipo, nombre__icontains=tid).first()
         )
         if prod:
             return prod
         nombre = nombre_hint or f"{'TDC' if tipo == 'TDC' else tipo} *{tid}"
         prod, _ = Producto.objects.get_or_create(
-            banco=banco, nombre=nombre, defaults={"tipo": tipo, "tiene_cupo_usd": False}
+            user=user, banco=banco, nombre=nombre,
+            defaults={"tipo": tipo, "tiene_cupo_usd": False, "ultimos4": tid[-4:], "origen": "CONECTOR"}
         )
         return prod
     # sin identificador: producto genérico por tipo
     prod, _ = Producto.objects.get_or_create(
-        banco=banco, nombre=nombre_hint or f"{tipo} (sin asignar)", defaults={"tipo": tipo}
+        user=user, banco=banco, nombre=nombre_hint or f"{tipo} (sin asignar)",
+        defaults={"tipo": tipo, "origen": "CONECTOR"}
     )
     return prod
 
@@ -57,12 +59,21 @@ def ingestar_movimientos(
     movimientos: list[MovimientoNormalizado],
     *,
     tipo_cambio_usd: Optional[Decimal] = None,
+    origen: str = "CONECTOR",
+    tipo_producto: str = "TDC",
+    nombre_producto: str = "",
 ) -> dict:
     """Inserta o actualiza movimientos. Devuelve {'nuevos': n, 'actualizados': m, 'ids': [...]}."""
     nuevos, actualizados, ids = 0, 0, []
     for mov in movimientos:
         h = mov.hash_externo()
-        producto = _resolver_producto(banco, mov.tarjeta_id, "TDC")
+        producto = _resolver_producto(
+            user,
+            banco,
+            mov.tarjeta_id,
+            tipo_producto,
+            nombre_hint=nombre_producto,
+        )
         monto_clp, tc = _a_clp(mov, tipo_cambio_usd)
 
         existente = MovimientoBancario.objects.filter(user=user, hash_externo=h).first()
@@ -72,6 +83,9 @@ def ingestar_movimientos(
             if mov.estado == "FACTURADO" and existente.estado == "NO_FACTURADO":
                 existente.estado = "FACTURADO"
                 cambios.append("estado")
+            if origen == "PDF" and existente.origen != "PDF":
+                existente.origen = "PDF"
+                cambios.append("origen")
             if mov.periodo_factura and existente.periodo_factura != mov.periodo_factura:
                 existente.periodo_factura = mov.periodo_factura
                 cambios.append("periodo_factura")
@@ -97,6 +111,7 @@ def ingestar_movimientos(
             cuota_actual=mov.cuota_actual,
             cuota_total=mov.cuota_total,
             estado=mov.estado,
+            origen=origen,
             periodo_factura=mov.periodo_factura,
             hash_externo=h,
         )
@@ -110,7 +125,11 @@ def ingestar_estado_cuenta(user, banco, estados: list[EstadoCuenta]) -> dict:
     total = {"nuevos": 0, "actualizados": 0, "ids": []}
     for ec in estados:
         res = ingestar_movimientos(
-            user, banco, ec.movimientos, tipo_cambio_usd=ec.tipo_cambio_facturacion
+            user,
+            banco,
+            ec.movimientos,
+            tipo_cambio_usd=ec.tipo_cambio_facturacion,
+            origen="PDF",
         )
         total["nuevos"] += res["nuevos"]
         total["actualizados"] += res["actualizados"]
@@ -123,19 +142,22 @@ def ingestar_saldos(user, banco, deuda: DeudaResumen, fecha: Optional[date] = No
     fecha = fecha or timezone.localdate()
     n = 0
     for t in deuda.tarjetas:
-        producto = _resolver_producto(banco, t.tarjeta_id, "TDC", nombre_hint=t.nombre)
+        producto = _resolver_producto(user, banco, t.tarjeta_id, "TDC", nombre_hint=t.nombre)
         if t.tiene_cupo_usd and not producto.tiene_cupo_usd:
             producto.tiene_cupo_usd = True
             producto.save(update_fields=["tiene_cupo_usd"])
         SaldoSnapshot.objects.update_or_create(
+            user=user,
             producto=producto,
             fecha=fecha,
             defaults=dict(
-                user=user,
                 deuda_facturada_clp=t.deuda_facturada_clp,
                 deuda_no_facturada_clp=t.deuda_no_facturada_clp,
                 cupo_total_clp=t.cupo_total_clp,
+                cupo_utilizado_clp=t.cupo_utilizado_clp,
                 cupo_disponible_clp=t.cupo_disponible_clp,
+                cupo_avance_disponible_clp=t.cupo_avance_disponible_clp,
+                fecha_vencimiento=t.fecha_vencimiento,
                 cupo_usd=t.cupo_usd,
                 cupo_usd_disponible=t.cupo_usd_disponible,
                 deuda_usd=t.deuda_usd,
@@ -145,16 +167,16 @@ def ingestar_saldos(user, banco, deuda: DeudaResumen, fecha: Optional[date] = No
         n += 1
     uf_actual = _valor_uf()
     for c in deuda.creditos:
-        producto = _resolver_producto(banco, None, "CREDITO_HIPOTECARIO", nombre_hint=c.nombre)
+        producto = _resolver_producto(user, banco, None, "CREDITO_HIPOTECARIO", nombre_hint=c.nombre)
         # hipotecarios en UF: el saldo viene en UF; el CLP se deriva con el TC del día
         saldo_clp = c.saldo_insoluto
         if c.moneda == "UF" and c.saldo_insoluto_uf and uf_actual:
             saldo_clp = (c.saldo_insoluto_uf * uf_actual).quantize(Decimal("1"))
         SaldoSnapshot.objects.update_or_create(
+            user=user,
             producto=producto,
             fecha=fecha,
             defaults=dict(
-                user=user,
                 saldo_insoluto=saldo_clp,
                 saldo_insoluto_uf=c.saldo_insoluto_uf,
                 proxima_cuota=c.proxima_cuota_clp,

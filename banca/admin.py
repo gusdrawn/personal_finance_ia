@@ -6,13 +6,23 @@ from .models import (
     ApplePayEvent,
     CategoriaTematica,
     ConfiguracionBanca,
+    ConfiguracionNotificaciones,
     ContraparteConocida,
     CredencialBanco,
+    ConciliacionEventoExterno,
+    DetalleLiquidacionHoum,
+    EventoFinancieroExterno,
     ImportacionEstadoCuenta,
+    ImportacionFuenteExterna,
+    LiquidacionHoum,
+    LimiteCategoria,
     MapeoComercio,
     MovimientoBancario,
+    PagoNeat,
+    RegistroNotificacion,
     SaldoSnapshot,
     SyncLog,
+    VinculoPropiedadExterna,
 )
 
 
@@ -43,14 +53,19 @@ class CredencialBancoAdminForm(forms.ModelForm):
 
     class Meta:
         model = CredencialBanco
-        fields = ["user", "banco", "conector", "rut", "activo"]
+        fields = [
+            "user", "banco", "conector", "tipo_fuente", "rut", "base_url",
+            "sincronizacion_automatica", "hora_sincronizacion", "dia_inicio", "dia_fin",
+            "zona_horaria", "detener_al_completar", "reintentar_errores",
+            "conector_experimental", "activo",
+        ]
 
 
 @admin.register(CredencialBanco)
 class CredencialBancoAdmin(admin.ModelAdmin):
     form = CredencialBancoAdminForm
-    list_display = ["banco", "rut", "conector", "user", "activo"]
-    list_filter = ["banco", "activo"]
+    list_display = ["banco", "conector", "tipo_fuente", "user", "sincronizacion_automatica", "ultima_sincronizacion", "activo"]
+    list_filter = ["tipo_fuente", "sincronizacion_automatica", "activo"]
     search_fields = ["rut", "user__username"]
 
     def save_model(self, request, obj, form, change):
@@ -84,10 +99,10 @@ class ContraparteConocidaAdmin(admin.ModelAdmin):
 @admin.register(MovimientoBancario)
 class MovimientoBancarioAdmin(admin.ModelAdmin):
     list_display = [
-        "fecha", "descripcion", "monto_clp", "moneda", "estado", "naturaleza",
+        "fecha", "descripcion", "monto_clp", "moneda", "origen", "estado", "naturaleza",
         "categoria", "esencialidad", "fuente_clasificacion", "por_revisar",
     ]
-    list_filter = ["estado", "naturaleza", "esencialidad", "fuente_clasificacion", "por_revisar", "moneda"]
+    list_filter = ["origen", "estado", "naturaleza", "esencialidad", "fuente_clasificacion", "por_revisar", "moneda"]
     search_fields = ["descripcion", "hash_externo"]
     date_hierarchy = "fecha"
     list_select_related = ["categoria", "producto"]
@@ -101,8 +116,11 @@ class ImportacionEstadoCuentaAdmin(admin.ModelAdmin):
         "nombre_archivo",
         "banco_detectado",
         "tarjeta_ultimos4",
+        "moneda",
         "estado",
         "operaciones_nuevas",
+        "cupo_disponible_clp",
+        "cupo_disponible_usd",
         "created_at",
         "user",
     ]
@@ -113,7 +131,11 @@ class ImportacionEstadoCuentaAdmin(admin.ModelAdmin):
 
 @admin.register(SaldoSnapshot)
 class SaldoSnapshotAdmin(admin.ModelAdmin):
-    list_display = ["producto", "fecha", "deuda_facturada_clp", "deuda_no_facturada_clp", "cupo_usd", "saldo_insoluto"]
+    list_display = [
+        "producto", "user", "fecha", "deuda_facturada_clp", "deuda_no_facturada_clp",
+        "cupo_total_clp", "cupo_utilizado_clp", "cupo_disponible_clp", "cupo_usd",
+        "saldo_insoluto",
+    ]
     list_filter = ["producto", "fecha"]
     date_hierarchy = "fecha"
 
@@ -125,6 +147,84 @@ class SyncLogAdmin(admin.ModelAdmin):
     readonly_fields = ["iniciado", "finalizado"]
 
 
+class PagoNeatInline(admin.StackedInline):
+    model = PagoNeat
+    extra = 0
+
+
+class LiquidacionHoumInline(admin.StackedInline):
+    model = LiquidacionHoum
+    extra = 0
+
+
+@admin.register(EventoFinancieroExterno)
+class EventoFinancieroExternoAdmin(admin.ModelAdmin):
+    list_display = ["external_id", "fuente", "estado", "fecha_evento", "monto_neto", "requiere_revision", "user"]
+    list_filter = ["fuente", "estado", "requiere_revision"]
+    search_fields = ["external_id", "user__username"]
+    readonly_fields = ["created_at", "updated_at", "metadata"]
+
+    def get_inlines(self, request, obj):
+        if obj and obj.fuente == "neat":
+            return [PagoNeatInline]
+        if obj and obj.fuente == "houm":
+            return [LiquidacionHoumInline]
+        return []
+
+
+@admin.register(ImportacionFuenteExterna)
+class ImportacionFuenteExternaAdmin(admin.ModelAdmin):
+    list_display = ["nombre_archivo", "fuente", "estado", "elementos_detectados", "nuevos", "actualizados", "user", "created_at"]
+    list_filter = ["fuente", "estado", "created_at"]
+    readonly_fields = ["hash_archivo", "created_at"]
+
+
+@admin.register(VinculoPropiedadExterna)
+class VinculoPropiedadExternaAdmin(admin.ModelAdmin):
+    list_display = ["external_property_id", "nombre_externo", "departamento", "user", "activo"]
+    list_filter = ["fuente", "activo"]
+
+
+@admin.register(ConciliacionEventoExterno)
+class ConciliacionEventoExternoAdmin(admin.ModelAdmin):
+    list_display = ["evento", "movimiento", "rol", "monto_asignado", "confianza", "metodo"]
+    list_filter = ["rol", "metodo", "confirmado_manual"]
+
+
+admin.site.register(DetalleLiquidacionHoum)
+
+
 @admin.register(ConfiguracionBanca)
 class ConfiguracionBancaAdmin(admin.ModelAdmin):
     list_display = ["user", "ventana_meses_ingreso", "umbral_alerta_ocio", "modelo_ia"]
+
+
+@admin.register(ConfiguracionNotificaciones)
+class ConfiguracionNotificacionesAdmin(admin.ModelAdmin):
+    list_display = ["user", "telegram_activo", "telegram_token_prefijo", "resumen_diario", "updated_at"]
+    list_filter = ["telegram_activo", "resumen_diario", "avisar_gasto_inmediato"]
+    readonly_fields = [
+        "telegram_bot_token_cifrado",
+        "telegram_chat_id_cifrado",
+        "telegram_token_prefijo",
+        "ultima_prueba_at",
+        "ultima_prueba_exitosa",
+        "updated_at",
+    ]
+
+
+@admin.register(LimiteCategoria)
+class LimiteCategoriaAdmin(admin.ModelAdmin):
+    list_display = ["user", "categoria", "monto_mensual_clp", "activo", "updated_at"]
+    list_filter = ["activo"]
+
+
+@admin.register(RegistroNotificacion)
+class RegistroNotificacionAdmin(admin.ModelAdmin):
+    list_display = ["user", "tipo", "estado", "intentos", "enviado_at", "created_at"]
+    list_filter = ["tipo", "estado", "canal"]
+    search_fields = ["clave_idempotencia", "user__username"]
+    readonly_fields = [
+        "user", "movimiento", "tipo", "canal", "clave_idempotencia", "estado",
+        "contenido", "error", "intentos", "enviado_at", "created_at", "updated_at",
+    ]

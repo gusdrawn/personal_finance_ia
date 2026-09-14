@@ -67,3 +67,42 @@ def sync_activos_diario():
             {"fuente": str(cred.banco), "exito": log.exito, "nuevos": log.nuevos}
         )
     return resultados
+
+
+@shared_task
+def sync_fuente_externa_task(credencial_id: int, manual: bool = False):
+    """Ejecuta una fuente Houm/Neat respetando el lock persistente."""
+    from banca.models import CredencialBanco
+    from banca.services.fuentes_externas import run_external_sync
+
+    credencial = CredencialBanco.objects.filter(pk=credencial_id, activo=True).first()
+    if not credencial:
+        return {"ok": False, "mensaje": "Fuente inexistente o inactiva"}
+    log = run_external_sync(credencial, manual=manual)
+    if log is None:
+        return {"ok": False, "mensaje": "Ya existe una sincronización en curso"}
+    return {"ok": log.exito, "mensaje": log.mensaje, "nuevos": log.nuevos}
+
+
+@shared_task
+def sync_fuentes_externas_programadas():
+    """Evaluador diario: la ventana real vive en cada credencial, no en Beat."""
+    from bank_sync.registry import es_fuente_externa
+    from banca.models import CredencialBanco
+    from banca.services.fuentes_externas import debe_sincronizar, run_external_sync
+
+    resultados = []
+    for credencial in CredencialBanco.objects.filter(
+        activo=True, sincronizacion_automatica=True
+    ).select_related("user", "banco"):
+        try:
+            if not es_fuente_externa(credencial.conector) or not debe_sincronizar(credencial):
+                continue
+        except Exception:
+            continue
+        log = run_external_sync(credencial, manual=False)
+        if log:
+            resultados.append(
+                {"fuente": credencial.conector, "usuario": credencial.user_id, "ok": log.exito}
+            )
+    return resultados

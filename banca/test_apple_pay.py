@@ -20,7 +20,7 @@ class ApplePayPocTest(TestCase):
         self.other_key, self.other_secret = ApplePayApiKey.crear(self.other_user)
         self.banco = Banco.objects.create(nombre="Banco Apple Pay Test")
         self.producto = Producto.objects.create(
-            banco=self.banco, nombre="TDC Test *1234", tipo="TDC"
+            user=self.user, banco=self.banco, nombre="TDC Test *1234", tipo="TDC", ultimos4="1234"
         )
 
     def payload(self, **changes):
@@ -128,9 +128,12 @@ class ApplePayPocTest(TestCase):
         self.assertEqual(self.post_ingest(self.secret).status_code, 401)
 
     def test_key_de_otro_usuario_a_isla_el_movimiento(self):
+        producto_otro = Producto.objects.create(
+            user=self.other_user, banco=self.banco, nombre="TDC otra *1234", tipo="TDC", ultimos4="1234"
+        )
         response = self.post_ingest(
             self.other_secret,
-            self.payload(event_id="other-user-event", merchant="Compra de otra persona"),
+            self.payload(event_id="other-user-event", merchant="Compra de otra persona", product_id=producto_otro.id),
         )
 
         self.assertEqual(response.status_code, 201)

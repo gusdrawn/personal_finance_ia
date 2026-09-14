@@ -12,30 +12,83 @@
         <p class="text-xs uppercase tracking-widest text-emerald-400 font-bold">Prueba de concepto</p>
         <h3 class="text-2xl font-bold text-white mt-1">Analiza varios estados de cuenta juntos</h3>
         <p class="text-slate-400 text-sm mt-2 max-w-3xl">
-            Sube PDFs de Itaú, Banco Falabella o Santander. Detectamos banco, tarjeta, período,
-            montos y movimientos, los deduplicamos y los dejamos listos para clasificar.
+            Sube PDFs de Itaú, Banco Falabella, Santander, Lider Bci o Tenpo. Detectamos tarjetas y cuentas
+            corrientes, sus períodos, saldos y movimientos; luego los deduplicamos y clasificamos.
         </p>
     </div>
     <a href="{% url 'banca_movimientos' %}" class="text-emerald-400 hover:text-emerald-300 text-sm whitespace-nowrap">Revisar todos los movimientos →</a>
 </div>
 
-<form method="post" enctype="multipart/form-data" class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+<form method="post" enctype="multipart/form-data" class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50" data-file-upload-form>
     {% csrf_token %}
-    <div class="flex flex-col md:flex-row md:items-center gap-4">
-        <label class="flex-1 flex items-center gap-3 p-4 rounded-xl border border-dashed border-slate-600 bg-slate-900/40 cursor-pointer hover:border-emerald-500/60 transition">
-            <i class="fas fa-file-pdf text-rose-400 text-2xl"></i>
-            <span>
-                <span class="block text-sm font-semibold text-white">Seleccionar estados de cuenta</span>
-                <span class="block text-xs text-slate-500">Puedes elegir múltiples archivos PDF · máximo 15 MB por archivo</span>
-            </span>
-            <input type="file" name="archivos" accept="application/pdf,.pdf" multiple required class="sr-only">
-        </label>
-        <button class="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm shadow-lg shadow-emerald-500/20 transition">
+    <div class="flex flex-col md:flex-row md:items-stretch gap-4">
+        <div class="flex-1 min-w-0">
+            <label for="estado-cuenta-files" class="file-dropzone group" data-file-dropzone data-accept=".pdf,application/pdf" data-max-size="15728640">
+                <span class="file-dropzone-icon text-rose-400" aria-hidden="true"><i class="fas fa-file-pdf"></i></span>
+                <span class="min-w-0 flex-1">
+                    <span class="file-dropzone-title" data-file-title>Arrastra tus PDFs aquí</span>
+                    <span class="file-dropzone-hint" data-file-hint>Suéltalos para agregarlos o haz clic para buscarlos en tu dispositivo</span>
+                    <span class="file-dropzone-status" data-file-status aria-live="polite">Puedes elegir varios archivos · máximo 15 MB por archivo</span>
+                </span>
+                <span class="file-dropzone-action" data-file-action>Elegir archivos</span>
+                <span class="file-dropzone-drag-indicator" aria-hidden="true"><i class="fas fa-download"></i> Suelta para agregar</span>
+                <input id="estado-cuenta-files" type="file" name="archivos" accept="application/pdf,.pdf" multiple required class="sr-only" data-file-input>
+            </label>
+            <button type="button" class="file-dropzone-clear hidden mt-2" data-file-clear>Limpiar selección</button>
+        </div>
+        <button type="submit" data-file-submit class="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold text-sm shadow-lg shadow-emerald-500/20 transition">
             <i class="fas fa-wand-magic-sparkles mr-2"></i>Analizar archivos
         </button>
     </div>
-    <p class="text-xs text-slate-600 mt-3">Los PDFs quedan vinculados a tu usuario para poder auditar el origen de cada movimiento. No se usan credenciales bancarias.</p>
+    <p class="text-xs text-slate-600 mt-3">Los PDFs quedan vinculados a tu usuario para poder auditar el origen de cada movimiento. Si vuelves a subir uno existente, se aplica el lector actual sin duplicar movimientos. No se usan credenciales bancarias.</p>
 </form>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="p-5 rounded-2xl border {% if ia_configurada %}border-emerald-500/30 bg-emerald-500/5{% else %}border-amber-500/30 bg-amber-500/5{% endif %}">
+        <div class="flex items-center gap-3">
+            <i class="fas fa-robot {% if ia_configurada %}text-emerald-400{% else %}text-amber-400{% endif %}"></i>
+            <div>
+                <p class="text-xs uppercase tracking-wide text-slate-500">Clasificación automática</p>
+                <p class="font-semibold text-white">{% if ia_configurada %}IA activa para este usuario{% else %}IA sin API key configurada{% endif %}</p>
+                {% if ia_configurada %}<p class="text-xs text-slate-500 mt-1">Modelo: {{ modelo_ia }}</p>{% else %}<p class="text-xs text-slate-500 mt-1">Puedes configurarla en Banca → Configuración.</p>{% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="p-5 rounded-2xl border border-sky-500/30 bg-sky-500/5">
+        <div class="flex items-center gap-3">
+            <i class="fas fa-brain text-sky-400"></i>
+            <div>
+                <p class="text-xs uppercase tracking-wide text-slate-500">Memoria de comercios</p>
+                <p class="font-semibold text-white">{{ mapeos_comercio|length }} regla(s) guardada(s)</p>
+                <p class="text-xs text-slate-500 mt-1">Las reglas del usuario se reutilizan antes de llamar a la IA.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div>
+            <h4 class="font-bold text-white"><i class="fas fa-arrows-rotate text-sky-400 mr-2"></i>Recalcular sin volver a subir PDFs</h4>
+            <p class="text-xs text-slate-500 mt-1">Las categorías manuales, la naturaleza y los préstamos fijados manualmente quedan protegidos.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            {% if seleccionada %}
+            <form method="post" action="{% url 'banca_recalcular_clasificaciones' %}">{% csrf_token %}<input type="hidden" name="scope" value="importacion"><input type="hidden" name="importacion_id" value="{{ seleccionada.pk }}"><button class="px-4 py-2 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs font-bold"><i class="fas fa-wand-magic-sparkles mr-1"></i>Recalcular este estado</button></form>
+            <form method="post" action="{% url 'banca_reanalizar_importacion' seleccionada.pk %}" onsubmit="return confirm('Se volverá a leer el PDF guardado y se actualizarán sus metadatos. Las decisiones manuales no se borrarán. ¿Continuar?');">{% csrf_token %}<button class="px-4 py-2 rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-300 text-xs font-bold"><i class="fas fa-file-circle-check mr-1"></i>Reanalizar archivo</button></form>
+            {% endif %}
+            <form method="post" action="{% url 'banca_recalcular_clasificaciones' %}" onsubmit="return confirm('Se recalcularán todos tus movimientos clasificados por reglas o IA. Las decisiones manuales se conservarán. ¿Continuar?');">{% csrf_token %}<input type="hidden" name="scope" value="todos"><button class="px-4 py-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold"><i class="fas fa-layer-group mr-1"></i>Recalcular todos</button></form>
+        </div>
+    </div>
+    {% if seleccionada %}
+    <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+        <div class="rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-3 text-emerald-300">{{ seleccionada.provisionales_confirmados }} Apple Pay confirmados</div>
+        <div class="rounded-lg bg-slate-900/30 border border-slate-700/50 p-3 text-slate-300">{{ seleccionada.provisionales_descartados }} no aparecieron al cierre</div>
+        <div class="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3 text-amber-300">{{ seleccionada.provisionales_ambiguos }} calces ambiguos</div>
+    </div>
+    {% if not seleccionada.periodo_inicio or not seleccionada.periodo_fin %}<p class="mt-3 text-xs text-amber-300"><i class="fas fa-triangle-exclamation mr-1"></i>Este PDF no informa un período completo; no cerrará movimientos provisionales de Apple Pay.</p>{% endif %}
+    {% endif %}
+</div>
 
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
@@ -71,7 +124,7 @@
             {% for c in categorias %}
             <div class="flex justify-between text-sm border-t border-slate-700/50 pt-2">
                 <span class="text-slate-300">{{ c.nombre }} <span class="text-xs text-slate-600">({{ c.n }})</span></span>
-                <span class="font-semibold text-white">${{ c.total|intcomma }}</span>
+                <span class="font-semibold text-white">{% if c.moneda == 'USD' %}US${% else %}${% endif %}{{ c.total|intcomma }}</span>
             </div>
             {% endfor %}
         </div>
@@ -89,8 +142,11 @@
                     <span class="text-sm text-slate-200 truncate">{{ i.nombre_archivo }}</span>
                     <span class="text-[10px] px-2 py-0.5 rounded-full {% if i.estado == 'PROCESADO' %}bg-emerald-500/15 text-emerald-300{% elif i.estado == 'DUPLICADO' %}bg-sky-500/15 text-sky-300{% else %}bg-rose-500/15 text-rose-300{% endif %}">{{ i.get_estado_display }}</span>
                 </div>
-                <p class="text-xs text-slate-500 mt-1">{{ i.banco_detectado|default:'Banco no detectado' }}{% if i.tarjeta_ultimos4 %} · ••••{{ i.tarjeta_ultimos4 }}{% endif %}</p>
-                <p class="text-xs text-slate-500 mt-1">{{ i.operaciones_nuevas }} nuevos · {{ i.operaciones_detectadas }} detectados{% if i.fecha_estado %} · {{ i.fecha_estado|date:'d/m/Y' }}{% endif %}</p>
+                <p class="text-xs text-slate-500 mt-1">{{ i.banco_detectado|default:'Banco no detectado' }}{% if i.tipo_producto == 'CUENTA' %} · Cuenta ••••{{ i.tarjeta_ultimos4 }}{% elif i.tarjeta_ultimos4 %} · Tarjeta ••••{{ i.tarjeta_ultimos4 }}{% endif %}{% if i.moneda == 'USD' %} · USD{% endif %}</p>
+                <p class="text-xs text-slate-500 mt-1">{{ i.operaciones_nuevas }} nuevos · {{ i.operaciones_detectadas }} detectados{% if i.fecha_estado %} · {{ i.fecha_estado|date:'d/m/Y' }}{% endif %}{% if i.fecha_vencimiento %} · paga hasta {{ i.fecha_vencimiento|date:'d/m/Y' }}{% endif %}</p>
+                {% if i.cupo_disponible_clp is not None %}<p class="text-xs text-emerald-300 mt-1">Cupo disponible: ${{ i.cupo_disponible_clp|floatformat:0|intcomma }}{% if i.cupo_total_clp is not None %} de ${{ i.cupo_total_clp|floatformat:0|intcomma }}{% endif %}</p>{% endif %}
+                {% if i.cupo_disponible_usd is not None %}<p class="text-xs text-sky-300 mt-1">Cupo disponible USD: US${{ i.cupo_disponible_usd|floatformat:2|intcomma }}{% if i.cupo_total_usd is not None %} de US${{ i.cupo_total_usd|floatformat:2|intcomma }}{% endif %}</p>{% endif %}
+                {% if i.saldo_final_clp is not None %}<p class="text-xs text-emerald-300 mt-1">Saldo final: ${{ i.saldo_final_clp|floatformat:0|intcomma }}</p>{% endif %}
                 {% if i.mensaje and i.estado == 'ERROR' %}<p class="text-xs text-rose-300 mt-2">{{ i.mensaje }}</p>{% endif %}
             </a>
         {% empty %}
@@ -99,6 +155,29 @@
         </div>
     </div>
 </div>
+
+{% if mapeos_comercio %}
+<div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <div class="flex items-center justify-between mb-4">
+        <div>
+            <h4 class="font-bold text-white">Comercios recordados</h4>
+            <p class="text-xs text-slate-500 mt-1">Se aplican automáticamente en los próximos estados de cuenta de este usuario.</p>
+        </div>
+        <span class="text-xs text-slate-500">{{ mapeos_comercio|length }} recientes</span>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {% for mapeo in mapeos_comercio %}
+        <div class="p-3 rounded-xl bg-slate-900/40 border border-slate-700/50">
+            <div class="flex items-start justify-between gap-2">
+                <span class="text-sm text-slate-200 truncate" title="{{ mapeo.patron }}">{{ mapeo.patron }}</span>
+                <span class="text-[10px] text-slate-500 whitespace-nowrap">{{ mapeo.hits }} uso(s)</span>
+            </div>
+            <p class="text-xs text-emerald-300 mt-1">{{ mapeo.categoria.nombre }} · {{ mapeo.get_origen_display }}</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
 
 <div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50 overflow-x-auto">
     <div class="flex items-center justify-between mb-4">
@@ -116,16 +195,17 @@
                 <td class="p-3 text-slate-500 whitespace-nowrap">{{ m.fecha|date:'d/m/Y' }}</td>
                 <td class="p-3"><span class="block text-slate-200">{{ m.descripcion|truncatechars:52 }}</span><span class="text-[11px] text-slate-500">{{ m.producto }}</span></td>
                 <td class="p-3 text-slate-300">{{ m.categoria.nombre|default:'Sin categoría' }}{% if m.fuente_clasificacion != 'PENDIENTE' %}<span class="block text-[10px] text-slate-600">{{ m.get_fuente_clasificacion_display }}</span>{% endif %}</td>
-                <td class="p-3 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">${{ m.monto_clp|intcomma }}</td>
+                <td class="p-3 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">{% if m.moneda == 'USD' %}US${{ m.monto|intcomma }}{% else %}${{ m.monto_clp|intcomma }}{% endif %}</td>
                 <td class="p-3">
                     <form method="post" action="{% url 'banca_reclasificar' m.pk %}" class="flex items-center gap-1">
                         {% csrf_token %}
                         <input type="hidden" name="next" value="{% url 'banca_importar' %}">
+                        <input type="text" name="comercio" value="{{ m.descripcion }}" maxlength="120" class="w-36 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200" title="Nombre del comercio que se recordará" aria-label="Comercio a recordar">
                         <select name="categoria" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
-                            <option value="">Reclasificar…</option>
+                            <option value="">Guardar categoría…</option>
                             {% for c in categorias_tematicas %}<option value="{{ c.id }}" {% if m.categoria_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
                         </select>
-                        <button class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300" title="Reclasificar"><i class="fas fa-check"></i></button>
+                        <button class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300" title="Guardar categoría y comercio"><i class="fas fa-check"></i></button>
                     </form>
                 </td>
             </tr>

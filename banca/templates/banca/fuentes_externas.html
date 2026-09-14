@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Houm y NeatPagos · Banca{% endblock %}
+{% block page_title %}Houm y NeatPagos{% endblock %}
+
+{% block content %}
+{% include 'banca/_tabs.html' %}
+
+<div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+  <div>
+    <h2 class="text-xl font-black text-white">Fuentes financieras externas</h2>
+    <p class="text-sm text-slate-500">Importa datos oficiales o consulta endpoints autorizados de solo lectura.</p>
+  </div>
+  <form method="post" action="{% url 'banca_sync_fuentes_externas' %}">
+    {% csrf_token %}
+    <button class="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 font-bold text-sm">
+      <i class="fas fa-rotate mr-1"></i>Sincronizar todas ahora
+    </button>
+  </form>
+</div>
+
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-6">
+{% for c in credenciales_externas %}
+  <section class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <div class="flex justify-between gap-3 mb-4">
+      <div>
+        <h3 class="font-bold text-white">{{ c.banco.nombre }}</h3>
+        <p class="text-xs text-slate-500">
+          {{ c.get_tipo_fuente_display }} ·
+          {% if c.sincronizacion_en_curso %}<span class="text-amber-300">sincronizando</span>
+          {% elif c.requiere_reautenticacion %}<span class="text-rose-300">requiere reautenticación</span>
+          {% elif c.ultimo_mensaje %}{{ c.ultimo_mensaje }}{% else %}sin ejecuciones{% endif %}
+        </p>
+        {% if c.ultima_sincronizacion %}<p class="text-[11px] text-slate-600">Última: {{ c.ultima_sincronizacion|date:"d/m/Y H:i" }}</p>{% endif %}
+        {% if c.proxima_sincronizacion %}<p class="text-[11px] text-slate-600">Próxima: {{ c.proxima_sincronizacion|date:"d/m/Y H:i" }}</p>{% endif %}
+      </div>
+      <form method="post" action="{% url 'banca_sync_fuente_externa' c.pk %}">
+        {% csrf_token %}
+        <button class="px-3 py-2 rounded-lg bg-sky-500/20 text-sky-300 text-xs font-bold" {% if c.sincronizacion_en_curso %}disabled{% endif %}>
+          Sincronizar ahora
+        </button>
+      </form>
+    </div>
+
+    <form method="post" action="{% url 'banca_configurar_fuente_externa' c.pk %}" class="space-y-3">
+      {% csrf_token %}
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div><label class="text-[10px] uppercase text-slate-500">Desde día</label><input type="number" min="1" max="28" name="dia_inicio" value="{{ c.dia_inicio }}" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm"></div>
+        <div><label class="text-[10px] uppercase text-slate-500">Hasta día</label><input type="number" min="1" max="28" name="dia_fin" value="{{ c.dia_fin }}" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm"></div>
+        <div><label class="text-[10px] uppercase text-slate-500">Hora</label><input type="time" name="hora_sincronizacion" value="{{ c.hora_sincronizacion|time:'H:i' }}" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm"></div>
+        <div><label class="text-[10px] uppercase text-slate-500">Zona horaria</label><input name="zona_horaria" value="{{ c.zona_horaria }}" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm"></div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div><label class="text-[10px] uppercase text-slate-500">Endpoint autorizado</label><input type="url" name="base_url" value="{{ c.base_url }}" placeholder="Opcional" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm"></div>
+        <div><label class="text-[10px] uppercase text-slate-500">Token read-only</label><input type="password" name="api_key" placeholder="Conservar actual" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm"></div>
+      </div>
+      <div><label class="text-[10px] uppercase text-slate-500">Renovar sesión autorizada</label><input type="password" name="session_state" placeholder="Conservar sesión cifrada actual" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-sm"></div>
+      <div class="flex flex-wrap gap-4 text-xs text-slate-300">
+        <label><input type="checkbox" name="sincronizacion_automatica" {% if c.sincronizacion_automatica %}checked{% endif %}> Automática</label>
+        <label><input type="checkbox" name="detener_al_completar" {% if c.detener_al_completar %}checked{% endif %}> Detener al completar</label>
+        <label><input type="checkbox" name="reintentar_errores" {% if c.reintentar_errores %}checked{% endif %}> Reintentar errores</label>
+        <label><input type="checkbox" name="conector_experimental" {% if c.conector_experimental %}checked{% endif %}> Endpoint experimental</label>
+      </div>
+      <div class="flex gap-2"><button class="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold">Guardar programación</button></div>
+    </form>
+    <form method="post" action="{% url 'banca_probar_fuente_externa' c.pk %}" class="mt-2">{% csrf_token %}<button class="px-3 py-2 rounded bg-indigo-500/20 text-indigo-300 text-xs font-bold">Probar conexión read-only</button></form>
+  </section>
+{% empty %}
+  <div class="xl:col-span-2 p-6 rounded-2xl bg-slate-800/50 border border-dashed border-slate-700 text-center">
+    <p class="text-slate-400">Aún no configuraste Houm o NeatPagos.</p>
+    <a href="{% url 'banca_config' %}" class="text-emerald-400 text-sm">Agregar fuente en Configuración</a>
+  </div>
+{% endfor %}
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+  <section class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h3 class="font-bold text-white mb-1"><i class="fas fa-file-excel text-emerald-400 mr-2"></i>Importar archivo oficial</h3>
+    <p class="text-xs text-slate-500 mb-4">Houm: informe mensual XLSX. Neat: XLSX, CSV, JSON, correo EML/TXT o comprobante PDF con texto.</p>
+    <form method="post" enctype="multipart/form-data" action="{% url 'banca_importar_fuente_externa' %}" class="space-y-3" data-file-upload-form>
+      {% csrf_token %}
+      <select name="fuente" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm"><option value="houm">Houm</option><option value="neat">NeatPagos</option></select>
+      <label for="fuente-externa-file" class="file-dropzone group" data-file-dropzone data-accept=".xlsx,.xlsm,.csv,.json,.eml,.txt,.pdf,.html" data-max-size="15728640">
+        <span class="file-dropzone-icon text-emerald-400" aria-hidden="true"><i class="fas fa-file-arrow-up"></i></span>
+        <span class="min-w-0 flex-1">
+          <span class="file-dropzone-title" data-file-title>Arrastra el archivo oficial aquí</span>
+          <span class="file-dropzone-hint" data-file-hint>Suéltalo para cargarlo o haz clic para buscarlo</span>
+          <span class="file-dropzone-status" data-file-status aria-live="polite">XLSX, CSV, JSON, EML, TXT, PDF o HTML · máximo 15 MB</span>
+        </span>
+        <span class="file-dropzone-action" data-file-action>Elegir archivo</span>
+        <span class="file-dropzone-drag-indicator" aria-hidden="true"><i class="fas fa-download"></i> Suelta para cargar</span>
+        <input id="fuente-externa-file" type="file" name="archivo" accept=".xlsx,.xlsm,.csv,.json,.eml,.txt,.pdf,.html" required class="sr-only" data-file-input>
+      </label>
+      <button type="button" class="file-dropzone-clear hidden" data-file-clear>Limpiar selección</button>
+      <button type="submit" data-file-submit class="px-4 py-2 rounded bg-emerald-500 text-slate-950 text-sm font-bold">Importar y conciliar</button>
+    </form>
+  </section>
+
+  <section class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    <h3 class="font-bold text-white mb-3"><i class="fas fa-building text-orange-400 mr-2"></i>Propiedades Houm por vincular</h3>
+    {% for item in pendientes_propiedad %}
+    <form method="post" action="{% url 'banca_vincular_propiedad_externa' %}" class="flex gap-2 items-center mb-2">
+      {% csrf_token %}
+      <input type="hidden" name="external_property_id" value="{{ item.external_property_id }}">
+      <span class="flex-1 text-sm text-slate-300 truncate" title="{{ item.propiedad_nombre }}">{{ item.propiedad_nombre }}</span>
+      <select name="departamento" required class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs">
+        <option value="">Departamento…</option>{% for d in departamentos_disponibles %}<option value="{{ d.pk }}">{{ d.codigo }}</option>{% endfor %}
+      </select>
+      <button class="px-2 py-1 rounded bg-orange-500/20 text-orange-300 text-xs">Vincular</button>
+    </form>
+    {% empty %}<p class="text-sm text-slate-500">No hay propiedades pendientes.</p>{% endfor %}
+  </section>
+</div>
+
+<section class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50 mb-6 overflow-x-auto">
+  <h3 class="font-bold text-white mb-3">Eventos y conciliación</h3>
+  <table class="w-full text-sm">
+    <thead class="text-[10px] uppercase text-slate-500"><tr><th class="text-left py-2">Fecha</th><th class="text-left">Fuente</th><th class="text-left">Detalle</th><th class="text-right">Bruto</th><th class="text-right">Comisión/descuentos</th><th class="text-right">Neto</th><th class="text-left pl-3">Estado</th></tr></thead>
+    <tbody>
+    {% for e in eventos_externos %}
+      <tr class="border-t border-slate-700/50">
+        <td class="py-3 text-slate-400">{{ e.fecha_evento|date:"d/m/Y"|default:"—" }}</td>
+        <td class="text-white">{{ e.get_fuente_display }}</td>
+        <td class="text-slate-300">{% if e.fuente == 'houm' %}{{ e.liquidacion_houm.propiedad_nombre }}{% else %}{{ e.pago_neat.cuenta|default:e.pago_neat.destinatario }}{% endif %}</td>
+        <td class="text-right">${{ e.monto_bruto|floatformat:0|intcomma }}</td>
+        <td class="text-right text-amber-300">${{ e.comision|add:e.descuentos|floatformat:0|intcomma }}</td>
+        <td class="text-right text-emerald-300">${{ e.monto_neto|floatformat:0|intcomma }}</td>
+        <td class="pl-3"><span class="text-[10px] uppercase px-2 py-1 rounded bg-slate-700 text-slate-300">{{ e.get_estado_display }}</span> {% if e.conciliaciones.exists %}<span class="text-emerald-400" title="Conciliado">✓</span>{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="7" class="py-6 text-center text-slate-500">Sin eventos importados.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+  <h3 class="font-bold text-white mb-3">Importaciones recientes</h3>
+  <div class="space-y-2">{% for i in importaciones_externas %}<div class="flex justify-between text-sm border-b border-slate-700/40 pb-2"><span class="text-slate-300">{{ i.get_fuente_display }} · <a class="text-sky-300 hover:underline" href="{% url 'banca_descargar_importacion_externa' i.pk %}">{{ i.nombre_archivo }}</a></span><span class="{% if i.estado == 'PROCESADO' %}text-emerald-400{% elif i.estado == 'ERROR' %}text-rose-400{% else %}text-slate-400{% endif %}">{{ i.get_estado_display }} · {{ i.elementos_detectados }}</span></div>{% empty %}<p class="text-sm text-slate-500">Sin importaciones.</p>{% endfor %}</div>
+</section>
+{% endblock %}

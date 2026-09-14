@@ -18,7 +18,9 @@ from banca.models import ConfiguracionBanca, MovimientoBancario
 
 
 def _operacionales(user):
-    return MovimientoBancario.objects.filter(user=user, naturaleza="OPERACIONAL", por_revisar=False)
+    return MovimientoBancario.objects.filter(
+        user=user, naturaleza="OPERACIONAL", por_revisar=False
+    ).exclude(estado="DESCARTADO_CIERRE")
 
 
 def promedio_ingresos(user, ventana_meses: int = 3) -> Decimal:

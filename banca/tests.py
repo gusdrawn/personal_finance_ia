@@ -461,7 +461,7 @@ class MovimientoSemanticaTest(TestCase):
 
         self.user = User.objects.create(username="sem_test")
         banco = Banco.objects.create(nombre="Banco Sem")
-        self.producto = Producto.objects.create(banco=banco, nombre="TDC", tipo="TDC")
+        self.producto = Producto.objects.create(user=self.user, banco=banco, nombre="TDC", tipo="TDC")
 
     def _mov(self, **kw):
         from banca.models import MovimientoBancario
@@ -481,6 +481,16 @@ class MovimientoSemanticaTest(TestCase):
     def test_es_cargo_por_signo(self):
         cargo = self._mov(monto_clp=Decimal("1000"), hash_externo="a")
         abono = self._mov(monto_clp=Decimal("-1000"), hash_externo="b")
+        self.assertTrue(cargo.es_cargo)
+        self.assertFalse(abono.es_cargo)
+
+    def test_usd_sin_conversion_usa_signo_del_monto_original(self):
+        cargo = self._mov(
+            moneda="USD", monto=Decimal("30.50"), monto_clp=Decimal("0"), hash_externo="usd-a"
+        )
+        abono = self._mov(
+            moneda="USD", monto=Decimal("-10.00"), monto_clp=Decimal("0"), hash_externo="usd-b"
+        )
         self.assertTrue(cargo.es_cargo)
         self.assertFalse(abono.es_cargo)
 

@@ -45,7 +45,8 @@ flowchart TD
 
     F -->|no facturados| J[Notificador Telegram]
     G --> K[Dashboard deudas:<br/>TDC, cupo USD, hipotecario]
-    I --> L[Análisis mensual existente]
+    G --> L[Calendario:<br/>fecha «Pagar hasta»]
+    I --> M[Análisis mensual existente]
 ```
 
 Dos cadencias distintas según tu requerimiento:
@@ -146,8 +147,11 @@ class SaldoTarjeta:
     nombre: str                 # "Visa Signature", etc.
     deuda_facturada_clp: Decimal
     deuda_no_facturada_clp: Decimal
+    fecha_vencimiento: date | None
     cupo_total_clp: Decimal
+    cupo_utilizado_clp: Decimal | None
     cupo_disponible_clp: Decimal
+    cupo_avance_disponible_clp: Decimal | None
     # --- dólares ---
     tiene_cupo_usd: bool
     cupo_usd: Decimal | None
@@ -219,7 +223,7 @@ class MovimientoBancario(models.Model):
     periodo_factura = models.DateField(null=True)   # a qué estado de cuenta pertenece
     categoria   = models.ForeignKey('gastos.CategoriaIngreso', null=True, on_delete=models.SET_NULL)
     categoria_es_manual = models.BooleanField(default=False)  # protege tu reclasificación
-    hash_externo = models.CharField(max_length=64, unique=True)  # idempotencia
+    hash_externo = models.CharField(max_length=64)  # idempotencia por usuario
     notificado_telegram = models.BooleanField(default=False)
     created_at  = models.DateTimeField(auto_now_add=True)
 
@@ -230,8 +234,11 @@ class SaldoSnapshot(models.Model):
     fecha       = models.DateField(db_index=True)
     deuda_facturada_clp    = models.DecimalField(max_digits=15, decimal_places=2, null=True)
     deuda_no_facturada_clp = models.DecimalField(max_digits=15, decimal_places=2, null=True)
+    fecha_vencimiento      = models.DateField(null=True)  # «Pagar hasta» del estado
     cupo_total_clp         = models.DecimalField(max_digits=15, decimal_places=2, null=True)
+    cupo_utilizado_clp     = models.DecimalField(max_digits=15, decimal_places=2, null=True)
     cupo_disponible_clp    = models.DecimalField(max_digits=15, decimal_places=2, null=True)
+    cupo_avance_disponible_clp = models.DecimalField(max_digits=15, decimal_places=2, null=True)
     cupo_usd               = models.DecimalField(max_digits=12, decimal_places=2, null=True)
     deuda_usd              = models.DecimalField(max_digits=12, decimal_places=2, null=True)
     tipo_cambio_banco      = models.DecimalField(max_digits=10, decimal_places=4, null=True)
@@ -239,7 +246,7 @@ class SaldoSnapshot(models.Model):
     saldo_insoluto = models.DecimalField(max_digits=15, decimal_places=2, null=True)
     proxima_cuota  = models.DecimalField(max_digits=15, decimal_places=2, null=True)
     class Meta:
-        unique_together = ('producto', 'fecha')
+        unique_together = ('user', 'producto', 'fecha')
 
 class ReglaCategorizacion(models.Model):
     """Aprende comercio -> categoría. Se aplica solo si el usuario no fijó manual."""
@@ -265,6 +272,14 @@ class SyncLog(models.Model):
 - **Cada tarjeta física** = un `configuracion.Producto` con `tipo='TDC'`. Si tiene cupo en
   dólares, marcas `tiene_cupo_usd=True` (campo que ya existe). Así "más de una tarjeta, cada
   una con su cupo USD" calza sin inventar tablas nuevas.
+- La fecha explícita **«Pagar hasta»** del estado se conserva en `SaldoSnapshot` y se
+  proyecta como evento del mes en Calendario; no se inventa una fecha cuando el PDF no la
+  informa.
+- Un estado internacional conserva `monto` y cupos en USD. Si coincide usuario, producto y
+  fecha con el estado nacional, completa `deuda_usd`, `cupo_usd` y
+  `cupo_usd_disponible` en el mismo `SaldoSnapshot` sin reemplazar los campos CLP. Sin tipo
+  de cambio informado por el banco, `monto_clp` permanece en cero y la interfaz presenta
+  el valor original en USD en vez de fabricar una conversión.
 - **Crédito hipotecario** = un `Producto` con `tipo='CREDITO_HIPOTECARIO'`; su deuda vive en
   `SaldoSnapshot` (saldo insoluto + próxima cuota).
 
@@ -274,7 +289,8 @@ class SyncLog(models.Model):
 
 **Deduplicación.** Cada movimiento trae un `hash_externo` = `sha256(fecha + monto + glosa +
 tarjeta_id + cuota)`. La ingesta hace *upsert* por ese hash: si ya existe, no se inserta de
-nuevo. Esto permite correr el sync N veces sin duplicar.
+nuevo. La restricción real es `user + hash_externo`, por lo que el mismo movimiento sintético
+en dos cuentas no mezcla datos. Esto permite correr el sync N veces sin duplicar.
 
 **Tu criterio manda.** Cuando reclasificas un movimiento a mano, se marca
 `categoria_es_manual=True`. El motor de categorización automática **nunca** sobrescribe un
@@ -282,10 +298,11 @@ registro con esa marca. Las `ReglaCategorizacion` solo actúan sobre lo que no t
 opcionalmente "aprenden": cuando reclasificas un comercio, te ofrece crear/actualizar la
 regla para ese comercio a futuro.
 
-**Transición no facturado → facturado.** Un mismo gasto aparece primero como
-`NO_FACTURADO` y luego en el estado de cuenta como `FACTURADO`. La ingesta lo reconcilia por
-hash (o por similitud fecha+monto+glosa si el hash difiere levemente) y **actualiza el
-estado** en vez de crear un duplicado, preservando la categoría que ya le pusiste.
+**Transición provisional → facturado.** Apple Pay crea una fila `PROVISIONAL`. Un PDF con
+período explícito la reconcilia estrictamente por usuario, producto, monto/moneda exactos y
+fecha cercana; el comercio solo desempata. Un calce seguro actualiza esa misma fila a
+`FACTURADO`, preservando decisiones manuales y avisos. Lo no incluido o ambiguo deja de
+contabilizarse con auditoría de cierre; un PDF sin período no cierra provisionales.
 
 ---
 
@@ -595,16 +612,17 @@ agosto por separado.
 
 ### 15.2 Estados del movimiento y no-duplicación
 
-Un movimiento de TDC es **una sola fila** con ciclo de vida:
+Un movimiento de TDC es **una sola fila contable** con ciclo de vida:
 
 ```
-NO_FACTURADO  ──(cierre)──►  FACTURADO  ──(pago de la TDC, derivado)──►  PAGADO
+PROVISIONAL (Apple Pay) ──(PDF/cierre)──► FACTURADO ──(pago derivado)──► PAGADO
+                         └─(no aparece)──► DESCARTADO_CIERRE
 ```
 
-La transición `NO_FACTURADO → FACTURADO` se reconcilia con una **huella estable**:
-`tarjeta + fecha_compra + monto + glosa` (datos que no cambian al facturarse). La ingesta hace
-*upsert* por esa huella → **actualiza el estado, no inserta de nuevo**. Esa es la garantía de
-no-duplicación que preguntaste.
+La transición se reconcilia con el producto/tarjeta, monto y moneda exactos y una ventana
+acotada de fecha. La glosa decide solo cuando hay más de un candidato claro; si continúa
+ambiguo, nunca se adivina. La huella bancaria final reemplaza la provisional y mantiene el
+`ApplePayEvent`, las decisiones manuales y el registro de notificación.
 
 **Paso de confirmación de fin de mes:** cuando llega el estado de cuenta, el sistema muestra
 los movimientos facturados con su categoría detectada por IA para que **confirmes/ajustes** y
@@ -774,3 +792,58 @@ bicicleta en `prestamos.Prestamo` (Juanita, $5.000.000); `banca` calza los movim
 - **Patrimonio:** el principal solo cambia de forma (efectivo ⇄ `prestamos`/cuenta por cobrar);
   neto cero. La integración de §16.4 suma deuda TDC pero la contrapesa la cuenta por cobrar.
 - **Conclusiones:** solo los **intereses** reales de financiamiento aparecen como costo.
+
+---
+
+## 18. Fuentes explicativas Houm y NeatPagos
+
+Estas fuentes no implementan `BankConnector`: usan contratos read-only especializados y se
+persisten fuera de `MovimientoBancario`. `EventoFinancieroExterno` conserva la evidencia;
+`PagoNeat` y `LiquidacionHoum` guardan el detalle; `ConciliacionEventoExterno` asigna importes
+al movimiento bancario real. Houm enlaza sus propiedades con `Departamento` y solo actualiza
+el registro mensual cuando el neto está confirmado y no contradice un valor manual.
+
+```mermaid
+flowchart LR
+    H[Houm XLSX / endpoint autorizado] --> E[EventoFinancieroExterno]
+    N[Neat CSV/JSON / endpoint autorizado] --> E
+    E --> D[PagoNeat / LiquidacionHoum + desglose]
+    E --> C[ConciliacionEventoExterno]
+    M[MovimientoBancario<br/>fuente contable] --> C
+    D -->|Houm confirmado| R[RegistroMensual Arriendo neto]
+```
+
+La cadencia vive en `CredencialBanco`, se evalúa por zona horaria y es compartida por botón,
+Celery y comandos. El detalle operativo está en `docs/INTEGRACION_HOUM_NEAT.md`.
+
+---
+
+## 19. Centro financiero unificado (decisión vigente 08-09-2026)
+
+Esta sección reemplaza las decisiones históricas de retirar por completo la app `gastos`
+y de sincronizar fuentes hacia `RegistroMensual`.
+
+- `gastos` permanece como capa de presentación y cálculo con perspectivas **caja** y
+  **consumo**; `banca` conserva la ingesta, conciliación y operación.
+- `CategoriaTematica` es la única taxonomía. `CategoriaIngreso` y `RegistroMensual` se
+  eliminaron físicamente.
+- El monto facturado vigente de una TDC, en su mes de vencimiento, es el egreso oficial.
+  Los movimientos sólo forman su desglose y una diferencia firmada completa el cuadre.
+- Houm suma una vez el depósito neto confirmado de una propiedad vinculada. Neat reemplaza
+  el detalle genérico de un cargo conciliado, sin crear un segundo egreso.
+- `MovimientoManual` cubre exclusivamente información aún no importada. Sus naturalezas
+  distinguen operación, activo recuperable, inversión y transferencia interna.
+- `Producto` pertenece obligatoriamente a un usuario; `Banco` continúa global. Los estados
+  corregidos se versionan y sólo uno queda vigente por producto, moneda y mes de pago.
+- `GastoProgramado` se conserva como previsión de calendario y nunca se suma como realizado.
+
+```mermaid
+flowchart LR
+    PDF[Estados TDC] --> B[Banca / movimientos]
+    NEAT[Neat] --> B
+    HOUM[Houm] --> G[Gastos / resumen único]
+    B --> G
+    MAN[MovimientoManual] --> G
+    G --> D[Dashboard]
+    G --> P[Patrimonio mensual]
+```
