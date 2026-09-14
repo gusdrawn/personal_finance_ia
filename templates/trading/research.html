@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+
+{% block title %}Research Center{% endblock %}
+{% block page_title %}Research Center{% endblock %}
+
+{% block content %}
+{% include 'trading/_nav.html' %}
+
+<div>
+    <p class="text-emerald-400 text-xs font-bold uppercase tracking-widest">Screener</p>
+    <h1 class="text-3xl font-bold text-white mt-1">Encuentra oportunidades</h1>
+    <p class="text-slate-400 mt-2">Filtros transparentes para acciones, ETFs, cripto, forex, índices y commodities.</p>
+</div>
+
+<form method="get" class="glass rounded-2xl p-5 border border-slate-800 grid md:grid-cols-5 gap-3">
+    <input name="q" value="{{ filters.q }}" placeholder="Símbolo o empresa" class="md:col-span-2 rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-white">
+    <select name="asset_type" class="rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-white">
+        <option value="">Todos los activos</option>
+        {% for value,label in asset_types %}<option value="{{ value }}" {% if filters.asset_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <select name="theme" class="rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-white">
+        <option value="">Todas las temáticas</option>
+        {% for item in themes %}<option value="{{ item.slug }}" {% if filters.theme == item.slug %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
+    </select>
+    <select name="sort" class="rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-white">
+        <option value="quant" {% if filters.sort == 'quant' %}selected{% endif %}>Ordenar: QuantPro</option>
+        <option value="upside" {% if filters.sort == 'upside' %}selected{% endif %}>Ordenar: Upside valor justo</option>
+        <option value="price" {% if filters.sort == 'price' %}selected{% endif %}>Ordenar: precio</option>
+    </select>
+    <button class="md:col-span-6 md:w-40 px-4 py-2 rounded-xl bg-emerald-500 text-white font-semibold">Aplicar filtros</button>
+</form>
+
+<div class="glass rounded-2xl border border-slate-800 overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-800 flex flex-wrap justify-between gap-2">
+        <span class="text-sm text-slate-400">{{ rows|length }} activos</span>
+        <span class="text-xs {% if live_enabled %}text-emerald-400{% else %}text-amber-300{% endif %}">
+            Precios públicos y fundamentales oficiales; cada fila conserva su fuente
+        </span>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="text-slate-500 text-left">
+                <tr><th class="px-5 py-3">Activo</th><th>Clase</th><th>Fuente</th><th>Precio / día</th><th title="{{ indicators.quant_score.definition }}">QuantPro ⓘ</th><th title="{{ indicators.fair_value.definition }}">Upside valoración ⓘ</th><th title="{{ indicators.consensus.definition }}">Consenso WS ⓘ</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr class="border-t border-slate-800/70 hover:bg-slate-800/30">
+                    <td class="px-5 py-3"><a href="{% url 'trading:instrument_detail' row.instrument.id %}" class="font-bold text-white hover:text-emerald-400">{{ row.instrument.symbol }}</a><div class="text-xs text-slate-500">{{ row.instrument.name }}</div></td>
+                    <td class="text-xs text-slate-400">{{ row.instrument.get_asset_type_display }}</td>
+                    <td><span class="text-[10px] px-2 py-1 rounded {% if row.metric.source == 'DEMO' or not row.metric %}bg-amber-500/10 text-amber-300{% else %}bg-emerald-500/10 text-emerald-300{% endif %}">{% if row.metric %}{{ row.metric.source }}{% elif row.bar %}{{ row.bar.source }}{% else %}SIN DATOS{% endif %}</span></td>
+                    <td>{{ row.price|floatformat:2 }} <span class="text-xs {% if row.change >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">{% if row.change is not None %}{{ row.change|floatformat:2 }}%{% endif %}</span></td>
+                    <td><span class="px-2 py-1 rounded bg-indigo-500/10 text-indigo-300">{% if row.metric.quant_score is not None %}{{ row.metric.quant_score|floatformat:1 }}{% else %}—{% endif %}</span></td>
+                    <td class="{% if row.upside >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">{% if row.upside is not None %}{{ row.upside|floatformat:1 }}%{% else %}—{% endif %}</td>
+                    <td class="text-slate-300">{% if row.metric.analyst_buy %}{{ row.metric.analyst_buy }} Buy · {{ row.metric.analyst_hold }} Hold{% else %}—{% endif %}</td>
+                    <td><a href="{% url 'trading:instrument_detail' row.instrument.id %}" class="text-slate-500 hover:text-white">Abrir →</a></td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" class="px-5 py-10 text-center">
+                        <p class="text-slate-400">No encontramos “{{ filters.q }}” en el universo local.</p>
+                        {% if live_enabled and import_symbol %}
+                        <form id="import-symbol-form" method="post" action="{% url 'trading:api_import_symbol' %}" class="mt-4">
+                            {% csrf_token %}<input type="hidden" name="symbol" value="{{ import_symbol }}">
+                            <button class="px-4 py-2 rounded-xl bg-indigo-500 text-white font-semibold">Buscar y guardar datos actuales de {{ import_symbol }}</button>
+                            <p id="import-symbol-status" class="text-xs text-slate-500 mt-2">Se guardarán cierres públicos y, si es una acción de EE. UU., sus estados SEC.</p>
+                        </form>
+                        {% else %}
+                        <p class="text-xs text-slate-500 mt-2">Prueba quitar filtros o buscar directamente un símbolo bursátil.</p>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const importForm = document.getElementById('import-symbol-form');
+if (importForm) importForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const status = document.getElementById('import-symbol-status');
+    status.textContent = 'Importando datos…';
+    const response = await fetch(importForm.action, {method: 'POST', body: new FormData(importForm), headers: {'X-Requested-With': 'XMLHttpRequest'}});
+    const payload = await response.json();
+    if (response.ok) window.location.assign(payload.detail_url);
+    else status.textContent = payload.error || 'No se pudo importar el símbolo.';
+});
+</script>
+{% endblock %}

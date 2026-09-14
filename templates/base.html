@@ -20,6 +20,7 @@
     <!-- Custom CSS -->
     {% load static %}
     <link rel="stylesheet" href="{% static 'css/modern.css' %}">
+    <script src="{% static 'js/file-dropzone.js' %}" defer></script>
     <script>
         window.APP_BASE_PATH = "{{ request.script_name|default:'' }}";
     </script>
@@ -86,9 +87,21 @@
                     <i class="fas fa-chart-pie w-6"></i>
                     <span class="font-medium">Activos</span>
                 </a>
+                <a href="{% url 'cuentas_por_cobrar' %}" class="sidebar-item {% if 'cuentas_por_cobrar' in request.resolver_match.url_name %}active{% endif %} pl-12 text-sm opacity-90">
+                    <i class="fas fa-hand-holding-dollar w-5"></i>
+                    <span class="font-medium">Cuentas por cobrar</span>
+                </a>
                 <a href="{% url 'pasivos' %}" class="sidebar-item {% if 'pasivos' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-credit-card w-6"></i>
                     <span class="font-medium">Pasivos</span>
+                </a>
+                <a href="{% url 'altcoins:scanner' %}" class="sidebar-item {% if request.resolver_match.namespace == 'altcoins' %}active{% endif %}">
+                    <i class="fas fa-coins w-6"></i>
+                    <span class="font-medium">Altcoin Scanner</span>
+                </a>
+                <a href="{% url 'trading:dashboard' %}" class="sidebar-item {% if request.resolver_match.namespace == 'trading' %}active{% endif %}">
+                    <i class="fas fa-chart-line w-6"></i>
+                    <span class="font-medium">Investigación de mercado</span>
                 </a>
                 <a href="{% url 'banca_dashboard' %}" class="sidebar-item {% if 'banca' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-building-columns w-6"></i>

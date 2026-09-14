@@ -56,6 +56,8 @@ INSTALLED_APPS = [
     'configuracion',
     'prestamos',
     'banca',
+    'altcoins',
+    'trading',
 
     'django.contrib.humanize',
 ]
@@ -191,8 +193,10 @@ DEBUG = True
 from decouple import config as _config  # noqa: E402
 
 for _env_key in (
-    'BANCA_FERNET_KEY', 'OPENROUTER_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
+    'BANCA_FERNET_KEY', 'OPENROUTER_API_KEY',
     'CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND', 'BANK_SYNC_SESSION_DIR',
+    'TRADING_DATA_MODE',
+    'TRADING_TWELVE_DATA_API_KEY', 'TRADING_FMP_API_KEY', 'TRADING_FRED_API_KEY',
 ):
     if not os.environ.get(_env_key):
         _env_val = _config(_env_key, default='')
@@ -203,9 +207,12 @@ for _env_key in (
 BANCA_FERNET_KEY = os.environ.get('BANCA_FERNET_KEY', '')
 # OpenRouter (clasificación con IA)
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
-# Telegram (avisos de presupuesto)
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+TRADING_TWELVE_DATA_API_KEY = os.environ.get('TRADING_TWELVE_DATA_API_KEY', '')
+TRADING_FMP_API_KEY = os.environ.get('TRADING_FMP_API_KEY', '')
+TRADING_FRED_API_KEY = os.environ.get('TRADING_FRED_API_KEY', '')
+TRADING_DATA_MODE = os.environ.get('TRADING_DATA_MODE', 'LIVE').upper()
+if TRADING_DATA_MODE not in {'DEMO', 'HYBRID', 'LIVE'}:
+    TRADING_DATA_MODE = 'LIVE'
 
 # Celery (opcional; si no hay broker, sync corre inline)
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')

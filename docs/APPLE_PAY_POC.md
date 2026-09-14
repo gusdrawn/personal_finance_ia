@@ -3,7 +3,8 @@
 Esta prueba de concepto permite que un Atajo de Apple Shortcuts envíe un pago a Django
 apenas ocurre una transacción Apple Pay. El servidor crea un `MovimientoBancario`, aplica
 las reglas aprendidas y, si hay una configuración de IA, clasifica la glosa con el mismo
-servicio que usan las cargas bancarias. También intenta enviar el aviso Telegram existente.
+servicio que usan las cargas bancarias. También intenta enviar el aviso Telegram personal
+configurado por el usuario.
 
 ## 1. Crear una API key
 
@@ -54,6 +55,11 @@ Campos opcionales:
   equivalente CLP.
 - `notify`: `true` por defecto; en `false` no se intenta enviar Telegram.
 
+El movimiento nace como `PROVISIONAL` y sigue contabilizando. Al importar un estado de cuenta
+con período explícito, un calce seguro por tarjeta, monto/moneda, fecha y comercio actualiza
+esa misma fila a `FACTURADO`; no vuelve a enviar el aviso. Lo que no aparece al cierre deja de
+contabilizarse con auditoría, y un PDF sin período no cierra provisionales.
+
 El `event_id` es obligatorio. Apple Shortcuts debe generar uno nuevo por transacción. Si el
 Atajo reintenta el mismo evento, la API devuelve `200` con `duplicated: true` y no vuelve a
 crear ni notificar el movimiento. Si reutiliza el ID con datos distintos, devuelve `409`.
@@ -70,7 +76,8 @@ Respuesta resumida:
     "merchant": "Supermercado Central",
     "amount_clp": "12990.00",
     "category": "Supermercado",
-    "classification_source": "REGLA"
+    "classification_source": "REGLA",
+    "status": "PROVISIONAL"
   },
   "classification": {
     "source": "REGLA",
@@ -116,6 +123,12 @@ la tarjeta debe crearse en el iPhone porque Apple la mantiene ligada al disposit
 Para una prueba local, el servidor debe estar publicado mediante HTTPS o una red privada
 accesible desde el iPhone. No se debe exponer el servidor de desarrollo directamente a
 Internet.
+
+## Alertas
+
+Configura token, chat ID, monto mínimo y demás preferencias en **Configuración → Telegram y
+alertas**. Las credenciales se cifran por usuario. El sistema puede avisar una sola vez si el
+movimiento sigue provisional después de 45 días (plazo configurable).
 
 ## Alcance y siguientes pasos
 

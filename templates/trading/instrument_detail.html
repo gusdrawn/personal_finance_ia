@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}{{ instrument.symbol }} · Research{% endblock %}
+{% block page_title %}Ficha de activo{% endblock %}
+
+{% block content %}
+{% include 'trading/_nav.html' %}
+
+<section class="glass rounded-3xl border border-slate-700/70 overflow-hidden">
+    <div class="p-6 md:p-8 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-6">
+        <div class="flex gap-5 items-start">
+            <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-rose-600 flex items-center justify-center text-3xl font-black text-white shadow-lg">{{ instrument.symbol|slice:':1' }}</div>
+            <div>
+                <div class="flex flex-wrap items-center gap-2"><span class="text-xs px-2 py-1 rounded bg-indigo-500/10 text-indigo-300">{{ instrument.get_asset_type_display }}</span>{% for link in instrument.theme_links.all %}<span class="text-xs text-slate-500">#{{ link.theme.name }}</span>{% endfor %}</div>
+                <h1 class="text-3xl md:text-4xl font-bold text-white mt-3">{{ instrument.name }} <span class="text-slate-500">({{ instrument.symbol }})</span></h1>
+                <p class="text-slate-400 mt-2 max-w-3xl">{{ instrument.description|default:'Perfil empresarial pendiente de sincronización.' }}</p>
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <form method="post" action="{% url 'trading:api_state' instrument.id %}">{% csrf_token %}<input type="hidden" name="action" value="watch"><button class="px-4 py-2 rounded-xl {% if state.watched %}bg-emerald-500 text-white{% else %}bg-slate-800 text-slate-300{% endif %}"><i class="fas fa-star mr-2"></i>{% if state.watched %}Siguiendo{% else %}Seguir{% endif %}</button></form>
+            <form method="post" action="{% url 'trading:api_state' instrument.id %}">{% csrf_token %}<input type="hidden" name="action" value="discard"><button class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:text-rose-300"><i class="fas fa-ban mr-2"></i>Descartar</button></form>
+        </div>
+    </div>
+    <div class="px-6 md:px-8 py-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span class="{% if report.quality.is_demo %}text-amber-300{% else %}text-emerald-300{% endif %}"><i class="fas fa-circle-info mr-2"></i>{{ report.quality.note }}</span>
+        <span class="text-slate-500">Fuentes {{ report.quality.sources|join:', ' }} · corte {{ report.identity.as_of|default:'sin fecha' }}</span>
+    </div>
+</section>
+
+<section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="glass rounded-2xl p-5 border border-slate-800"><p class="text-xs uppercase tracking-widest text-slate-500">Market cap</p><p class="text-2xl font-bold text-white mt-2">{{ report.headline.market_cap_display }}</p><p class="text-xs text-slate-500 mt-1">{{ report.identity.as_of }}</p></div>
+    <div class="glass rounded-2xl p-5 border border-slate-800"><p class="text-xs uppercase tracking-widest text-slate-500">Dividend yield</p><p class="text-2xl font-bold text-emerald-300 mt-2">{% if report.headline.dividend_yield is not None %}{{ report.headline.dividend_yield|floatformat:2 }}%{% else %}—{% endif %}</p><p class="text-xs text-slate-500 mt-1">Anual</p></div>
+    <div class="glass rounded-2xl p-5 border border-slate-800"><p class="text-xs uppercase tracking-widest text-slate-500">Industria</p><p class="text-xl font-bold text-white mt-2">{{ report.identity.industry }}</p><p class="text-xs text-slate-500 mt-1">{{ instrument.sector|default:'Sin sector' }}</p></div>
+    <div class="glass rounded-2xl p-5 border border-slate-800"><p class="text-xs uppercase tracking-widest text-slate-500">Sede</p><p class="text-xl font-bold text-white mt-2">{{ report.identity.headquarters }}</p><p class="text-xs text-slate-500 mt-1">{{ instrument.country|default:'—' }}</p></div>
+</section>
+
+<section class="grid xl:grid-cols-2 gap-6">
+    <article class="glass rounded-2xl p-6 border border-slate-800 min-h-[390px]">
+        <p class="text-violet-300 text-xs font-bold uppercase tracking-widest">Ventaja competitiva</p><h2 class="text-2xl font-bold text-white mt-2">Perfil del negocio</h2><p class="text-slate-300 mt-4 leading-relaxed">{{ report.business.moat }}</p>
+        <div class="grid sm:grid-cols-3 gap-3 mt-8">{% for fact in report.business.facts %}<div class="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4"><p class="text-xs text-slate-500">{{ fact.label }}</p><p class="text-lg text-violet-200 font-semibold mt-2">{{ fact.value }}</p></div>{% empty %}<div class="sm:col-span-3 rounded-xl bg-slate-900/50 p-5 text-sm text-slate-500">Sin datos cualitativos del negocio. El proveedor conectado podrá completar geografía, activos y ventajas competitivas.</div>{% endfor %}</div>
+        <div class="mt-8 grid grid-cols-2 gap-4"><div><p class="text-xs text-slate-500">QuantPro</p><p class="text-3xl font-bold text-indigo-300 mt-1">{{ report.headline.quant_score|floatformat:1 }}</p></div><div><p class="text-xs text-slate-500">{{ valuation_label }} / upside</p><p class="text-xl font-bold {% if upside >= 0 %}text-emerald-300{% else %}text-rose-300{% endif %} mt-1">{% if valuation is not None %}{{ valuation|floatformat:2 }} · {{ upside|floatformat:1 }}%{% else %}—{% endif %}</p></div></div>
+    </article>
+    <article class="glass rounded-2xl p-6 border border-slate-800 min-h-[390px]">
+        <div class="flex flex-wrap items-start justify-between gap-3"><div><p class="text-blue-300 text-xs font-bold uppercase tracking-widest">Rendimiento</p><h2 class="text-2xl font-bold text-white mt-2">{{ instrument.symbol }} · 1 año</h2></div><div class="text-right"><p class="text-3xl font-bold text-white">{{ report.headline.price|floatformat:2 }} <span class="text-xs text-slate-500">{{ instrument.currency }}</span></p><p class="text-sm {% if report.headline.one_year_return >= 0 %}text-emerald-300{% else %}text-rose-300{% endif %}">{{ report.headline.one_year_return|floatformat:2 }}% en el periodo</p><p class="text-xs text-slate-500">{{ report.headline.drawdown|floatformat:2 }}% desde el máximo</p></div></div>
+        <div class="h-64 mt-5"><canvas id="price-report-chart"></canvas></div>
+    </article>
+</section>
+
+<section class="grid xl:grid-cols-2 gap-6">
+    <article class="glass rounded-2xl p-6 border border-slate-800"><p class="text-amber-300 text-xs font-bold uppercase tracking-widest">Revenue</p><h2 class="text-xl font-bold text-white mt-2">Ingresos anuales</h2><div class="h-64 mt-5"><canvas id="revenue-report-chart"></canvas></div></article>
+    <article class="glass rounded-2xl p-6 border border-slate-800"><p class="text-emerald-300 text-xs font-bold uppercase tracking-widest">Dividendos</p><h2 class="text-xl font-bold text-white mt-2">Dividend yield anual</h2><div class="h-64 mt-5"><canvas id="dividend-report-chart"></canvas></div></article>
+    <article class="glass rounded-2xl p-6 border border-slate-800"><p class="text-blue-300 text-xs font-bold uppercase tracking-widest">Valoración</p><h2 class="text-xl font-bold text-white mt-2">P/E histórico al cierre anual</h2><div class="h-64 mt-5"><canvas id="pe-report-chart"></canvas></div></article>
+    <article class="glass rounded-2xl p-6 border border-slate-800"><p class="text-lime-300 text-xs font-bold uppercase tracking-widest">Earnings</p><h2 class="text-xl font-bold text-white mt-2">EPS reportado y estimaciones disponibles</h2><div class="h-64 mt-5"><canvas id="eps-report-chart"></canvas></div></article>
+</section>
+
+<section class="grid xl:grid-cols-3 gap-6">
+    <article class="glass rounded-2xl p-6 border border-slate-800 xl:col-span-2"><h2 class="text-xl font-bold text-white">Fundamentales</h2><div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 text-sm"><div><p class="text-slate-500">Margen bruto</p><p class="text-white text-lg mt-1">{{ metric.gross_margin|floatformat:1 }}%</p></div><div><p class="text-slate-500">Margen operativo</p><p class="text-white text-lg mt-1">{{ metric.operating_margin|floatformat:1 }}%</p></div><div><p class="text-slate-500">ROE</p><p class="text-white text-lg mt-1">{{ metric.roe|floatformat:1 }}%</p></div><div><p class="text-slate-500">Crecimiento ingresos</p><p class="text-white text-lg mt-1">{{ metric.revenue_growth|floatformat:1 }}%</p></div><div><p class="text-slate-500">P/E</p><p class="text-white text-lg mt-1">{{ metric.pe|floatformat:2 }}x</p></div><div><p class="text-slate-500">Deuda / patrimonio</p><p class="text-white text-lg mt-1">{{ metric.debt_to_equity|floatformat:2 }}</p></div><div><p class="text-slate-500">Beta</p><p class="text-white text-lg mt-1">{{ metric.beta|floatformat:2 }}</p></div><div><p class="text-slate-500">Volatilidad 30D</p><p class="text-white text-lg mt-1">{{ metric.volatility_30d|floatformat:1 }}%</p></div></div></article>
+    <article class="glass rounded-2xl p-6 border border-slate-800"><h2 class="text-xl font-bold text-white">Consenso Wall Street</h2>{% if analyst %}<p class="text-3xl text-emerald-400 font-bold mt-4">{{ analyst.consensus }}</p><p class="text-sm text-slate-400 mt-1">Objetivo medio {{ analyst.target_mean|floatformat:2 }}</p><div class="grid grid-cols-3 gap-2 text-center mt-6"><div class="rounded-lg bg-emerald-500/10 p-3"><p class="text-xl text-emerald-300">{{ metric.analyst_buy }}</p><p class="text-[10px] text-slate-500">Buy</p></div><div class="rounded-lg bg-amber-500/10 p-3"><p class="text-xl text-amber-300">{{ metric.analyst_hold }}</p><p class="text-[10px] text-slate-500">Hold</p></div><div class="rounded-lg bg-rose-500/10 p-3"><p class="text-xl text-rose-300">{{ metric.analyst_sell }}</p><p class="text-[10px] text-slate-500">Sell</p></div></div>{% else %}<p class="text-slate-500 mt-4">Sin consenso disponible. Se mantiene vacío hasta contar con una fuente verificable.</p>{% endif %}<p class="text-xs text-slate-500 mt-6 pt-5 border-t border-slate-800">Este portal no se conecta a brokers ni permite operar.</p></article>
+</section>
+
+<section class="glass rounded-2xl p-6 border border-slate-800"><h2 class="text-xl font-bold text-white">Estados financieros</h2><div class="overflow-x-auto mt-4"><table class="w-full text-sm"><thead class="text-slate-500 text-left"><tr><th class="py-2">Periodo</th><th>Tipo</th><th>Ingresos</th><th>EBITDA</th><th>Utilidad</th><th>EPS</th><th>FCF</th><th>Fuente</th></tr></thead><tbody>{% for statement in statements %}<tr class="border-t border-slate-800/70"><td class="py-3">{{ statement.period_end|date:'Y' }}</td><td>{{ statement.get_statement_type_display }}</td><td>{% if statement.data.revenue %}${{ statement.data.revenue|intcomma }}{% else %}—{% endif %}</td><td>{% if statement.data.ebitda %}${{ statement.data.ebitda|intcomma }}{% else %}—{% endif %}</td><td>{% if statement.data.net_income %}${{ statement.data.net_income|intcomma }}{% else %}—{% endif %}</td><td>{{ statement.data.eps|default:'—' }}</td><td>{% if statement.data.free_cash_flow %}${{ statement.data.free_cash_flow|intcomma }}{% else %}—{% endif %}</td><td><span class="text-xs text-slate-500">{{ statement.source }}</span></td></tr>{% empty %}<tr><td colspan="8" class="py-6 text-slate-500">Sin estados financieros reales sincronizados.</td></tr>{% endfor %}</tbody></table></div></section>
+
+{{ report|json_script:'asset-report-data' }}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const assetReport = JSON.parse(document.getElementById('asset-report-data').textContent);
+const gridColor = 'rgba(51,65,85,.3)';
+const tickColor = '#64748b';
+const baseOptions = {responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8'}}},scales:{x:{ticks:{color:tickColor},grid:{color:gridColor}},y:{ticks:{color:tickColor},grid:{color:gridColor}}}};
+function chart(id,type,labels,datasets){const canvas=document.getElementById(id);if(!canvas||!labels.length)return;new Chart(canvas,{type,data:{labels,datasets},options:baseOptions});}
+const price=assetReport.charts.price;chart('price-report-chart','line',price.map(p=>p.x),[{label:'Cierre',data:price.map(p=>p.y),borderColor:'#fb7185',backgroundColor:'rgba(251,113,133,.1)',fill:true,pointRadius:0,tension:.25}]);
+const revenue=assetReport.charts.revenue;chart('revenue-report-chart','bar',revenue.map(p=>p.year),[{label:'Revenue (USD B)',data:revenue.map(p=>p.value/1e9),backgroundColor:'#f59e0b',borderRadius:6}]);
+const dividends=assetReport.charts.dividend_yield;chart('dividend-report-chart','line',dividends.map(p=>p.year),[{label:'Yield %',data:dividends.map(p=>p.value),borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.1)',fill:true,tension:.3}]);
+const pe=assetReport.charts.pe;chart('pe-report-chart','line',pe.map(p=>p.year),[{label:'P/E anual',data:pe.map(p=>p.value),borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.08)',fill:true,tension:.25}]);
+const eps=assetReport.charts.eps;chart('eps-report-chart','bar',eps.map(p=>p.year+(p.estimate?' E':'')),[{label:'EPS',data:eps.map(p=>p.value),backgroundColor:eps.map(p=>p.estimate?'rgba(132,204,22,.45)':'#65a30d'),borderColor:'#84cc16',borderWidth:1,borderRadius:5}]);
+</script>
+{% endblock %}

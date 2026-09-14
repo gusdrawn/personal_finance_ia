@@ -40,10 +40,32 @@ app.conf.beat_schedule = {
         "task": "banca.tasks.sync_activos_diario",
         "schedule": crontab(hour=8, minute=0),
     },
+    # Evalúa configuraciones Houm/Neat. Cada fuente decide si hoy corresponde correr.
+    "sync-fuentes-externas-configurables": {
+        "task": "banca.tasks.sync_fuentes_externas_programadas",
+        "schedule": crontab(hour="8-18", minute=0),
+    },
     # Recordatorios de pago del Calendario por Telegram (vencen en 3 días).
     "recordatorios-pagos-diario": {
         "task": "core.tasks.recordatorios_pagos_diario",
         "schedule": crontab(hour=8, minute=30),
+    },
+    "alertas-financieras-periodicas": {
+        "task": "core.tasks.alertas_financieras_periodicas",
+        "schedule": crontab(minute="*/15"),
+    },
+    # Datos de mercado del scanner de altcoins (sin operaciones de trading).
+    "sync-altcoins-mercado": {
+        "task": "altcoins.tasks.sync_altcoin_market_task",
+        "schedule": crontab(hour="*/6", minute=15),
+    },
+    "sync-altcoins-metadata": {
+        "task": "altcoins.tasks.sync_altcoin_metadata_task",
+        "schedule": crontab(day_of_week=0, hour=4, minute=30),
+    },
+    "sync-trading-diario": {
+        "task": "trading.tasks.sync_trading_daily_task",
+        "schedule": crontab(hour=18, minute=15),
     },
 }
 

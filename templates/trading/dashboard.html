@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% block title %}Centro de Investigación de Mercado{% endblock %}
+{% block page_title %}Centro de Investigación de Mercado{% endblock %}
+{% block content %}
+{% include 'trading/_nav.html' %}
+<div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+  <div><div class="flex flex-wrap items-center gap-2"><p class="text-emerald-400 text-xs font-bold uppercase tracking-widest">Portal de investigación</p><span class="px-2 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-bold text-emerald-300 tracking-wider">DATOS ACTUALES · SIN DEMO</span></div><h1 class="text-3xl font-bold text-white mt-1">Mercado en una vista</h1><p class="text-slate-400 mt-2">Información actual, evidencia y contexto para tomar decisiones. No envía órdenes, no conecta brokers y no automatiza trading.</p></div>
+  <a href="{% url 'trading:research' %}" class="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-semibold"><i class="fas fa-magnifying-glass mr-2"></i>Abrir screener</a>
+</div>
+{% if operations %}
+<section class="glass rounded-2xl p-6 border border-indigo-500/20" aria-labelledby="trading-operations-title">
+  <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-5">
+    <div>
+      <p class="text-indigo-300 text-xs font-bold uppercase tracking-widest">Administración</p>
+      <h2 id="trading-operations-title" class="text-xl font-bold text-white mt-1">Fuentes y actualización</h2>
+      <p class="text-sm text-slate-400 mt-2">Actualiza desde esta página los cierres públicos y los estados financieros oficiales.</p>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm min-w-full xl:min-w-[650px]">
+      <div class="rounded-xl bg-slate-900/60 p-3"><p class="text-xs text-slate-500">Activos</p><p class="text-white font-semibold mt-1">{{ operations.instrument_count }}</p></div>
+      <div class="rounded-xl bg-slate-900/60 p-3"><p class="text-xs text-slate-500">Cierres</p><p class="text-white font-semibold mt-1">{{ operations.bar_count }}</p></div>
+      <div class="rounded-xl bg-slate-900/60 p-3"><p class="text-xs text-slate-500">Precios</p><p class="text-emerald-300 font-semibold mt-1">{{ operations.market_provider }}</p></div>
+      <div class="rounded-xl bg-slate-900/60 p-3"><p class="text-xs text-slate-500">Fundamentales</p><p class="text-emerald-300 font-semibold mt-1">{{ operations.fundamental_provider }}</p></div>
+      <div class="rounded-xl bg-slate-900/60 p-3"><p class="text-xs text-slate-500">Macro</p><p class="{% if operations.fred_configured %}text-emerald-300{% else %}text-slate-500{% endif %} font-semibold mt-1">{% if operations.fred_configured %}FRED{% else %}Opcional{% endif %}</p></div>
+    </div>
+  </div>
+  <div class="mt-5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-200"><i class="fas fa-shield-halved mr-2"></i>Solo se presentan datos con fuente y fecha. Si una cifra no está disponible, queda vacía; nunca se reemplaza con una demo.</div>
+  <div class="grid md:grid-cols-2 gap-4 mt-6">
+    <form method="post" action="{% url 'trading:run_operation' 'sync_daily' %}" class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4" onsubmit="return confirm('¿Actualizar ahora los cierres del mercado? Esta operación puede tardar.');">
+      {% csrf_token %}
+      <div class="flex items-start gap-3"><i class="fas fa-rotate text-blue-300 mt-1"></i><div><h3 class="text-white font-semibold">Actualizar información actual</h3><p class="text-xs text-slate-400 mt-1">Sincroniza precios e históricos; para acciones también obtiene estados financieros desde SEC EDGAR.</p></div></div>
+      <button class="mt-4 w-full px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-400 text-white font-semibold">Actualizar información ahora</button>
+    </form>
+    <form method="post" action="{% url 'trading:run_operation' 'link_altcoins' %}" class="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4" onsubmit="return confirm('¿Vincular los proyectos del Altcoin Scanner con Trading?');">
+      {% csrf_token %}
+      <div class="flex items-start gap-3"><i class="fas fa-link text-violet-300 mt-1"></i><div><h3 class="text-white font-semibold">Vincular Altcoins</h3><p class="text-xs text-slate-400 mt-1">Crea fichas Trading para proyectos cripto que todavía no estén vinculados.</p></div></div>
+      <button class="mt-4 w-full px-4 py-2 rounded-lg bg-violet-500 hover:bg-violet-400 text-white font-semibold">Vincular proyectos</button>
+    </form>
+  </div>
+  <p class="text-xs text-slate-500 mt-4">{% if operations.last_sync %}Última actualización: {{ operations.last_sync.started_at|date:'d/m/Y H:i' }} · {{ operations.last_sync.get_status_display }} · {{ operations.last_sync.records_received }} procesados.{% else %}Todavía no hay sincronizaciones registradas.{% endif %}</p>
+</section>
+{% endif %}
+<section class="grid grid-cols-2 md:grid-cols-5 gap-4">
+{% for row in indices %}<a href="{% url 'trading:instrument_detail' row.instrument.id %}" class="glass rounded-2xl p-4 hover:border-emerald-500/40 border border-slate-800"><p class="text-xs text-slate-500">{{ row.instrument.symbol }}</p><p class="text-xl font-bold text-white mt-1">{{ row.price|floatformat:2 }}</p><p class="text-xs {% if row.change >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">{% if row.change is not None %}{{ row.change|floatformat:2 }}%{% else %}—{% endif %}</p><p class="text-[10px] text-slate-600 mt-1">{{ row.bar.source }} · {{ row.bar.session_date|date:'d/m/Y' }}</p></a>{% empty %}<div class="col-span-full glass rounded-2xl p-6 text-slate-400">No hay cotizaciones actuales guardadas. Un administrador puede usar <span class="text-emerald-300 font-semibold">Actualizar información ahora</span>.</div>{% endfor %}
+</section>
+<section class="grid lg:grid-cols-3 gap-6">
+  <div class="lg:col-span-2 glass rounded-2xl p-6 border border-slate-800"><div class="flex items-center justify-between mb-4"><h2 class="text-lg font-bold text-white">Top QuantPro</h2><span class="text-xs text-slate-500">Cobertura ≥ 60%</span></div><div class="overflow-x-auto"><table class="w-full text-sm"><thead class="text-slate-500 text-left"><tr><th class="pb-3">Activo</th><th>Precio</th><th>QuantPro</th><th>Valor justo</th><th>Temáticas</th></tr></thead><tbody>{% for row in rows %}<tr class="border-t border-slate-800/70"><td class="py-3"><a class="text-white font-semibold hover:text-emerald-400" href="{% url 'trading:instrument_detail' row.instrument.id %}">{{ row.instrument.symbol }}</a><div class="text-xs text-slate-500">{{ row.instrument.name }}</div></td><td>{{ row.price|floatformat:2 }}</td><td><span class="px-2 py-1 rounded bg-emerald-500/10 text-emerald-300">{{ row.metric.quant_score|floatformat:1 }}</span></td><td class="{% if row.upside >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">{% if row.upside is not None %}{{ row.upside|floatformat:1 }}%{% else %}—{% endif %}</td><td>{% for theme in row.themes|slice:':2' %}<span class="text-xs text-slate-400 mr-1">#{{ theme.name }}</span>{% endfor %}</td></tr>{% empty %}<tr><td colspan="5" class="py-6 text-slate-500">Sin datos todavía.</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="glass rounded-2xl p-6 border border-slate-800"><h2 class="text-lg font-bold text-white mb-4">Próximos catalizadores</h2>{% for event in events %}<div class="py-3 border-b border-slate-800/70 last:border-0"><div class="flex justify-between gap-3"><span class="text-white text-sm">{{ event.title }}</span><span class="text-xs {% if event.impact == 'HIGH' %}text-rose-400{% elif event.impact == 'MEDIUM' %}text-amber-400{% else %}text-slate-400{% endif %}">{{ event.impact }}</span></div><p class="text-xs text-slate-500 mt-1">{{ event.starts_at|date:'d M, H:i' }} · {{ event.country }}</p></div>{% empty %}<p class="text-slate-500 text-sm">No hay eventos próximos.</p>{% endfor %}<a href="{% url 'trading:calendar' %}" class="inline-block text-sm text-emerald-400 mt-4">Ver calendario completo →</a></div>
+</section>
+<section class="glass rounded-2xl p-6 border border-slate-800"><div class="flex items-center justify-between gap-4"><div><h2 class="text-lg font-bold text-white">Asistente de investigación</h2><p class="text-sm text-slate-400">Escribe un símbolo, empresa, sector o filtro. Cada resultado incluye precio, fecha y fuente disponibles.</p></div><span class="text-xs text-slate-500">Solo apoyo para decidir</span></div><form id="ai-form" class="flex flex-col md:flex-row gap-3 mt-4"><input id="ai-prompt" class="flex-1 rounded-xl bg-slate-900 border border-slate-700 px-4 py-3 text-white" placeholder="Ej: analiza MCD o busca empresas con P/E menor a 25"/><button class="px-4 py-3 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold">Investigar</button></form><div id="ai-result" class="hidden mt-4 rounded-xl bg-slate-900/70 p-4 text-sm"></div></section>
+{% endblock %}
+{% block extra_js %}<script>
+document.getElementById('ai-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const box = document.getElementById('ai-result'); box.classList.remove('hidden'); box.textContent = 'Consultando datos guardados con fuente…'; const body = new URLSearchParams({prompt: document.getElementById('ai-prompt').value, csrfmiddlewaretoken: '{{ csrf_token }}'}); const response = await fetch('{% url "trading:api_ai_research" %}', {method:'POST', headers:{'X-CSRFToken':'{{ csrf_token }}'}, body}); const data = await response.json(); if (data.error) { box.textContent = data.error; box.className += ' text-rose-400'; return; } box.replaceChildren(); const summary = document.createElement('p'); summary.className='text-emerald-300 font-semibold'; summary.textContent=data.result.summary; box.appendChild(summary); data.result.assets.forEach(item => { const card=document.createElement('a'); card.className='block mt-3 rounded-lg border border-slate-800 p-3 hover:border-emerald-500/40'; card.href=`{% url 'trading:research' %}?q=${encodeURIComponent(item.symbol)}`; card.textContent=`${item.symbol} · ${item.name} — ${item.price.toFixed(2)} ${item.source} (${item.as_of}) · ${item.why}`; box.appendChild(card); }); const note=document.createElement('p'); note.className='text-xs text-slate-500 mt-3'; note.textContent=[...data.result.limits, ...data.result.unknowns].join(' '); box.appendChild(note); });
+</script>{% endblock %}

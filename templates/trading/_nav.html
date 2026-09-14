@@ -1,0 +1,8 @@
+<div class="flex flex-wrap gap-2 text-sm">
+  <a href="{% url 'trading:dashboard' %}" class="px-3 py-2 rounded-lg {% if request.resolver_match.url_name == 'dashboard' %}bg-emerald-500 text-white{% else %}bg-slate-800 text-slate-300{% endif %}">Dashboard</a>
+  <a href="{% url 'trading:research' %}" class="px-3 py-2 rounded-lg {% if request.resolver_match.url_name == 'research' %}bg-emerald-500 text-white{% else %}bg-slate-800 text-slate-300{% endif %}">Research Center</a>
+  <a href="{% url 'trading:strategies' %}" class="px-3 py-2 rounded-lg {% if request.resolver_match.url_name == 'strategies' %}bg-emerald-500 text-white{% else %}bg-slate-800 text-slate-300{% endif %}">Estrategias</a>
+  <a href="{% url 'trading:calendar' %}" class="px-3 py-2 rounded-lg {% if request.resolver_match.url_name == 'calendar' %}bg-emerald-500 text-white{% else %}bg-slate-800 text-slate-300{% endif %}">Calendario económico</a>
+  <a href="{% url 'trading:watchlist' %}" class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300">Watchlist</a>
+  <a href="{% url 'trading:discarded' %}" class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300">Descartados</a>
+</div>

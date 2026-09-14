@@ -53,3 +53,6 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# Local financial extraction artifacts
+tmp/

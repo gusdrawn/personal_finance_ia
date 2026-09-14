@@ -19,6 +19,8 @@ urlpatterns = [
     path('api/gastos/', include('gastos.urls')),
     path('prestamos/', include('prestamos.urls')),
     path('banca/', include('banca.urls')),
+    path('altcoins/', include('altcoins.urls')),
+    path('trading/', include('trading.urls')),
 ]
 
 if settings.DEBUG:

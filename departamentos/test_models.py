@@ -81,7 +81,7 @@ class DepartamentoModelTest(TestCase):
     def test_banco_display_prefiere_producto_y_admite_fk_legacy(self):
         banco_producto = Banco.objects.create(nombre="Banco Producto")
         producto = Producto.objects.create(
-            banco=banco_producto, nombre="Hipoteca", tipo="CREDITO_HIPOTECARIO"
+            user=self.user, banco=banco_producto, nombre="Hipoteca", tipo="CREDITO_HIPOTECARIO"
         )
         depto_producto = self.crear_departamento(codigo="PROD")
         con_producto = CreditoHipotecario.objects.create(
