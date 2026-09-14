@@ -17,6 +17,7 @@ from bank_sync.models import (
     MovimientoNormalizado,
     PosicionNormalizada,
     SaldoEfectivo,
+    ResultadoExtraccionExterna,
 )
 
 
@@ -117,3 +118,47 @@ class AssetConnector(ABC):
             self.close()
         except Exception:
             pass
+
+
+class PaymentPlatformConnector(ABC):
+    """Contrato de solo lectura para plataformas de pago como NeatPagos."""
+
+    nombre: str = ""
+    solo_lectura: bool = True
+
+    @abstractmethod
+    def authenticate(self, **credenciales) -> None:
+        """Obtiene o restaura una sesión sin iniciar pagos."""
+
+    @abstractmethod
+    def get_payments(
+        self, *, desde: Optional[date] = None, cursor: str = ""
+    ) -> ResultadoExtraccionExterna:
+        """Devuelve historial de pagos y el cursor de continuación."""
+
+    def close(self) -> None:
+        return None
+
+
+class RentalManagerConnector(ABC):
+    """Contrato de solo lectura para administradores inmobiliarios como Houm."""
+
+    nombre: str = ""
+    solo_lectura: bool = True
+
+    @abstractmethod
+    def authenticate(self, **credenciales) -> None:
+        """Obtiene o restaura una sesión de propietario."""
+
+    @abstractmethod
+    def get_properties(self) -> list[dict]:
+        """Lista identificadores y nombres de propiedades visibles."""
+
+    @abstractmethod
+    def get_settlements(
+        self, *, periodo: Optional[date] = None, cursor: str = ""
+    ) -> ResultadoExtraccionExterna:
+        """Devuelve liquidaciones mensuales y el cursor de continuación."""
+
+    def close(self) -> None:
+        return None

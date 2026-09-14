@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -67,6 +67,9 @@ class SaldoTarjeta:
     deuda_no_facturada_clp: Decimal = Decimal("0")
     cupo_total_clp: Decimal = Decimal("0")
     cupo_disponible_clp: Decimal = Decimal("0")
+    cupo_utilizado_clp: Optional[Decimal] = None
+    cupo_avance_disponible_clp: Optional[Decimal] = None
+    fecha_vencimiento: Optional[date] = None
     # --- dólares ---
     tiene_cupo_usd: bool = False
     cupo_usd: Optional[Decimal] = None
@@ -155,3 +158,73 @@ class SaldoEfectivo:
     moneda: str  # "CLP" | "USD"
     monto: Decimal = Decimal("0")
     fuente: str = ""
+
+
+# --- plataformas de pago y administradores inmobiliarios ---------------------------
+@dataclass
+class PagoExternoNormalizado:
+    """Pago de una plataforma como Neat, sin convertirlo en gasto bancario."""
+
+    external_id: str
+    estado: str
+    monto_pagado: Decimal
+    comision: Decimal = Decimal("0")
+    descuentos: Decimal = Decimal("0")
+    moneda: str = "CLP"
+    cuenta: str = ""
+    tipo_cuenta: str = ""
+    destinatario: str = ""
+    tarjeta_ultimos4: str = ""
+    fecha_creacion: Optional[date] = None
+    fecha_cargo: Optional[date] = None
+    fecha_transferencia_esperada: Optional[date] = None
+    fecha_transferencia: Optional[date] = None
+    comprobante_referencia: str = ""
+    metadata: dict = field(default_factory=dict)
+
+    @property
+    def total_cargado(self) -> Decimal:
+        return self.monto_pagado + self.comision - self.descuentos
+
+
+@dataclass
+class DetalleLiquidacionNormalizado:
+    """Una línea que explica cómo se obtuvo el neto de una liquidación Houm."""
+
+    concepto: str
+    monto: Decimal
+    tipo: str = "OTRO"
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
+class LiquidacionArriendoNormalizada:
+    """Liquidación mensual de una propiedad administrada por Houm."""
+
+    external_id: str
+    propiedad_id: str
+    propiedad_nombre: str
+    periodo: date
+    renta_bruta: Decimal
+    deposito_neto: Decimal
+    estado: str = "CONFIRMADO"
+    moneda: str = "CLP"
+    fecha_deposito: Optional[date] = None
+    comision: Decimal = Decimal("0")
+    iva: Decimal = Decimal("0")
+    corretaje: Decimal = Decimal("0")
+    promociones: Decimal = Decimal("0")
+    reparaciones: Decimal = Decimal("0")
+    servicios: Decimal = Decimal("0")
+    ajustes: Decimal = Decimal("0")
+    detalles: list[DetalleLiquidacionNormalizado] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
+class ResultadoExtraccionExterna:
+    """Página/corrida normalizada con cursor portable entre ejecuciones."""
+
+    elementos: list = field(default_factory=list)
+    cursor: str = ""
+    obtenido_at: Optional[datetime] = None

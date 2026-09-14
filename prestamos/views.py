@@ -2,9 +2,9 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
 from datetime import date, timedelta
+from decimal import Decimal
 from .models import Prestamo
 from configuracion.models import Producto
-from gastos.models import CategoriaIngreso, RegistroMensual
 from patrimonio.models import Activo
 
 @login_required
@@ -12,14 +12,20 @@ def prestamos_index(request):
     user = request.user
     prestamos = Prestamo.objects.filter(user=user).order_by('-activo', '-created_at')
     try:
-        tarjetas = Producto.objects.filter(tipo='TDC')
+        tarjetas = Producto.objects.filter(user=user, tipo='TDC', activo=True)
     except Exception:
         tarjetas = []
     
     total_personal = prestamos.filter(tipo='PERSONAL', activo=True).aggregate(t=Sum('monto_total'))['t'] or 0
     total_terceros = prestamos.filter(tipo='TERCEROS', activo=True).aggregate(t=Sum('monto_total'))['t'] or 0
-    costo_personal = sum(p.monto_total * (p.costo_mensual_porcentaje/100) for p in prestamos.filter(tipo='PERSONAL', activo=True))
-    beneficio_terceros = sum(p.monto_total * (p.costo_mensual_porcentaje/100) for p in prestamos.filter(tipo='TERCEROS', activo=True))
+    costo_personal = sum(
+        (p.monto_mensual for p in prestamos.filter(tipo='PERSONAL', activo=True)),
+        Decimal('0'),
+    )
+    beneficio_terceros = sum(
+        (p.monto_mensual for p in prestamos.filter(tipo='TERCEROS', activo=True)),
+        Decimal('0'),
+    )
     
     # Graphic data preparation
     nombres_personal = [p.nombre for p in prestamos.filter(tipo='PERSONAL', activo=True)]
@@ -70,7 +76,7 @@ def crear_prestamo(request):
             activo=True
         )
         
-        # Auto-create CategoriaIngreso + Activo for TERCEROS loans
+        # Un préstamo a terceros es un activo; el movimiento asociado conserva la salida de caja.
         if tipo == 'TERCEROS':
             year = request.POST.get('year')
             month = request.POST.get('month')
@@ -95,7 +101,7 @@ def editar_prestamo(request, pk):
         p.activo = request.POST.get('activo') == 'on'
         p.save()
         
-        # Sync linked Activo and RegistroMensual if TERCEROS
+        # Sync linked Activo if TERCEROS.
         if p.tipo == 'TERCEROS':
             # Update Activo
             Activo.objects.filter(
@@ -108,23 +114,16 @@ def editar_prestamo(request, pk):
                 activo=p.activo
             )
             
-            # Sync offset records
-            year = request.POST.get('year')
-            month = request.POST.get('month')
-            _sync_terceros_prestamo(request.user, p, year=year, month=month)
+            _sync_terceros_prestamo(request.user, p)
             
         elif old_tipo == 'TERCEROS' and p.tipo != 'TERCEROS':
-            # If changed from TERCEROS to PERSONAL, deactivate linked Activo and delete offsets
+            # If changed from TERCEROS to PERSONAL, deactivate the linked asset.
             Activo.objects.filter(
                 user=request.user, 
                 nombre=f"Bicicleta - {old_nombre}", 
                 tipo='PRESTAMO_DADO'
             ).update(activo=False)
             
-            RegistroMensual.objects.filter(
-                user=request.user, 
-                notas__icontains=f"Bicicleta: {p.nombre}"
-            ).delete()
         
     return redirect('prestamos_index')
 
@@ -134,12 +133,6 @@ def borrar_prestamo(request, pk):
     if request.method == 'POST':
         # Clean up linked records if TERCEROS
         if p.tipo == 'TERCEROS':
-            # Delete the offset record in RegistroMensual (identified by notes)
-            RegistroMensual.objects.filter(
-                user=request.user, 
-                notas__icontains=f"Bicicleta: {p.nombre}"
-            ).delete()
-            
             # Delete linked Activo
             Activo.objects.filter(
                 user=request.user, 
@@ -151,61 +144,10 @@ def borrar_prestamo(request, pk):
 
 
 def _sync_terceros_prestamo(user, prestamo, year=None, month=None):
-    """
-    Create CategoriaIngreso (INGRESO) and Activo (PRESTAMO_DADO) for a TERCEROS loan.
-    Also creates a negative RegistroMensual entry to offset the initial expense in the selected month.
-    """
+    """Create or update the recoverable asset for a loan to a third party."""
     from decimal import Decimal
     
-    # Cast year/month to int if provided
-    if year: year = int(year)
-    if month: month = int(month)
-
-    # Default to previous month if not provided
-    if not year or not month:
-        today = date.today()
-        first_of_month = today.replace(day=1)
-        last_month = first_of_month - timedelta(days=1)
-        year = year or last_month.year
-        month = month or last_month.month
-
-    # Ensure monto_total is Decimal
     monto_dec = Decimal(str(prestamo.monto_total))
-
-    # 1. Clean up ANY previous RegistroMensual records for this specific bike to avoid duplicates
-    # We use a hidden signature in the notes for tracking
-    signature = f"[BIK-{prestamo.id}]"
-    RegistroMensual.objects.filter(user=user, notas__contains=signature).delete()
-
-    # 2. Identify/Create a dedicated category for this bike of type 'TDC'
-    # This avoids unique_together collisions in RegistroMensual when multiple bikes 
-    # are on the same card, while still grouping them with credit cards in the dashboard.
-    cat_nombre = f"Bicicleta: {prestamo.nombre}"
-    cat, created = CategoriaIngreso.objects.update_or_create(
-        user=user,
-        nombre=cat_nombre,
-        defaults={
-            'tipo': 'TDC',
-            'mostrar_en_carga_masiva': False,
-            'contabilizar': True,
-            'moneda_defecto': 'CLP',
-            'activo': True
-        }
-    )
-
-    # 3. Create the RegistroMensual offset
-    RegistroMensual.objects.create(
-        user=user,
-        year=year,
-        mes=month,
-        categoria=cat,
-        monto=-monto_dec,
-        tipo='GASTO',
-        moneda='CLP',
-        notas=f"Abono Automático {signature}"
-    )
-    
-    # 4. Auto-create/Update Activo
     Activo.objects.update_or_create(
         user=user,
         nombre=f"Bicicleta - {prestamo.nombre}",

@@ -27,3 +27,7 @@ class ConnectorNotFound(BankSyncError):
 
 class AuthError(BankSyncError):
     """Falló la autenticación de una fuente de activos (API key/secret inválidos)."""
+
+
+class InteractiveAuthRequired(AuthError):
+    """La fuente exige CAPTCHA, MFA o reautenticación manual."""

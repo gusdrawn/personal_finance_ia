@@ -6,7 +6,8 @@ from decimal import Decimal
 
 from core.models import UserProfile, Periodo, AuditoriaChange
 from configuracion.models import Banco, Producto, TipoCambio, ConfiguracionGeneral
-from gastos.models import CategoriaIngreso, RegistroMensual, GastoProgramado
+from banca.models import CategoriaTematica
+from gastos.models import MovimientoManual, GastoProgramado
 from patrimonio.models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio, MiniSesion, LineaMiniSesion
 from departamentos.models import Departamento, Arrendatario, CreditoHipotecario, Estacionamiento
 
@@ -74,6 +75,7 @@ class Command(BaseCommand):
         
         for banco_name, producto_name, tipo in products_data:
             Producto.objects.get_or_create(
+                user=user,
                 banco=banks[banco_name],
                 nombre=producto_name,
                 defaults={'tipo': tipo, 'orden': 0, 'activo': True}
@@ -130,12 +132,14 @@ class Command(BaseCommand):
         
         categories = {}
         for cat_name, cat_type in categories_data:
-            banco_defecto = banks['Santander'] if cat_name == 'Salario' else None
-            cat, _ = CategoriaIngreso.objects.get_or_create(
+            cat, _ = CategoriaTematica.objects.get_or_create(
                 user=user,
                 nombre=cat_name,
-                tipo=cat_type,
-                defaults={'orden': 0, 'activo': True, 'banco_defecto': banco_defecto}
+                defaults={
+                    'orden': 0, 'activa': True, 'origen': 'SISTEMA',
+                    'aplica_a': 'INGRESO' if cat_type == 'INGRESO' else 'EGRESO',
+                    'esencialidad_defecto': 'FIJO' if cat_type in {'GASTO_FIJO', 'SEGURO'} else 'OCIO',
+                }
             )
             categories[cat_name] = cat
 
@@ -282,15 +286,16 @@ class Command(BaseCommand):
         
         for cat_name, tipo, monto, moneda in monthly_records:
             if cat_name in categories:
-                RegistroMensual.objects.get_or_create(
-                    user=user,
-                    year=current_year,
-                    mes=current_month,
-                    categoria=categories[cat_name],
+                periodo = date(current_year, current_month, 1)
+                siguiente = date(current_year + (current_month == 12), 1 if current_month == 12 else current_month + 1, 1)
+                MovimientoManual.objects.get_or_create(
+                    user=user, periodo=periodo, categoria=categories[cat_name],
+                    direccion='INGRESO' if tipo == 'INGRESO' else 'EGRESO',
+                    es_resumen_mensual=True,
                     defaults={
-                        'monto': monto,
-                        'moneda': moneda,
-                        'tipo': tipo
+                        'fecha': siguiente - timedelta(days=1), 'monto': monto,
+                        'moneda': moneda, 'monto_clp': monto,
+                        'descripcion': cat_name,
                     }
                 )
 

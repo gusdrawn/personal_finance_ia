@@ -76,6 +76,51 @@
     </div>
 </div>
 
+{% if cupos_tdc.tarjetas %}
+<!-- Cupos de tarjetas -->
+<div class="glass p-8 rounded-2xl">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+        <div>
+            <h3 class="text-xl font-bold text-white"><i class="fas fa-credit-card mr-3 text-emerald-400"></i>Cupo disponible de tarjetas</h3>
+            <p class="text-slate-400 text-sm">Último cupo leído desde tus estados de cuenta{% if cupos_tdc.fecha %} · {{ cupos_tdc.fecha|date:"d/m/Y" }}{% endif %}</p>
+        </div>
+        <a href="{% url 'banca_deudas' %}" class="text-xs text-emerald-400 font-bold hover:underline">Ver detalle bancario <i class="fas fa-chevron-right ml-1"></i></a>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div class="p-4 rounded-xl bg-slate-800/40 border border-slate-700/40">
+            <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Cupo total</p>
+            <p class="text-2xl font-bold text-white mt-1">${{ cupos_tdc.total_clp|floatformat:0|intcomma }}</p>
+        </div>
+        <div class="p-4 rounded-xl bg-rose-500/5 border border-rose-500/10">
+            <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Utilizado</p>
+            <p class="text-2xl font-bold text-rose-400 mt-1">${{ cupos_tdc.utilizado_clp|floatformat:0|intcomma }}</p>
+        </div>
+        <div class="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10">
+            <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Disponible</p>
+            <p class="text-2xl font-bold text-emerald-400 mt-1">${{ cupos_tdc.disponible_clp|floatformat:0|intcomma }}</p>
+        </div>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead><tr class="text-slate-500 text-left text-xs uppercase">
+                <th class="pb-2">Banco / tarjeta</th><th class="pb-2 text-right">Total</th><th class="pb-2 text-right">Utilizado</th><th class="pb-2 text-right">Disponible</th><th class="pb-2 text-right">Avance disponible</th>
+            </tr></thead>
+            <tbody>
+            {% for tarjeta in cupos_tdc.tarjetas %}
+                <tr class="border-t border-slate-700/50">
+                    <td class="py-3 text-slate-200 font-medium">{{ tarjeta.banco.nombre }}<span class="block text-xs text-slate-500">{{ tarjeta.producto.nombre }}</span></td>
+                    <td class="py-3 text-right text-slate-300">${{ tarjeta.cupo_total_clp|default_if_none:0|floatformat:0|intcomma }}</td>
+                    <td class="py-3 text-right text-rose-300">${{ tarjeta.cupo_utilizado_clp|default_if_none:0|floatformat:0|intcomma }}</td>
+                    <td class="py-3 text-right font-bold text-emerald-400">${{ tarjeta.cupo_disponible_clp|default_if_none:0|floatformat:0|intcomma }}</td>
+                    <td class="py-3 text-right text-slate-400">{% if tarjeta.cupo_avance_disponible_clp is not None %}${{ tarjeta.cupo_avance_disponible_clp|floatformat:0|intcomma }}{% else %}—{% endif %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 <!-- Row 2: Flujo de Caja + Composición + Liquidez Pie -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Ingresos vs Gastos with Month Selector -->
@@ -84,6 +129,7 @@
             <div>
                 <h3 class="text-xl font-bold text-white">Flujo de Caja</h3>
                 <p class="text-slate-400 text-sm">Ingresos vs gastos mensuales</p>
+                <a href="{% url 'gastos-table' %}?year={{ target_year }}&month={{ target_month }}&perspectiva=caja" class="text-xs text-emerald-400 hover:underline">Abrir detalle en Gastos Mensuales</a>
             </div>
             <div class="flex items-center space-x-2">
                 <select id="month-selector" onchange="changeMonth()" class="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold focus:outline-none focus:border-emerald-500">

@@ -1,19 +1,19 @@
 """
 Recordatorios de pago a partir del Calendario, notificados por Telegram.
 
-Reúne los vencimientos próximos (los próximos `dias` días) desde:
-  - `gastos.GastoProgramado`  -> próxima ocurrencia según su frecuencia.
-  - `gastos.CategoriaIngreso.dia_cobro` -> próximo día de cobro del mes.
+Reúne los vencimientos próximos desde `gastos.GastoProgramado`. Los vencimientos de
+TDC y fuentes externas se muestran en Calendario, sin recrear recordatorios legados.
 
 y los envía por Telegram reutilizando `banca.services.notificador.enviar_telegram`.
 
-Diseñado para correr programado (Celery Beat, ver core/tasks.py). El chat de Telegram es el
-global (`TELEGRAM_CHAT_ID`); mover a chat por usuario queda como mejora futura.
+Diseñado para correr programado (Celery Beat, ver core/tasks.py) usando las credenciales
+y preferencias cifradas de cada usuario.
 """
 
 from __future__ import annotations
 
 import calendar
+import hashlib
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -68,7 +68,7 @@ def vencimientos_proximos(
     user, *, dias: int = 3, hoy: date | None = None
 ) -> list[dict]:
     """Lista ordenada de vencimientos en [hoy, hoy+dias]. Cada item: fecha/nombre/monto/tipo."""
-    from gastos.models import CategoriaIngreso, GastoProgramado
+    from gastos.models import GastoProgramado
 
     hoy = hoy or date.today()
     limite = hoy + timedelta(days=dias)
@@ -79,13 +79,6 @@ def vencimientos_proximos(
         if f and hoy <= f <= limite:
             items.append(
                 {"fecha": f, "nombre": g.nombre, "monto": g.monto, "tipo": "programado"}
-            )
-
-    for c in CategoriaIngreso.objects.filter(user=user, dia_cobro__isnull=False):
-        f = proximo_dia_cobro(c.dia_cobro, hoy)
-        if hoy <= f <= limite:
-            items.append(
-                {"fecha": f, "nombre": c.nombre, "monto": None, "tipo": "cobro"}
             )
 
     items.sort(key=lambda x: (x["fecha"], x["nombre"]))
@@ -107,9 +100,25 @@ def enviar_recordatorios(user, *, dias: int = 3, hoy: date | None = None) -> boo
     if not items:
         return False
 
-    lineas = []
+    try:
+        cfg = user.config_notificaciones
+    except Exception:
+        return False
+    if not cfg.avisar_vencimientos:
+        return False
+    enviado = False
     for it in items:
         monto = f" · {_miles(it['monto'])}" if it["monto"] is not None else ""
-        lineas.append(f"• {it['fecha']:%d/%m} {it['nombre']}{monto}")
-    texto = f"📅 <b>Pagos próximos ({dias} días)</b>\n" + "\n".join(lineas)
-    return enviar_telegram(texto)
+        texto = (
+            f"📅 <b>Pago próximo ({dias} días)</b>\n"
+            f"• {it['fecha']:%d/%m} {it['nombre']}{monto}"
+        )
+        identidad = f"{it['tipo']}:{it['nombre']}:{it['fecha'].isoformat()}"
+        clave = f"vencimiento:{hashlib.sha256(identidad.encode()).hexdigest()}"
+        enviado = enviar_telegram(
+            texto,
+            user=user,
+            tipo="VENCIMIENTO",
+            clave_idempotencia=clave,
+        ) or enviado
+    return enviado

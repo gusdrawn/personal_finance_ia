@@ -8,6 +8,7 @@ urlpatterns = [
     path('patrimonio/', views.patrimonio, name='patrimonio'),
     path('departamentos/', views.departamentos, name='departamentos'),
     path('activos/', views.activos_view, name='activos'),
+    path('cuentas-por-cobrar/', views.cuentas_por_cobrar_view, name='cuentas_por_cobrar'),
     path('pasivos/', views.pasivos_view, name='pasivos'),
     path('configuracion/', views.configuracion, name='configuracion'),
     path('calendario/', views.calendario, name='calendario'),
@@ -16,6 +17,15 @@ urlpatterns = [
     path('activos/crear/', views.crear_activo, name='crear_activo'),
     path('activos/editar/<int:pk>/', views.editar_activo, name='editar_activo'),
     path('activos/borrar/<int:pk>/', views.borrar_activo, name='borrar_activo'),
+
+    # Cuentas por cobrar
+    path('cuentas-por-cobrar/crear/', views.crear_cuenta_por_cobrar, name='crear_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/detalle/agregar/', views.agregar_detalle_cuenta_por_cobrar, name='agregar_detalle_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/detalle/<int:pk>/editar/', views.editar_detalle_cuenta_por_cobrar, name='editar_detalle_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/abono/agregar/', views.registrar_abono_cuenta_por_cobrar, name='registrar_abono_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/abono/<int:pk>/borrar/', views.borrar_abono_cuenta_por_cobrar, name='borrar_abono_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/<int:pk>/renovar/', views.renovar_cuenta_por_cobrar, name='renovar_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/<int:pk>/alternar/', views.alternar_cuenta_por_cobrar, name='alternar_cuenta_por_cobrar'),
     
     # Pasivos CRUD
     path('pasivos/crear/', views.crear_pasivo, name='crear_pasivo'),
@@ -50,8 +60,16 @@ urlpatterns = [
     path('configuracion/crear-producto/', views.crear_producto, name='crear_producto'),
     path('configuracion/editar-producto/<int:pk>/', views.editar_producto, name='editar_producto'),
     path('configuracion/borrar-producto/<int:pk>/', views.borrar_producto, name='borrar_producto'),
+    path('configuracion/vincular-producto/', views.vincular_producto_reemplazo, name='vincular_producto_reemplazo'),
     path('configuracion/apple-pay/key/crear/', views.crear_apple_pay_key, name='crear_apple_pay_key'),
     path('configuracion/apple-pay/key/<int:pk>/revocar/', views.revocar_apple_pay_key, name='revocar_apple_pay_key'),
+    path('configuracion/notificaciones/guardar/', views.guardar_notificaciones, name='guardar_notificaciones'),
+    path('configuracion/notificaciones/probar/', views.probar_notificaciones_telegram, name='probar_notificaciones_telegram'),
+    path('configuracion/notificaciones/retirar/', views.retirar_notificaciones_telegram, name='retirar_notificaciones_telegram'),
+    path('configuracion/notificaciones/limites/guardar/', views.guardar_limite_categoria, name='guardar_limite_categoria'),
+    path('configuracion/notificaciones/limites/<int:pk>/borrar/', views.borrar_limite_categoria, name='borrar_limite_categoria'),
+    path('configuracion/integraciones/<str:provider>/guardar/', views.guardar_market_api_key, name='guardar_market_api_key'),
+    path('configuracion/integraciones/<str:provider>/retirar/', views.retirar_market_api_key, name='retirar_market_api_key'),
     
     # Calendario
     path('calendario/programado/crear/', views.crear_gasto_programado, name='crear_gasto_programado'),

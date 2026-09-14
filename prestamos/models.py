@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 
 
@@ -37,3 +39,10 @@ class Prestamo(models.Model):
 
     def __str__(self):
         return f"{self.nombre} - {self.get_tipo_display()} (${self.monto_total})"
+
+    @property
+    def monto_mensual(self):
+        """Interés/costo mensual vigente para mostrarlo junto a la bicicleta."""
+        if not self.activo:
+            return Decimal("0")
+        return self.monto_total * self.costo_mensual_porcentaje / Decimal("100")

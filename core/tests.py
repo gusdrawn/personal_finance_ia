@@ -2,8 +2,11 @@
 
 from datetime import date
 from decimal import Decimal
+import os
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from cryptography.fernet import Fernet
 from django.contrib.auth.models import AnonymousUser, User
 from django.test import RequestFactory, TestCase, override_settings
 from django.template.loader import render_to_string
@@ -15,8 +18,10 @@ from core.services.recordatorios import (
     proximo_dia_cobro,
     vencimientos_proximos,
 )
-from gastos.models import CategoriaIngreso, GastoProgramado
+from gastos.models import GastoProgramado
 from banca.models import ApplePayApiKey
+from configuracion.models import CredencialIntegracion
+from configuracion.services.integrations import get_coinmarketcap_api_key
 
 
 class ProximaOcurrenciaTest(TestCase):
@@ -86,14 +91,9 @@ class VencimientosProximosTest(TestCase):
             fecha_inicio=date(2026, 5, 25),
             frecuencia="MENSUAL",
         )
-        # CategoriaIngreso con dia_cobro 11 -> dentro de ventana
-        CategoriaIngreso.objects.create(
-            user=self.user, nombre="Luz", tipo="GASTO_FIJO", dia_cobro=11
-        )
-
         items = vencimientos_proximos(self.user, dias=3, hoy=hoy)
         nombres = [i["nombre"] for i in items]
-        self.assertEqual(nombres, ["Luz", "Netflix"])  # ordenado por fecha (11, 12)
+        self.assertEqual(nombres, ["Netflix"])
         self.assertNotIn("Seguro", nombres)
 
 
@@ -127,10 +127,26 @@ class QuickLinksTemplateTest(TestCase):
         )
 
         self.assertIn("Accesos rápidos", rendered)
+        self.assertIn('class="app-header-title"', rendered)
+        self.assertIn('class="app-header-user"', rendered)
+        self.assertIn('class="quick-links-navbar"', rendered)
+        self.assertLess(
+            rendered.index('class="app-header-title"'),
+            rendered.index('class="quick-links-navbar"'),
+        )
+        self.assertLess(
+            rendered.index('class="quick-links-navbar"'),
+            rendered.index('class="app-header-user"'),
+        )
+        self.assertNotIn('class="sidebar-quick-links"', rendered)
+        self.assertEqual(rendered.count('class="quick-links-group"'), 3)
+        self.assertIn('aria-label="Bancos"', rendered)
+        self.assertIn('aria-label="Previsión y deudas"', rendered)
+        self.assertIn('aria-label="Inversiones"', rendered)
         for label, url in self.QUICK_LINKS.items():
             self.assertIn(f'href="{url}"', rendered)
-            self.assertIn(f">{label}<", rendered)
-        self.assertEqual(rendered.count("quick-link-icon"), len(self.QUICK_LINKS))
+            self.assertIn(f'class="quick-link-label">{label}</span>', rendered)
+        self.assertEqual(rendered.count('quick-link-icon"'), len(self.QUICK_LINKS))
         self.assertEqual(rendered.count('target="_blank"'), len(self.QUICK_LINKS))
         self.assertEqual(rendered.count('rel="noopener noreferrer"'), len(self.QUICK_LINKS))
 
@@ -212,6 +228,81 @@ class ApplePayConfigurationTest(TestCase):
 
         key = ApplePayApiKey.objects.get(user=self.user)
         self.assertEqual(len(key.nombre), 80)
+
+
+class MarketIntegrationConfigurationTest(TestCase):
+    FERNET_KEY = Fernet.generate_key().decode()
+
+    def setUp(self):
+        self.staff = User.objects.create_user(username="market_staff", password="secret", is_staff=True)
+        self.viewer = User.objects.create_user(username="market_viewer", password="secret")
+        self.environment = patch.dict(os.environ, {"BANCA_FERNET_KEY": self.FERNET_KEY}, clear=False)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    @override_settings(BANCA_FERNET_KEY=FERNET_KEY)
+    def test_staff_configura_todas_las_integraciones_desde_ajustes(self):
+        self.client.force_login(self.staff)
+        response = self.client.get(reverse("configuracion"))
+
+        self.assertContains(response, "Integraciones de mercado")
+        self.assertContains(response, "CoinGecko")
+        self.assertContains(response, "CoinMarketCap")
+        self.assertContains(response, "Tokenomist")
+        self.assertContains(response, "Brave Search")
+
+    @override_settings(BANCA_FERNET_KEY=FERNET_KEY)
+    def test_guarda_coinmarketcap_cifrada_y_el_resolver_la_usa(self):
+        self.client.force_login(self.staff)
+        secret = "cmc-secret-key-123456"
+        response = self.client.post(
+            reverse("guardar_market_api_key", args=[CredencialIntegracion.PROVIDER_COINMARKETCAP]),
+            {"api_key": secret},
+        )
+
+        self.assertRedirects(response, reverse("configuracion"), fetch_redirect_response=False)
+        credential = CredencialIntegracion.objects.get(provider=CredencialIntegracion.PROVIDER_COINMARKETCAP)
+        self.assertNotIn(secret.encode(), bytes(credential.api_key_cifrada))
+        self.assertEqual(credential.key_prefix, secret[:6])
+        self.assertEqual(get_coinmarketcap_api_key(), secret)
+        self.assertEqual(credential.updated_by, self.staff)
+
+    @override_settings(BANCA_FERNET_KEY=FERNET_KEY)
+    def test_usuario_normal_no_ve_ni_modifica_integraciones_globales(self):
+        self.client.force_login(self.viewer)
+        page = self.client.get(reverse("configuracion"))
+        self.assertNotContains(page, "Integraciones de mercado")
+
+        response = self.client.post(
+            reverse("guardar_market_api_key", args=[CredencialIntegracion.PROVIDER_COINMARKETCAP]),
+            {"api_key": "una-clave-no-autorizada"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(CredencialIntegracion.objects.exists())
+
+    @override_settings(BANCA_FERNET_KEY=FERNET_KEY)
+    def test_retirar_clave_impide_que_el_scanner_la_resuelva(self):
+        credential = CredencialIntegracion.objects.create(
+            provider=CredencialIntegracion.PROVIDER_COINMARKETCAP,
+            updated_by=self.staff,
+        )
+        credential.set_api_key("cmc-key-to-remove")
+        credential.save()
+        self.client.force_login(self.staff)
+
+        response = self.client.post(
+            reverse("retirar_market_api_key", args=[CredencialIntegracion.PROVIDER_COINMARKETCAP]),
+        )
+
+        credential.refresh_from_db()
+        self.assertRedirects(response, reverse("configuracion"), fetch_redirect_response=False)
+        self.assertFalse(credential.active)
+        self.assertIsNone(credential.api_key_cifrada)
+        self.assertEqual(get_coinmarketcap_api_key(), "")
+
+    def test_variable_coinmarketcap_del_entorno_no_se_usa(self):
+        with patch.dict(os.environ, {"COINMARKETCAP_API_KEY": "legacy-env-key"}, clear=False):
+            self.assertEqual(get_coinmarketcap_api_key(), "")
 
 
 class PassengerMountRoutingTest(TestCase):

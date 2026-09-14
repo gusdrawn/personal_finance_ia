@@ -21,6 +21,9 @@ from bank_sync.exceptions import ConnectorNotFound
 # tipos de fuente que soporta el orquestador de sincronización
 TIPO_BANCO = "banco"
 TIPOS_ACTIVO = ("cripto", "inversion", "afp")
+TIPO_PAGOS = "pagos"
+TIPO_ADMINISTRACION_INMOBILIARIA = "administracion_inmobiliaria"
+TIPOS_EXTERNOS = (TIPO_PAGOS, TIPO_ADMINISTRACION_INMOBILIARIA)
 
 
 @dataclass
@@ -69,6 +72,11 @@ def connector_tipo(nombre: str) -> str:
 def es_fuente_activos(nombre: str) -> bool:
     """True si la fuente reporta posiciones (cripto/inversión/AFP) en vez de deuda."""
     return connector_tipo(nombre) in TIPOS_ACTIVO
+
+
+def es_fuente_externa(nombre: str) -> bool:
+    """True para plataformas que enriquecen movimientos sin reemplazarlos."""
+    return connector_tipo(nombre) in TIPOS_EXTERNOS
 
 
 def get_connector(nombre: str, **kwargs):
@@ -149,4 +157,32 @@ def _load_fintual() -> type:
 
 register_connector(
     "fintual", _load_fintual, tipo="inversion", capabilities=("posiciones",)
+)
+
+
+# Houm y Neat se registran aunque el acceso automático permanezca experimental: sus
+# importadores oficiales usan los mismos nombres y el mismo pipeline normalizado.
+def _load_neat() -> type:
+    from bank_sync.connectors.neat import NeatConnector
+
+    return NeatConnector
+
+
+def _load_houm() -> type:
+    from bank_sync.connectors.houm import HoumConnector
+
+    return HoumConnector
+
+
+register_connector(
+    "neat",
+    _load_neat,
+    tipo=TIPO_PAGOS,
+    capabilities=("pagos", "importacion", "lectura_experimental"),
+)
+register_connector(
+    "houm",
+    _load_houm,
+    tipo=TIPO_ADMINISTRACION_INMOBILIARIA,
+    capabilities=("propiedades", "liquidaciones", "importacion", "lectura_experimental"),
 )

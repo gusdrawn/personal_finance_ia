@@ -80,6 +80,113 @@
     </div>
 </div>
 
+<!-- Telegram y alertas -->
+<div id="notificaciones" class="glass p-8 rounded-2xl mb-8 border border-sky-500/20">
+    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+        <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-sky-400">Personal por usuario</p>
+            <h3 class="mt-1 text-xl font-bold text-white"><i class="fab fa-telegram text-sky-400 mr-3"></i>Telegram y alertas</h3>
+            <p class="mt-2 max-w-3xl text-sm text-slate-400">Decide qué avisos recibir. El token y el chat ID se cifran y nunca se comparten con otros usuarios.</p>
+        </div>
+        {% if telegram_configurado %}<span class="rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-300">Configurado · {{ config_notificaciones.telegram_token_prefijo }}…</span>{% else %}<span class="rounded-full bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-300">Faltan credenciales</span>{% endif %}
+    </div>
+
+    <form method="POST" action="{% url 'guardar_notificaciones' %}" class="mt-6 space-y-6">
+        {% csrf_token %}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div><label class="block text-xs text-slate-500 mb-1">Bot token {% if telegram_configurado %}<span class="text-emerald-400">(guardado; vacío conserva)</span>{% endif %}</label>{{ notification_form.telegram_bot_token }}</div>
+            <div><label class="block text-xs text-slate-500 mb-1">Chat ID {% if telegram_configurado %}<span class="text-emerald-400">(guardado; vacío conserva)</span>{% endif %}</label>{{ notification_form.telegram_chat_id }}</div>
+            <div><label class="block text-xs text-slate-500 mb-1">Zona horaria</label>{{ notification_form.zona_horaria }}</div>
+            <div><label class="block text-xs text-slate-500 mb-1">Monto mínimo para aviso inmediato</label>{{ notification_form.monto_minimo_gasto }}</div>
+            <div><label class="block text-xs text-slate-500 mb-1">Hora del resumen diario</label>{{ notification_form.hora_resumen_diario }}</div>
+            <div><label class="block text-xs text-slate-500 mb-1">Días antes de un vencimiento</label>{{ notification_form.dias_anticipacion_vencimientos }}</div>
+            <div><label class="block text-xs text-slate-500 mb-1">Días para considerar Apple Pay atrasado</label>{{ notification_form.dias_provisional_atrasado }}</div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.telegram_activo }} Telegram activo</label>
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.avisar_gasto_inmediato }} Cada gasto</label>
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.resumen_diario }} Resumen diario</label>
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.resumen_importacion_pdf }} Resumen de PDF</label>
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.avisar_ocio }} Umbral de Ocio</label>
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.avisar_limites_categoria }} Límites por categoría</label>
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.avisar_vencimientos }} Vencimientos</label>
+            <label class="flex items-center gap-2 p-3 rounded-xl bg-slate-900/30 border border-slate-700/50 text-sm text-slate-300">{{ notification_form.avisar_provisional_atrasado }} Apple Pay atrasado</label>
+        </div>
+        <button class="rounded-xl bg-sky-500 px-5 py-3 text-sm font-black text-slate-950 hover:bg-sky-400"><i class="fas fa-save mr-2"></i>Guardar notificaciones</button>
+    </form>
+    <div class="mt-4 flex flex-wrap gap-3">
+        <form method="POST" action="{% url 'probar_notificaciones_telegram' %}">{% csrf_token %}<button class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-bold text-emerald-300"><i class="fas fa-paper-plane mr-1"></i>Probar Telegram</button></form>
+        {% if telegram_configurado %}<form method="POST" action="{% url 'retirar_notificaciones_telegram' %}" onsubmit="return confirm('¿Retirar el token y el chat ID guardados?');">{% csrf_token %}<button class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-300"><i class="fas fa-trash mr-1"></i>Retirar credenciales</button></form>{% endif %}
+    </div>
+    <div class="mt-8 border-t border-slate-700/50 pt-6">
+        <h4 class="font-bold text-white">Límites mensuales por categoría</h4>
+        <p class="mt-1 text-xs text-slate-500">Montos fijos en CLP. La alerta se envía una sola vez por categoría y mes.</p>
+        <form method="POST" action="{% url 'guardar_limite_categoria' %}" class="mt-4 grid grid-cols-1 md:grid-cols-[2fr_1fr_auto] gap-3 items-end">
+            {% csrf_token %}
+            <div><label class="block text-xs text-slate-500 mb-1">Categoría</label><select name="categoria" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200">{% for categoria in categorias_tematicas %}<option value="{{ categoria.pk }}">{{ categoria.nombre }}</option>{% endfor %}</select></div>
+            <div><label class="block text-xs text-slate-500 mb-1">Límite CLP</label><input type="number" name="monto_mensual_clp" min="1" step="1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"></div>
+            <button class="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-600">Guardar límite</button>
+        </form>
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2">
+            {% for limite in limites_categoria %}<div class="flex items-center justify-between gap-3 rounded-xl border border-slate-700/50 bg-slate-900/30 p-3"><span class="text-sm text-slate-300">{{ limite.categoria.nombre }} · ${{ limite.monto_mensual_clp|floatformat:0 }}</span><form method="POST" action="{% url 'borrar_limite_categoria' limite.pk %}">{% csrf_token %}<button class="text-xs text-rose-300">Eliminar</button></form></div>{% empty %}<p class="text-sm text-slate-500">No hay límites por categoría configurados.</p>{% endfor %}
+        </div>
+    </div>
+    {% if notificaciones_recientes %}<div class="mt-8 border-t border-slate-700/50 pt-6"><h4 class="font-bold text-white">Actividad reciente</h4><div class="mt-3 space-y-2">{% for aviso in notificaciones_recientes %}<div class="flex items-center justify-between gap-3 text-xs"><span class="text-slate-400">{{ aviso.tipo }} · {{ aviso.created_at|date:'d/m/Y H:i' }}</span><span class="{% if aviso.estado == 'ENVIADO' %}text-emerald-400{% elif aviso.estado == 'ERROR' %}text-rose-400{% else %}text-amber-400{% endif %}">{{ aviso.get_estado_display }}</span></div>{% endfor %}</div></div>{% endif %}
+</div>
+
+{% if market_integrations %}
+<!-- Integraciones de mercado -->
+<div class="glass p-8 rounded-2xl mb-8 border border-sky-500/20">
+    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+        <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-sky-400">Solo administradores</p>
+            <h3 class="mt-1 text-xl font-bold text-white"><i class="fas fa-chart-line text-sky-400 mr-3"></i>Integraciones de mercado</h3>
+            <p class="mt-2 max-w-2xl text-sm text-slate-400">Administra aquí todas las fuentes del Altcoin Scanner. Estas integraciones no leen API keys desde archivos de entorno.</p>
+        </div>
+    </div>
+
+    {% if not integration_encryption_ready %}
+    <div class="mt-5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">Falta la llave maestra de cifrado del servidor. Es la única credencial de infraestructura que debe existir fuera de la base de datos.</div>
+    {% endif %}
+
+    <div class="mt-6 grid gap-4 xl:grid-cols-4">
+        {% for integration in market_integrations %}
+        <article class="rounded-xl border border-slate-700/50 bg-slate-900/30 p-5">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+                <div class="flex items-center gap-2">
+                    <p class="font-bold text-white">{{ integration.label }}</p>
+                    {% if integration.configured %}<span class="rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-300">Configurado</span>{% else %}<span class="rounded-full bg-slate-700/40 px-2 py-1 text-[10px] font-bold text-slate-400">Sin clave</span>{% endif %}
+                </div>
+                <p class="mt-2 text-xs text-slate-400">{{ integration.description }}</p>
+                {% if integration.configured %}
+                <p class="mt-2 text-[11px] text-slate-500">Prefijo <span class="font-mono text-sky-300">{{ integration.credential.key_prefix }}…</span> · {{ integration.credential.updated_at|date:"d/m/Y H:i" }}</p>
+                {% else %}
+                <p class="mt-2 text-[11px] text-slate-500">Puedes usar el proveedor sin clave solo cuando su API pública lo permita.</p>
+                {% endif %}
+            </div>
+            {% if integration.configured %}
+            <form method="POST" action="{% url 'retirar_market_api_key' integration.provider %}" onsubmit="return confirm('¿Retirar esta API key?');">
+                {% csrf_token %}
+                <button class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/20"><i class="fas fa-trash mr-1"></i>Retirar clave</button>
+            </form>
+            {% endif %}
+        </div>
+
+        {% if integration_encryption_ready %}
+        <form method="POST" action="{% url 'guardar_market_api_key' integration.provider %}" class="mt-5 grid gap-3">
+            {% csrf_token %}
+            <label class="sr-only" for="integration-key-{{ integration.provider }}">API key de {{ integration.label }}</label>
+            <input id="integration-key-{{ integration.provider }}" type="password" name="api_key" minlength="8" maxlength="500" required autocomplete="new-password" placeholder="API key de {{ integration.label }}" class="w-full rounded-xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-sm text-white outline-none focus:border-sky-500">
+            <button class="rounded-xl bg-sky-500 px-5 py-3 text-sm font-black text-slate-950 hover:bg-sky-400">{% if integration.configured %}Reemplazar clave{% else %}Guardar cifrada{% endif %}</button>
+        </form>
+        {% endif %}
+        </article>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
     <!-- Tipo de Cambio -->
     <div class="glass p-8 rounded-2xl">
@@ -145,13 +252,10 @@
                     </div>
                 </div>
                 <div class="flex items-center space-x-3">
-                    {% if not banco.mostrar_en_carga_masiva %}
-                    <span class="text-[9px] text-slate-400 border border-slate-700 rounded px-1" title="Oculto en Carga Masiva"><i class="fas fa-eye-slash"></i></span>
-                    {% endif %}
                     <span class="px-3 py-1 bg-slate-700/50 text-[10px] font-black text-slate-400 rounded-lg border border-slate-700 uppercase tracking-tighter">
-                        {{ banco.productos.count }} PROD
+                        {{ banco.productos_usuario|length }} PROD
                     </span>
-                    <button type="button" onclick="editBanco({{ banco.id }}, '{{ banco.nombre|escapejs }}', '{{ banco.notas|escapejs }}', {{ banco.mostrar_en_carga_masiva|yesno:'true,false' }})" class="text-slate-400 hover:text-sky-400 ml-1"><i class="fas fa-edit"></i></button>
+                    <button type="button" onclick="editBanco({{ banco.id }}, '{{ banco.nombre|escapejs }}', '{{ banco.notas|escapejs }}')" class="text-slate-400 hover:text-sky-400 ml-1"><i class="fas fa-edit"></i></button>
                     <form action="{% url 'borrar_banco' banco.id %}" method="POST" class="inline" onsubmit="return confirm('¿Seguro quieres borrar este banco?');">
                         {% csrf_token %}
                         <button type="submit" class="text-slate-400 hover:text-rose-400 ml-1"><i class="fas fa-trash"></i></button>
@@ -160,11 +264,11 @@
             </div>
             <!-- Sublist Productos -->
             <div class="px-8 pb-4 space-y-2 relative border-l-2 border-slate-800 ml-4 mt-2">
-                {% for prod in banco.productos.all %}
+                {% for prod in banco.productos_usuario %}
                 <div class="flex justify-between items-center text-[10px] bg-slate-800/30 p-2 rounded">
-                    <span><i class="fas fa-credit-card text-slate-500 mr-2"></i>{{ prod.nombre }} <span class="text-slate-500">({{ prod.get_tipo_display }})</span> {% if prod.tiene_cupo_usd %}<span class="text-[8px] border border-sky-500 text-sky-400 px-1 rounded ml-1">USD</span>{% endif %} {% if not prod.contabilizar %}<span class="text-[8px] uppercase font-black text-rose-500 border border-rose-900 px-1 rounded ml-1">No Cont.</span>{% endif %} {% if prod.dia_cobro %}<span class="text-[8px] uppercase font-black text-indigo-400 border border-indigo-900 px-1 rounded ml-1"><i class="far fa-calendar-alt"></i> {{ prod.dia_cobro }}</span>{% endif %}</span>
+                    <span><i class="fas fa-credit-card text-slate-500 mr-2"></i>{{ prod.nombre }} {% if prod.ultimos4 %}••••{{ prod.ultimos4 }}{% endif %} <span class="text-slate-500">({{ prod.get_tipo_display }} · {{ prod.get_origen_display }})</span> {% if prod.requiere_revision %}<span class="text-amber-400">Revisar vínculo</span>{% endif %}</span>
                     <div>
-                        <button type="button" onclick="editProducto({{ prod.id }}, {{ banco.id }}, '{{ prod.nombre|escapejs }}', '{{ prod.tipo }}', {{ prod.tiene_cupo_usd|yesno:'true,false' }}, {{ prod.contabilizar|yesno:'true,false' }}, '{{ prod.dia_cobro|default:'' }}')" class="text-slate-400 hover:text-sky-400 mr-2"><i class="fas fa-edit"></i></button>
+                        <button type="button" onclick="editProducto({{ prod.id }}, {{ banco.id }}, '{{ prod.nombre|escapejs }}', '{{ prod.tipo }}', '{{ prod.ultimos4 }}', {{ prod.tiene_cupo_usd|yesno:'true,false' }}, '{{ prod.dia_cobro|default:'' }}')" class="text-slate-400 hover:text-sky-400 mr-2"><i class="fas fa-edit"></i></button>
                         <form action="{% url 'borrar_producto' prod.id %}" method="POST" class="inline" onsubmit="return confirm('¿Borrar producto?');">
                             {% csrf_token %}
                             <button type="submit" class="text-slate-400 hover:text-rose-400"><i class="fas fa-trash"></i></button>
@@ -177,6 +281,18 @@
             {% endfor %}
         </div>
     </div>
+
+    {% if productos_revision %}
+    <div class="glass p-6 rounded-2xl lg:col-span-2 border border-amber-500/30">
+      <h3 class="font-bold text-amber-300 mb-2">Productos importados por vincular</h3>
+      <p class="text-sm text-slate-400 mb-4">Elige una configuración antigua y la ficha importada canónica. Sólo se aceptan productos del mismo banco y tipo.</p>
+      <form method="post" action="{% url 'vincular_producto_reemplazo' %}" class="flex flex-wrap gap-3">{% csrf_token %}
+        <select name="anterior_id" required class="bg-slate-900 rounded-lg"><option value="">Configuración antigua</option>{% for p in productos_revision %}{% if p.origen != 'IMPORTACION' %}<option value="{{ p.id }}">{{ p.banco.nombre }} · {{ p.nombre }}</option>{% endif %}{% endfor %}</select>
+        <select name="canonico_id" required class="bg-slate-900 rounded-lg"><option value="">Ficha importada</option>{% for p in productos_revision %}{% if p.origen == 'IMPORTACION' %}<option value="{{ p.id }}">{{ p.banco.nombre }} · {{ p.nombre }}{% if p.ultimos4 %} ••••{{ p.ultimos4 }}{% endif %}</option>{% endif %}{% endfor %}</select>
+        <button class="px-4 py-2 bg-amber-500 text-slate-950 font-bold rounded-lg">Vincular y trasladar relaciones</button>
+      </form>
+    </div>
+    {% endif %}
 
     <!-- Categorías -->
     <div class="glass p-8 rounded-2xl lg:col-span-2">
@@ -199,33 +315,21 @@
             {% for categoria in categorias %}
             <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:border-orange-500/20 transition-all group relative">
                 <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex space-x-1">
-                    {% if not categoria.producto_asociado %}
-                    <button type="button" onclick="editCategoria({{ categoria.id }}, '{{ categoria.nombre|escapejs }}', '{{ categoria.tipo }}', {{ categoria.contabilizar|yesno:'true,false' }}, '{{ categoria.moneda_defecto }}', '{{ categoria.dia_cobro|default:'' }}', {{ categoria.mostrar_en_carga_masiva|yesno:'true,false' }})" class="text-slate-400 hover:text-sky-400"><i class="fas fa-edit text-[10px]"></i></button>
+                    <button type="button" onclick="editCategoria({{ categoria.id }}, '{{ categoria.nombre|escapejs }}', '{{ categoria.aplica_a }}', '{{ categoria.esencialidad_defecto }}')" class="text-slate-400 hover:text-sky-400"><i class="fas fa-edit text-[10px]"></i></button>
                     <form action="{% url 'borrar_categoria' categoria.id %}" method="POST" class="inline" onsubmit="return confirm('¿Seguro quieres borrar esta categoría?');">
                         {% csrf_token %}
                         <button type="submit" class="text-slate-400 hover:text-rose-400"><i class="fas fa-trash text-[10px]"></i></button>
                     </form>
-                    {% else %}
-                    <span class="text-sky-400 text-[10px]" title="Modificado desde Entidades Financieras"><i class="fas fa-lock"></i> Auto</span>
-                    {% endif %}
                 </div>
                 <p class="font-bold text-slate-200 group-hover:text-white transition-colors text-sm truncate pr-8">{{ categoria.nombre }}</p>
                 <div class="flex items-center space-x-1 mt-1">
-                    <span class="text-[9px] uppercase font-black text-slate-600">{{ categoria.get_tipo_display }}</span>
-                    <span class="text-[9px] uppercase font-black text-emerald-600 border border-emerald-900 px-1 rounded">{{ categoria.moneda_defecto }}</span>
-                    {% if categoria.dia_cobro %}
-                    <span class="text-[9px] uppercase font-black text-indigo-400 border border-indigo-900 px-1 rounded"><i class="far fa-calendar-alt break-all"></i> {{ categoria.dia_cobro }}</span>
-                    {% endif %}
-                    {% if not categoria.contabilizar %}
-                    <span class="text-[8px] uppercase font-black text-rose-500 border border-rose-900 px-1 rounded">No Cont.</span>
-                    {% endif %}
-                    {% if not categoria.mostrar_en_carga_masiva %}
-                    <span class="text-[8px] uppercase font-black text-slate-500 border border-slate-700 px-1 rounded"><i class="fas fa-eye-slash"></i></span>
-                    {% endif %}
+                    <span class="text-[9px] uppercase font-black text-slate-600">{{ categoria.get_aplica_a_display }}</span>
+                    <span class="text-[9px] uppercase font-black text-emerald-600 border border-emerald-900 px-1 rounded">{{ categoria.get_esencialidad_defecto_display }}</span>
+                    <span class="text-[9px] uppercase font-black text-sky-500">{{ categoria.get_origen_display }}</span>
                 </div>
                 <div class="mt-3 flex items-center space-x-2">
-                    <div class="w-1.5 h-1.5 rounded-full {% if categoria.activo %}bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]{% else %}bg-slate-600{% endif %}"></div>
-                    <span class="text-[10px] font-bold text-slate-500">{% if categoria.activo %}Active{% else %}Disabled{% endif %}</span>
+                    <div class="w-1.5 h-1.5 rounded-full {% if categoria.activa %}bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]{% else %}bg-slate-600{% endif %}"></div>
+                    <span class="text-[10px] font-bold text-slate-500">{% if categoria.activa %}Activa{% else %}Archivada{% endif %}</span>
                 </div>
             </div>
             {% endfor %}
@@ -341,39 +445,12 @@
                 <input type="text" name="nombre" required placeholder="Ej: Supermercado" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none">
             </div>
             <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Tipo</label>
-                <select name="tipo" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none">
-                    <option value="GASTO">Gasto Variable</option>
-                    <option value="GASTO_FIJO">Gasto Fijo</option>
-                    <option value="INGRESO">Ingreso</option>
-                    <option value="SUSCRIPCION">Suscripción</option>
-                    <option value="SEGURO">Seguro</option>
-                    <option value="INVERSION">Inversión</option>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Aplicación</label>
+                <select name="aplica_a" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none">
+                    <option value="EGRESO">Egresos</option><option value="INGRESO">Ingresos</option><option value="AMBOS">Ambos</option>
                 </select>
             </div>
-            <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Moneda Defecto</label>
-                    <select name="moneda_defecto" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none">
-                        <option value="CLP">CLP (Pesos)</option>
-                        <option value="USD">USD (Dólares)</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Día de Cobro</label>
-                    <input type="number" name="dia_cobro" min="1" max="31" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 focus:ring-2 focus:ring-emerald-500/20 outline-none" placeholder="1-31">
-                </div>
-            </div>
-            <div class="flex items-center space-x-6">
-                <label class="flex items-center space-x-3 cursor-pointer">
-                    <input type="checkbox" name="contabilizar" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
-                    <span class="text-xs font-bold text-slate-300">Contabilizar en total</span>
-                </label>
-                <label class="flex items-center space-x-3 cursor-pointer">
-                    <input type="checkbox" name="mostrar_en_carga_masiva" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
-                    <span class="text-xs font-bold text-slate-300">Carga Masiva</span>
-                </label>
-            </div>
+            <div><label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Esencialidad</label><select name="esencialidad_defecto" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2"><option value="OCIO">Ocio / variable</option><option value="FIJO">Fijo / esencial</option></select></div>
             <div class="pt-4 flex space-x-3">
                 <button type="button" onclick="document.getElementById('modal-cat').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
                     Cancelar
@@ -401,12 +478,6 @@
             <div>
                 <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Notas / Datos Transferencia</label>
                 <textarea name="notas" rows="3" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2 outline-none text-sm"></textarea>
-            </div>
-            <div class="flex items-center">
-                <label class="flex items-center space-x-3 cursor-pointer">
-                    <input type="checkbox" name="mostrar_en_carga_masiva" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-indigo-500 focus:ring-0">
-                    <span class="text-xs font-bold text-slate-300">Mostrar en Carga Masiva (Inputs automáticos)</span>
-                </label>
             </div>
             <div class="pt-4 flex space-x-3">
                 <button type="button" onclick="document.getElementById('modal-banco').classList.add('hidden')" class="flex-1 py-3 px-4 rounded-xl border border-slate-700 text-slate-400 font-bold hover:bg-slate-800 transition-colors">
@@ -445,15 +516,12 @@
                     <option value="OTRO">Otro</option>
                 </select>
             </div>
+            <div><label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Últimos 4 dígitos</label><input type="text" name="ultimos4" maxlength="4" pattern="[0-9]{4}" class="w-full bg-slate-800 border-slate-700 rounded-xl text-white px-4 py-2"></div>
             <div class="grid grid-cols-2 gap-4">
                 <div class="flex flex-col justify-center">
                     <label class="flex items-center space-x-3 cursor-pointer mb-2">
                         <input type="checkbox" name="tiene_cupo_usd" class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
                         <span class="text-xs font-bold text-slate-300">Cupo USD</span>
-                    </label>
-                    <label class="flex items-center space-x-3 cursor-pointer">
-                        <input type="checkbox" name="contabilizar" checked class="form-checkbox bg-slate-800 border-slate-700 rounded text-emerald-500 focus:ring-0">
-                        <span class="text-xs font-bold text-slate-300">Contabilizar global</span>
                     </label>
                 </div>
                 <div>
@@ -474,7 +542,7 @@
 </div>
 
 <script>
-function editCategoria(id, nombre, tipo, contabilizar, moneda, dia_cobro, mostrar_en_carga_masiva) {
+function editCategoria(id, nombre, aplica_a, esencialidad) {
     const modal = document.getElementById('modal-cat');
     const form = document.getElementById('form-cat');
     
@@ -483,11 +551,8 @@ function editCategoria(id, nombre, tipo, contabilizar, moneda, dia_cobro, mostra
     form.action = actionUrl.replace('999999', id);
     
     form.querySelector('[name="nombre"]').value = nombre;
-    form.querySelector('[name="tipo"]').value = tipo;
-    form.querySelector('[name="contabilizar"]').checked = contabilizar;
-    form.querySelector('[name="mostrar_en_carga_masiva"]').checked = mostrar_en_carga_masiva !== undefined ? mostrar_en_carga_masiva : true;
-    form.querySelector('[name="moneda_defecto"]').value = moneda;
-    form.querySelector('[name="dia_cobro"]').value = dia_cobro || '';
+    form.querySelector('[name="aplica_a"]').value = aplica_a;
+    form.querySelector('[name="esencialidad_defecto"]').value = esencialidad;
     document.getElementById('modal-cat-title').innerHTML = '<i class="fas fa-edit text-orange-400 mr-3"></i> Editar Categoría';
     modal.classList.remove('hidden');
 }
@@ -497,13 +562,11 @@ function newCategoria() {
     const form = document.getElementById('form-cat');
     form.action = "{% url 'crear_categoria' %}";
     form.reset();
-    form.querySelector('[name="contabilizar"]').checked = true;
-    form.querySelector('[name="mostrar_en_carga_masiva"]').checked = true;
     document.getElementById('modal-cat-title').innerHTML = '<i class="fas fa-tag text-orange-400 mr-3"></i> Nueva Categoría';
     modal.classList.remove('hidden');
 }
 
-function editBanco(id, nombre, notas, mostrar) {
+function editBanco(id, nombre, notas) {
     const modal = document.getElementById('modal-banco');
     const form = document.getElementById('form-banco');
     
@@ -512,7 +575,6 @@ function editBanco(id, nombre, notas, mostrar) {
     
     form.querySelector('[name="nombre"]').value = nombre;
     form.querySelector('[name="notas"]').value = notas;
-    form.querySelector('[name="mostrar_en_carga_masiva"]').checked = mostrar;
     document.getElementById('modal-banco-title').innerHTML = '<i class="fas fa-edit text-indigo-400 mr-3"></i> Editar Banco';
     modal.classList.remove('hidden');
 }
@@ -523,14 +585,14 @@ function newProducto(bancoId) {
     form.action = "{% url 'crear_producto' %}";
     form.reset();
     form.querySelector('[name="tiene_cupo_usd"]').checked = false;
-    form.querySelector('[name="contabilizar"]').checked = true;
+    form.querySelector('[name="ultimos4"]').value = '';
     form.querySelector('[name="dia_cobro"]').value = '';
     document.getElementById('producto-banco-id').value = bancoId;
     document.getElementById('modal-producto-title').innerHTML = '<i class="fas fa-cube text-emerald-400 mr-3"></i> Nuevo Producto';
     modal.classList.remove('hidden');
 }
 
-function editProducto(id, bancoId, nombre, tipo, tiene_cupo_usd, contabilizar, dia_cobro) {
+function editProducto(id, bancoId, nombre, tipo, ultimos4, tiene_cupo_usd, dia_cobro) {
     const modal = document.getElementById('modal-producto');
     const form = document.getElementById('form-producto');
     
@@ -540,8 +602,8 @@ function editProducto(id, bancoId, nombre, tipo, tiene_cupo_usd, contabilizar, d
     document.getElementById('producto-banco-id').value = bancoId;
     form.querySelector('[name="nombre"]').value = nombre;
     form.querySelector('[name="tipo"]').value = tipo;
+    form.querySelector('[name="ultimos4"]').value = ultimos4 || '';
     form.querySelector('[name="tiene_cupo_usd"]').checked = tiene_cupo_usd !== undefined ? tiene_cupo_usd : false;
-    form.querySelector('[name="contabilizar"]').checked = contabilizar !== undefined ? contabilizar : true;
     form.querySelector('[name="dia_cobro"]').value = dia_cobro || '';
     
     document.getElementById('modal-producto-title').innerHTML = '<i class="fas fa-edit text-emerald-400 mr-3"></i> Editar Producto';
@@ -553,7 +615,6 @@ function newBanco() {
     const form = document.getElementById('form-banco');
     form.action = "{% url 'crear_banco' %}";
     form.reset();
-    form.querySelector('[name="mostrar_en_carga_masiva"]').checked = true;
     document.getElementById('modal-banco-title').innerHTML = '<i class="fas fa-university text-indigo-400 mr-3"></i> Nuevo Banco';
     modal.classList.remove('hidden');
 }

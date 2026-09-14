@@ -9,7 +9,8 @@ django.setup()
 
 from django.contrib.auth.models import User
 from configuracion.models import Banco, Producto, TipoCambio
-from gastos.models import CategoriaIngreso, RegistroMensual
+from banca.models import CategoriaTematica
+from gastos.models import MovimientoManual
 from patrimonio.models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio
 from departamentos.models import Departamento, CreditoHipotecario
 
@@ -38,17 +39,19 @@ def run():
     # 2. Categorías de Ingreso/Gasto
     print("Cargando Categorías...")
     # Ingresos
-    cat_salario, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Salario', tipo='INGRESO', defaults={'orden': 1})
-    cat_arriendo, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Arriendos Deptos', tipo='INGRESO', defaults={'orden': 2})
+    cat_salario, _ = CategoriaTematica.objects.get_or_create(user=user, nombre='Salario', defaults={'aplica_a': 'INGRESO', 'origen': 'SISTEMA', 'orden': 1})
+    cat_arriendo, _ = CategoriaTematica.objects.get_or_create(user=user, nombre='Arriendos Deptos', defaults={'aplica_a': 'INGRESO', 'origen': 'SISTEMA', 'orden': 2})
     
     # Gastos
-    cat_utilities, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Suministros (Luz/Agua/Gas)', tipo='GASTO_FIJO', defaults={'orden': 1})
-    cat_internet, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Internet/Movil', tipo='GASTO_FIJO', defaults={'orden': 2})
-    cat_vivienda, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Vivienda (Arriendo/G.Comun)', tipo='GASTO_FIJO', defaults={'orden': 3})
-    cat_tdc, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Tarjetas de Crédito', tipo='TDC', defaults={'orden': 4})
-    cat_suscripcion, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Suscripciones', tipo='SUSCRIPCION', defaults={'orden': 5})
-    cat_seguro, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Seguros', tipo='SEGURO', defaults={'orden': 6})
-    cat_credito, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Dividendos / Créditos', tipo='GASTO_FIJO', defaults={'orden': 7})
+    def gasto(nombre, orden, esencialidad='FIJO'):
+        return CategoriaTematica.objects.get_or_create(user=user, nombre=nombre, defaults={'aplica_a': 'EGRESO', 'origen': 'SISTEMA', 'orden': orden, 'esencialidad_defecto': esencialidad})[0]
+    cat_utilities = gasto('Suministros (Luz/Agua/Gas)', 1)
+    cat_internet = gasto('Internet/Movil', 2)
+    cat_vivienda = gasto('Vivienda (Arriendo/G.Comun)', 3)
+    cat_tdc = gasto('Tarjetas de Crédito', 4, 'OCIO')
+    cat_suscripcion = gasto('Suscripciones', 5, 'OCIO')
+    cat_seguro = gasto('Seguros', 6)
+    cat_credito = gasto('Dividendos / Créditos', 7)
 
     # 3. Departamentos (Portafolio)
     print("Cargando Departamentos...")
@@ -168,10 +171,10 @@ def run():
     print("Cargando Registros Mensuales 2025/2026...")
     
     # Categorías específicas para registros
-    cat_netflix, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Netflix', tipo='SUSCRIPCION')
-    cat_spotify, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Spotify', tipo='SUSCRIPCION')
-    cat_youtube, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Youtube', tipo='SUSCRIPCION')
-    cat_icloud, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='iCloud', tipo='SUSCRIPCION')
+    cat_netflix = gasto('Netflix', 10, 'OCIO')
+    cat_spotify = gasto('Spotify', 11, 'OCIO')
+    cat_youtube = gasto('Youtube', 12, 'OCIO')
+    cat_icloud = gasto('iCloud', 13, 'OCIO')
 
     meses_data = [
         # (Año, Mes, Salario, Arriendo E107, TDC World, Suscripciones)
@@ -182,19 +185,22 @@ def run():
     ]
 
     # Categorías para inversiones
-    cat_dva, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='DVA (Inversión)', tipo='GASTO_FIJO')
-    cat_fintual, _ = CategoriaIngreso.objects.get_or_create(user=user, nombre='Fintual (Inversión)', tipo='GASTO_FIJO')
+    cat_dva = gasto('DVA (Inversión)', 14)
+    cat_fintual = gasto('Fintual (Inversión)', 15)
 
     for y, m, sal, arr, tdc, sus in meses_data:
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_salario, defaults={'monto': Decimal(sal), 'tipo': 'INGRESO'})
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_arriendo, defaults={'monto': Decimal(arr), 'tipo': 'INGRESO'})
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_tdc, defaults={'monto': Decimal(tdc), 'tipo': 'TDC'})
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_netflix, defaults={'monto': Decimal(10700), 'tipo': 'SUSCRIPCION'})
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_youtube, defaults={'monto': Decimal(9200), 'tipo': 'SUSCRIPCION'})
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_icloud, defaults={'monto': Decimal(8490), 'tipo': 'SUSCRIPCION'})
-        # Inversiones mensuales recurrentes
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_dva, defaults={'monto': Decimal(50000), 'tipo': 'GASTO'})
-        RegistroMensual.objects.update_or_create(user=user, year=y, mes=m, categoria=cat_fintual, defaults={'monto': Decimal(50000), 'tipo': 'GASTO'})
+        periodo = date(y, m, 1)
+        siguiente = date(y + (m == 12), 1 if m == 12 else m + 1, 1)
+        for cat, monto, direccion, naturaleza in [
+            (cat_salario, sal, 'INGRESO', 'OPERACIONAL'), (cat_arriendo, arr, 'INGRESO', 'OPERACIONAL'),
+            (cat_tdc, tdc, 'EGRESO', 'OPERACIONAL'), (cat_netflix, 10700, 'EGRESO', 'OPERACIONAL'),
+            (cat_youtube, 9200, 'EGRESO', 'OPERACIONAL'), (cat_icloud, 8490, 'EGRESO', 'OPERACIONAL'),
+            (cat_dva, 50000, 'EGRESO', 'INVERSION'), (cat_fintual, 50000, 'EGRESO', 'INVERSION'),
+        ]:
+            MovimientoManual.objects.update_or_create(
+                user=user, periodo=periodo, categoria=cat, direccion=direccion, es_resumen_mensual=True,
+                defaults={'fecha': siguiente - date.resolution, 'monto': Decimal(monto), 'monto_clp': Decimal(monto), 'moneda': 'CLP', 'naturaleza': naturaleza, 'descripcion': cat.nombre},
+            )
 
     print("Carga de datos finalizada exitosamente.")
 

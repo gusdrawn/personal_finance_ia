@@ -57,6 +57,27 @@
     </div>
 </div>
 
+{% if houm.periodo_actual %}
+<section class="glass rounded-2xl border border-orange-500/20 overflow-hidden mb-8">
+    <div class="p-6 border-b border-slate-800/50 flex flex-col md:flex-row md:items-center md:justify-between gap-2 bg-orange-500/5">
+        <div>
+            <h2 class="font-bold text-white"><i class="fas fa-chart-line text-orange-400 mr-2"></i>Resultado Houm</h2>
+            <p class="text-xs text-slate-500 mt-1">Estado del reporte {{ houm.periodo_actual|date:"m/Y" }} e historial importado. {% if houm.sin_ingreso_count %}<span class="text-rose-300">{{ houm.sin_ingreso_count }} unidad(es) sin ingreso informado.</span>{% endif %}</p>
+        </div>
+        <a href="{% url 'banca_fuentes_externas' %}" class="text-xs font-bold text-orange-300 hover:text-orange-200">Importar otro reporte <i class="fas fa-arrow-right ml-1"></i></a>
+    </div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-slate-800/50 border-b border-slate-800/50">
+        <div class="p-5 bg-slate-900/70"><p class="text-[10px] uppercase font-bold text-slate-500">Arriendo informado</p><p class="text-lg font-black text-white mt-1">${{ houm.actual.renta|floatformat:0 }}</p></div>
+        <div class="p-5 bg-slate-900/70"><p class="text-[10px] uppercase font-bold text-slate-500">Administración</p><p class="text-lg font-black text-amber-300 mt-1">${{ houm.actual.administracion|floatformat:0 }}</p></div>
+        <div class="p-5 bg-slate-900/70"><p class="text-[10px] uppercase font-bold text-slate-500">Depósito recibido</p><p class="text-lg font-black text-emerald-400 mt-1">${{ houm.actual.deposito|floatformat:0 }}</p></div>
+        <div class="p-5 bg-slate-900/70"><p class="text-[10px] uppercase font-bold text-slate-500">Déficit del mes</p><p class="text-lg font-black {% if houm.actual.deficit > 0 %}text-rose-400{% else %}text-slate-300{% endif %} mt-1">${{ houm.actual.deficit|floatformat:0 }}</p></div>
+    </div>
+    <div class="p-5 h-80">
+        <canvas id="houmHistoryChart" aria-label="Evolución mensual de las liquidaciones Houm"></canvas>
+    </div>
+</section>
+{% endif %}
+
 <!-- Departamentos Header -->
 <div class="flex items-center justify-between mb-8 mt-4">
     <h2 class="text-xl font-bold tracking-tight text-white flex items-center">
@@ -168,6 +189,20 @@
             </div>
         </div>
 
+        {% if depto.houm_resumen.actual %}
+        <div class="mx-6 mb-5 p-4 rounded-xl bg-orange-500/5 border border-orange-500/10">
+            <div class="flex items-center justify-between mb-3">
+                <p class="text-[10px] uppercase font-bold text-orange-300">Houm {{ depto.houm_resumen.actual.periodo|date:"m/Y" }}</p>
+                <span class="text-[9px] uppercase {% if depto.houm_resumen.actual.sin_ingreso %}text-rose-300{% else %}text-slate-500{% endif %}">{% if depto.houm_resumen.actual.sin_ingreso %}Sin ingreso informado · vacante{% else %}{{ depto.houm_resumen.actual.estado }}{% endif %}</span>
+            </div>
+            <div class="grid grid-cols-3 gap-3 text-right">
+                <div><p class="text-[9px] uppercase text-slate-500">Depósito</p><p class="text-xs font-bold text-emerald-400">${{ depto.houm_resumen.actual.deposito|floatformat:0 }}</p></div>
+                <div><p class="text-[9px] uppercase text-slate-500">Administración</p><p class="text-xs font-bold text-amber-300">${{ depto.houm_resumen.actual.administracion|floatformat:0 }}</p></div>
+                <div><p class="text-[9px] uppercase text-slate-500">Déficit</p><p class="text-xs font-bold {% if depto.houm_resumen.actual.deficit > 0 %}text-rose-400{% else %}text-slate-300{% endif %}">${{ depto.houm_resumen.actual.deficit|floatformat:0 }}</p></div>
+            </div>
+        </div>
+        {% endif %}
+
         {% if depto.credito_hipotecario %}
         <div class="px-6 pb-6 mt-auto">
             <div class="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/10">
@@ -236,7 +271,7 @@
                 <tr>
                     <th class="text-left">Unidad</th>
                     <th class="text-right">Renta Pactada</th>
-                    <th class="text-right">Ingreso Real (Avg)</th>
+                    <th class="text-right">Ingreso del mes</th>
                     <th class="text-right">Cobertura Dividendo</th>
                     <th class="text-right">Utilidad Patrimonial</th>
                     <th class="text-right">% Recaudado</th>
@@ -317,6 +352,37 @@
         </table>
     </div>
 </div>
+
+{{ houm_chart|json_script:"houm-chart-data" }}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const canvas = document.getElementById('houmHistoryChart');
+    const payload = document.getElementById('houm-chart-data');
+    if (!canvas || !payload || typeof Chart === 'undefined') return;
+    const data = JSON.parse(payload.textContent);
+    new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: data.labels,
+            datasets: [
+                { label: 'Arriendo', data: data.renta, borderColor: '#38bdf8', backgroundColor: '#38bdf822', tension: .3 },
+                { label: 'Depósito', data: data.deposito, borderColor: '#34d399', backgroundColor: '#34d39922', tension: .3 },
+                { label: 'Administración', data: data.administracion, borderColor: '#fbbf24', backgroundColor: '#fbbf2422', tension: .3 },
+                { label: 'Déficit', data: data.deficit, borderColor: '#fb7185', backgroundColor: '#fb718522', tension: .3 },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#cbd5e1' } } },
+            scales: {
+                x: { ticks: { color: '#94a3b8' }, grid: { color: '#33415555' } },
+                y: { beginAtZero: true, ticks: { color: '#94a3b8', callback: value => '$' + Number(value).toLocaleString('es-CL') }, grid: { color: '#33415555' } },
+            },
+        },
+    });
+});
+</script>
 
 <!-- Modals -->
 <div id="modal-depto" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">

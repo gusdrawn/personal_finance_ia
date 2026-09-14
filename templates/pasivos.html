@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize core_extras %}
 
 {% block title %}Pasivos - FinanzasPersonalesIA{% endblock %}
 {% block page_title %}Gestión de Pasivos{% endblock %}
@@ -89,13 +89,17 @@
                     </div>
                     <div>
                         <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ pasivo.nombre }}</p>
-                        <div class="flex items-center space-x-2 mt-0.5">
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
                             <span class="text-[10px] uppercase font-bold text-slate-500">{{ pasivo.get_tipo_display }}</span>
                             {% if pasivo.producto %}
                             <span class="px-1.5 py-0.5 text-[9px] font-black rounded bg-violet-500/10 text-violet-400 border border-violet-500/20">
                                 <i class="fas fa-lock mr-1"></i>{{ pasivo.producto.banco.nombre }}
                             </span>
                             {% endif %}
+                            <span class="text-[10px] text-slate-500" title="Última actualización: {{ pasivo.updated_at|date:'d/m/Y H:i' }}">
+                                <i class="fas fa-clock-rotate-left mr-1"></i>Actualizado {{ pasivo.updated_at|tiempo_desde }}
+                                <span class="sr-only">({{ pasivo.updated_at|date:"d/m/Y H:i" }})</span>
+                            </span>
                         </div>
                     </div>
                 </div>

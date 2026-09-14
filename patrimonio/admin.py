@@ -1,5 +1,15 @@
 from django.contrib import admin
-from .models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio, MiniSesion, LineaMiniSesion
+from .models import (
+    AbonoCuentaPorCobrar,
+    Activo,
+    CuentaPorCobrar,
+    DetalleCuentaPorCobrar,
+    HistorialActivo,
+    Pasivo,
+    SnapshotPatrimonio,
+    MiniSesion,
+    LineaMiniSesion,
+)
 
 
 @admin.register(Activo)
@@ -16,6 +26,30 @@ class ActivoAdmin(admin.ModelAdmin):
         ('Notas', {'fields': ('notas',)}),
         ('Timestamps', {'fields': ('created_at', 'updated_at'), 'classes': ('collapse',)}),
     )
+
+
+@admin.register(CuentaPorCobrar)
+class CuentaPorCobrarAdmin(admin.ModelAdmin):
+    list_display = ["nombre", "moneda", "saldo_pendiente", "activo", "user"]
+    list_filter = ["moneda", "activo", "user"]
+    search_fields = ["nombre", "descripcion", "user__username"]
+    readonly_fields = ["activo_patrimonial", "created_at", "updated_at"]
+
+
+@admin.register(DetalleCuentaPorCobrar)
+class DetalleCuentaPorCobrarAdmin(admin.ModelAdmin):
+    list_display = ["cuenta", "periodo", "descripcion", "monto", "origen", "monto_manual"]
+    list_filter = ["origen", "monto_manual", "periodo"]
+    search_fields = ["cuenta__nombre", "descripcion"]
+    readonly_fields = ["created_at", "updated_at"]
+
+
+@admin.register(AbonoCuentaPorCobrar)
+class AbonoCuentaPorCobrarAdmin(admin.ModelAdmin):
+    list_display = ["cuenta", "detalle", "fecha", "monto", "descripcion"]
+    list_filter = ["fecha"]
+    search_fields = ["cuenta__nombre", "descripcion"]
+    readonly_fields = ["created_at", "updated_at"]
 
 
 @admin.register(HistorialActivo)

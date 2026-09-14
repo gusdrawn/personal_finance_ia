@@ -1,18 +1,46 @@
-from django.shortcuts import render, redirect
-from django.contrib.auth.decorators import login_required
+from django.shortcuts import get_object_or_404, render, redirect
+from django.conf import settings
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
 from django.views.decorators.http import require_http_methods
-from django.db.models import Sum, Q, F, Avg
+from django.db.models import Sum, Q, F, Avg, Prefetch
 from django.urls import reverse
 from django.utils import timezone
-from datetime import date, timedelta
-from decimal import Decimal
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
-from gastos.models import RegistroMensual, GastoProgramado, CategoriaIngreso
-from patrimonio.models import Activo, HistorialActivo, Pasivo, SnapshotPatrimonio
+from gastos.models import GastoProgramado, MovimientoManual
+from gastos.services import resumen_gastos
+from patrimonio.models import (
+    AbonoCuentaPorCobrar,
+    Activo,
+    CuentaPorCobrar,
+    DetalleCuentaPorCobrar,
+    HistorialActivo,
+    Pasivo,
+    SnapshotPatrimonio,
+)
 from departamentos.models import Departamento, Estacionamiento, Arrendatario, CreditoHipotecario
-from configuracion.models import TipoCambio, Banco, Producto
-from banca.models import ApplePayApiKey
+from configuracion.models import TipoCambio, Banco, CredencialIntegracion, Producto
+from configuracion.services.integrations import get_integration_api_key
+from banca.forms import ConfiguracionNotificacionesForm
+from banca.models import (
+    ApplePayApiKey,
+    CategoriaTematica,
+    ConfiguracionNotificaciones,
+    EventoFinancieroExterno,
+    LimiteCategoria,
+    MovimientoBancario,
+    RegistroNotificacion,
+)
+from banca.services.analisis import cupos_tdc, vencimientos_tdc
+from banca.services.notificador import probar_telegram
+from banca.services.houm_analytics import resumen_houm_departamentos
+from patrimonio.services.cuentas_por_cobrar import (
+    fecha_evento_neat,
+    primer_dia_mes,
+    ventana_fuentes_cobro,
+)
 
 
 def ensure_pasivos_for_products(user):
@@ -24,6 +52,7 @@ def ensure_pasivos_for_products(user):
     from patrimonio.models import Pasivo
     
     productos_deuda = Producto.objects.filter(
+        user=user,
         tipo__in=['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO', 'TDC'],
         activo=True
     )
@@ -40,30 +69,6 @@ def ensure_pasivos_for_products(user):
                 activo=True,
                 notas=f"Auto-generado desde Entidad Financiera: {prod.banco.nombre} - {prod.nombre}"
             )
-
-
-def ensure_departamento_categories(user):
-    """
-    Ensures each department has an INGRESO category for tracking rent payments.
-    """
-    from departamentos.models import Departamento
-    from gastos.models import CategoriaIngreso
-    
-    deptos = Departamento.objects.filter(user=user)
-    for depto in deptos:
-        cat_nombre = f"Arriendo {depto.codigo}"
-        CategoriaIngreso.objects.get_or_create(
-            user=user,
-            nombre=cat_nombre,
-            tipo='INGRESO',
-            defaults={
-                'mostrar_en_carga_masiva': True,
-                'moneda_defecto': 'CLP',
-                'contabilizar': True,
-                'activo': True,
-            }
-        )
-
 
 @login_required
 def dashboard(request):
@@ -98,41 +103,36 @@ def dashboard(request):
     total_no_liquidos = total_activos - total_liquidos
     liquidez_pct = (total_liquidos / total_activos * 100) if total_activos > 0 else 0
     
-    # Current month metrics - default to last month with data
+    # Flujo de caja: misma fuente de verdad que Gastos Mensuales.
     selected_year = request.GET.get('year')
     selected_month = request.GET.get('month')
-    
     if selected_year and selected_month:
         target_year = int(selected_year)
         target_month = int(selected_month)
     else:
-        latest_registro = RegistroMensual.objects.filter(user=user).order_by('-year', '-mes').first()
-        if latest_registro:
-            target_year = latest_registro.year
-            target_month = latest_registro.mes
-        else:
-            today = date.today()
-            target_year = today.year
-            target_month = today.month
-        
-    ingresos = RegistroMensual.objects.filter(
-        user=user, year=target_year, mes=target_month, tipo='INGRESO',
-        categoria__contabilizar=True
-    ).aggregate(total=Sum('monto'))['total'] or 0
-    
-    gastos_qs = RegistroMensual.objects.filter(
-        user=user, year=target_year, mes=target_month,
-        categoria__contabilizar=True
-    ).exclude(tipo='INGRESO')
-    
-    total_gastos = gastos_qs.aggregate(total=Sum('monto'))['total'] or 0
-    
-    # Breakdown for chart - Using actual category types
-    gastos_fijos = gastos_qs.filter(categoria__tipo='GASTO_FIJO').aggregate(total=Sum('monto'))['total'] or 0
-    suscripciones = gastos_qs.filter(categoria__tipo='SUSCRIPCION').aggregate(total=Sum('monto'))['total'] or 0
-    tarjetas = gastos_qs.filter(categoria__tipo='TDC').aggregate(total=Sum('monto'))['total'] or 0
-    
-    otros = total_gastos - (gastos_fijos + suscripciones + tarjetas)
+        ultimo_mes = date.today().replace(day=1) - timedelta(days=1)
+        target_year, target_month = ultimo_mes.year, ultimo_mes.month
+    periodo_dashboard = date(target_year, target_month, 1)
+    flujo = resumen_gastos(user, periodo_dashboard, periodo_dashboard, "caja")
+    ingresos = flujo["totales"]["ingresos_clp"]
+    total_gastos = flujo["totales"]["egresos_clp"]
+    gastos_fijos = sum(
+        (grupo["total_clp"] for grupo in flujo["categorias"]
+         if grupo["direccion"] == "EGRESO"
+         and any(item["esencialidad"] == "FIJO" for item in grupo["movimientos"])),
+        Decimal("0"),
+    )
+    suscripciones = sum(
+        (grupo["total_clp"] for grupo in flujo["categorias"]
+         if grupo["direccion"] == "EGRESO" and grupo["categoria"] == "Suscripciones"),
+        Decimal("0"),
+    )
+    tarjetas = sum(
+        (item["monto_clp"] for grupo in flujo["categorias"] for item in grupo["movimientos"]
+         if item["direccion"] == "EGRESO" and item["fuente"] == "TDC"),
+        Decimal("0"),
+    )
+    otros = total_gastos - gastos_fijos - suscripciones
     
     # Historical Patrimonio (snapshots)
     snapshots = SnapshotPatrimonio.objects.filter(user=user).order_by('fecha')
@@ -141,18 +141,19 @@ def dashboard(request):
     snapshot_pasivos = [float(s.pasivos_total_clp) for s in snapshots]
     snapshot_neto = [float(s.patrimonio_neto_clp) for s in snapshots]
     
-    # Historical Income/Expense (last 6 months)
+    # Histórico unificado de caja (facturados por vencimiento + Houm + manuales).
     today = date.today()
     historico_meses = []
+    def restar_meses(base, cantidad):
+        total = base.year * 12 + base.month - 1 - cantidad
+        return date(total // 12, total % 12 + 1, 1)
+
     for i in range(5, -1, -1):
-        d = today.replace(day=1) - timedelta(days=30 * i)
+        d = restar_meses(today.replace(day=1), i)
         y, m = d.year, d.month
-        ing = RegistroMensual.objects.filter(
-            user=user, year=y, mes=m, tipo='INGRESO', categoria__contabilizar=True
-        ).aggregate(t=Sum('monto'))['t'] or 0
-        gas = RegistroMensual.objects.filter(
-            user=user, year=y, mes=m, categoria__contabilizar=True
-        ).exclude(tipo='INGRESO').aggregate(t=Sum('monto'))['t'] or 0
+        mes_flujo = resumen_gastos(user, date(y, m, 1), date(y, m, 1), "caja")
+        ing = mes_flujo["totales"]["ingresos_clp"]
+        gas = mes_flujo["totales"]["egresos_clp"]
         historico_meses.append({
             'label': f"{m:02d}/{y}",
             'ingresos': float(ing),
@@ -163,9 +164,14 @@ def dashboard(request):
     # Get departments and top activos for previews
     departamentos = Departamento.objects.filter(user=user)[:3]
     top_activos = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO').order_by('-monto_clp')[:4]
+
+    resumen_cupos = cupos_tdc(user)
     
-    # Available months for the month selector
-    available_months = RegistroMensual.objects.filter(user=user).values('year', 'mes').distinct().order_by('-year', '-mes')[:24]
+    available_months = [
+        {"year": restar_meses(today.replace(day=1), i).year,
+         "mes": restar_meses(today.replace(day=1), i).month}
+        for i in range(24)
+    ]
     
     context = {
         'patrimonio_neto': patrimonio_neto,
@@ -190,7 +196,9 @@ def dashboard(request):
         'snapshot_pasivos': snapshot_pasivos,
         'snapshot_neto': snapshot_neto,
         'historico_meses': historico_meses,
-        'available_months': list(available_months),
+        'available_months': available_months,
+        'cupos_tdc': resumen_cupos,
+        'cobertura_estados': flujo['cobertura'],
     }
     
     return render(request, 'dashboard.html', context)
@@ -198,42 +206,44 @@ def dashboard(request):
 
 @login_required
 def gastos_table(request):
-    """Monthly expenses table view"""
+    """Centro financiero: caja oficial y consumo categorizado."""
     user = request.user
     today = date.today()
     last_month_date = today.replace(day=1) - timedelta(days=1)
-    
+    try:
+        selected_year = int(request.GET.get("year", last_month_date.year))
+        selected_month = int(request.GET.get("month", last_month_date.month))
+        date(selected_year, selected_month, 1)
+    except (TypeError, ValueError):
+        selected_year, selected_month = last_month_date.year, last_month_date.month
     years = range(today.year - 2, today.year + 2)
-    categorias = CategoriaIngreso.objects.filter(user=user)
+    categorias = CategoriaTematica.objects.filter(user=user, activa=True)
+    productos = Producto.objects.filter(user=user, activo=True, reemplazado_por__isnull=True).select_related("banco")
     gastos_programados = GastoProgramado.objects.filter(user=user, activo=True)
-    
-    # Calculate total savings needed
+    periodos_movimientos = []
+    vistos = set()
+    for fecha_movimiento in MovimientoBancario.objects.filter(
+        user=user,
+        por_revisar=False,
+    ).exclude(estado="DESCARTADO_CIERRE").order_by("-fecha").values_list("fecha", flat=True):
+        clave = (fecha_movimiento.year, fecha_movimiento.month)
+        if clave not in vistos:
+            vistos.add(clave)
+            periodos_movimientos.append({"year": fecha_movimiento.year, "month": fecha_movimiento.month})
     total_ahorro_programado = sum(g.ahorro_mensual for g in gastos_programados)
-    
-    # Gather categories for the bulk modal
-    categorias_bulk = CategoriaIngreso.objects.filter(
-        user=user, mostrar_en_carga_masiva=True
-    ).select_related('banco_defecto')
-    
-    grouped_categorias = {}
-    for cat in categorias_bulk:
-        tipo = cat.get_tipo_display()
-        if tipo not in grouped_categorias:
-            grouped_categorias[tipo] = []
-        grouped_categorias[tipo].append(cat)
-        
-    tipo_order = {'Ingreso': 0, 'Gasto': 1, 'Gasto Fijo': 2, 'Tarjeta de Crédito': 3}
-    grouped_sorted = dict(sorted(grouped_categorias.items(), key=lambda x: tipo_order.get(x[0], 99)))
-    
     context = {
-        'current_year': last_month_date.year,
-        'current_month': last_month_date.month,
+        'current_year': selected_year,
+        'current_month': selected_month,
+        'initial_perspective': request.GET.get('perspectiva', 'consumo'),
         'default_year': last_month_date.year,
         'default_month': last_month_date.month,
         'years': years,
         'categorias': categorias,
-        'grouped_categorias': grouped_sorted,
+        'productos': productos,
+        'bancos': Banco.objects.filter(productos__user=user).distinct(),
+        'departamentos_manual': Departamento.objects.filter(user=user, vinculos_externos__isnull=True, activo=True),
         'gastos_programados': gastos_programados,
+        'periodos_movimientos': periodos_movimientos[:12],
         'total_ahorro_anual': total_ahorro_programado,
         'total_ahorro_trimestral': Decimal('0'),
     }
@@ -318,6 +328,7 @@ def activos_view(request):
             'es_liquido': False,
             'monto_clp': monto,
             'monto_usd': Decimal(0),
+            'updated_at': d.updated_at,
             'es_depto': True,
             'depto_id': d.id,
         })
@@ -387,6 +398,451 @@ def activos_view(request):
     return render(request, 'activos.html', context)
 
 
+def _cobro_periodo(valor, defecto=None):
+    try:
+        return datetime.strptime(valor, "%Y-%m").date().replace(day=1)
+    except (TypeError, ValueError):
+        return defecto
+
+
+def _cobro_fecha(valor, defecto):
+    try:
+        return date.fromisoformat(valor)
+    except (TypeError, ValueError):
+        return defecto
+
+
+def _cobro_decimal(valor):
+    try:
+        texto = str(valor or "").strip()
+        if "," in texto:
+            texto = texto.replace(".", "").replace(",", ".")
+        monto = Decimal(texto)
+    except (InvalidOperation, ValueError):
+        return None
+    return monto if monto > 0 else None
+
+
+def _fuentes_cobro_disponibles(user, periodo=None):
+    """Fuentes del mes visible que se pueden asociar sin cruzar usuarios."""
+    if periodo:
+        periodo = primer_dia_mes(periodo)
+        inicio, fin = ventana_fuentes_cobro(periodo)
+    fuentes = []
+    movimientos_query = MovimientoBancario.objects.filter(
+        user=user,
+        producto__tipo="TDC",
+        monto__gt=0,
+    )
+    if periodo:
+        movimientos_query = movimientos_query.filter(fecha__range=(inicio, fin))
+    movimientos = (
+        movimientos_query
+        .exclude(estado="DESCARTADO_CIERRE")
+        .select_related("producto", "producto__banco")
+        .order_by("-fecha", "-id")[:150]
+    )
+    for movimiento in movimientos:
+        monto = movimiento.monto or movimiento.monto_clp
+        monto_label = f"US${monto:,.2f}" if movimiento.moneda == "USD" else f"${monto:,.0f}"
+        fuentes.append(
+            {
+                "value": f"movimiento:{movimiento.id}",
+                "label": (
+                    f"Tarjeta · {movimiento.fecha:%d/%m/%Y} · "
+                    f"{movimiento.descripcion} · {monto_label}"
+                ),
+                "monto": abs(monto),
+                "fecha": movimiento.fecha,
+                "descripcion": movimiento.descripcion,
+                "moneda": movimiento.moneda,
+            }
+        )
+
+    eventos_query = EventoFinancieroExterno.objects.filter(
+        user=user,
+        fuente="neat",
+        monto_neto__gt=0,
+    )
+    if periodo:
+        eventos_query = eventos_query.filter(
+            Q(fecha_cargo__range=(inicio, fin))
+            | Q(fecha_evento__range=(inicio, fin))
+            | Q(periodo=periodo)
+            | Q(fecha_cargo__isnull=True, fecha_evento__isnull=True, periodo__isnull=True)
+        )
+    eventos = (
+        eventos_query
+        .exclude(estado="FALLIDO")
+        .select_related("pago_neat")
+        .order_by("-fecha_cargo", "-fecha_evento", "-periodo", "-id")[:300]
+    )
+    for evento in eventos:
+        pago = getattr(evento, "pago_neat", None)
+        descripcion = ((pago.destinatario or pago.cuenta) if pago else "") or "NeatPagos"
+        monto = evento.monto_neto or evento.monto_bruto
+        fecha = fecha_evento_neat(evento)
+        if not fecha:
+            # No asociamos un evento sin fecha: usar hoy lo haría parecer una
+            # transacción actual y podría vincularlo al mes equivocado.
+            continue
+        if periodo and not (inicio <= fecha <= fin):
+            continue
+        alias = str((evento.metadata or {}).get("alias") or "").strip()
+        if alias and alias.casefold() not in descripcion.casefold():
+            descripcion = f"{descripcion} · {alias}"
+        monto_label = f"US${monto:,.2f}" if evento.moneda == "USD" else f"${monto:,.0f}"
+        fuentes.append(
+            {
+                "value": f"neat:{evento.id}",
+                "label": f"NeatPagos · {fecha:%d/%m/%Y} · {descripcion} · {monto_label}",
+                "monto": abs(monto),
+                "fecha": fecha,
+                "descripcion": descripcion,
+                "moneda": evento.moneda,
+            }
+        )
+    return fuentes
+
+
+def _fuente_cobro_desde_seleccion(seleccion, user):
+    """Resuelve una fuente enviada por un formulario de cuentas por cobrar."""
+    seleccion = (seleccion or "").strip()
+    if seleccion.startswith("movimiento:"):
+        return get_object_or_404(
+            MovimientoBancario,
+            pk=seleccion.removeprefix("movimiento:"),
+            user=user,
+            producto__tipo="TDC",
+        )
+    if seleccion.startswith("neat:"):
+        return get_object_or_404(
+            EventoFinancieroExterno,
+            pk=seleccion.removeprefix("neat:"),
+            user=user,
+            fuente="neat",
+        )
+    return None
+
+
+@login_required
+def cuentas_por_cobrar_view(request):
+    """Panel de cuentas por cobrar y texto listo para compartir."""
+    hoy = timezone.localdate()
+    periodo_cobro = _cobro_periodo(
+        request.GET.get("periodo"), primer_dia_mes(hoy)
+    )
+    propuesta_cuenta_id = str(request.GET.get("propuesta", "")).strip()
+    detalle_qs = (
+        DetalleCuentaPorCobrar.objects.select_related(
+            "movimiento", "evento_externo"
+        ).prefetch_related("abonos")
+    )
+    cuentas = list(
+        CuentaPorCobrar.objects.filter(user=request.user)
+        .select_related("activo_patrimonial")
+        .prefetch_related(
+            Prefetch("detalles", queryset=detalle_qs),
+            "abonos",
+        )
+    )
+    from patrimonio.services.cuentas_por_cobrar import texto_cobro
+    from patrimonio.services.cuentas_por_cobrar import proponer_renovacion
+    fuentes_cobro = _fuentes_cobro_disponibles(request.user, periodo_cobro)
+    fuentes_por_valor = {fuente["value"]: fuente for fuente in fuentes_cobro}
+
+    for cuenta in cuentas:
+        cuenta.texto_para_compartir = texto_cobro(cuenta, periodo_cobro)
+        todos_los_detalles = list(cuenta.detalles.all())
+        cuenta.detalles_visibles = [
+            detalle for detalle in todos_los_detalles if detalle.periodo == periodo_cobro
+        ]
+        cuenta.detalles_abono = [
+            detalle for detalle in todos_los_detalles if detalle.saldo_pendiente > 0
+        ]
+        if propuesta_cuenta_id == str(cuenta.id):
+            cuenta.renovacion_propuesta = proponer_renovacion(cuenta, periodo_cobro)
+        detalle_edicion_id = str(request.GET.get("editar", "")).strip()
+        if detalle_edicion_id and any(
+            str(detalle.id) == detalle_edicion_id for detalle in todos_los_detalles
+        ):
+            cuenta.detalle_edicion = next(
+                detalle for detalle in todos_los_detalles if str(detalle.id) == detalle_edicion_id
+            )
+            if cuenta.detalle_edicion.movimiento_id:
+                fuente_valor = f"movimiento:{cuenta.detalle_edicion.movimiento_id}"
+            elif cuenta.detalle_edicion.evento_externo_id:
+                fuente_valor = f"neat:{cuenta.detalle_edicion.evento_externo_id}"
+            else:
+                fuente_valor = ""
+            fuente_actual = fuentes_por_valor.get(fuente_valor)
+            cuenta.detalle_edicion.fuente_actual_valor = fuente_valor
+            cuenta.detalle_edicion.fuente_actual_label = (
+                fuente_actual["label"] if fuente_actual else "Fuente actualmente asociada"
+            )
+    resumen_clp = sum(
+        (cuenta.saldo_pendiente for cuenta in cuentas if cuenta.moneda == "CLP"),
+        Decimal("0"),
+    )
+    resumen_usd = sum(
+        (cuenta.saldo_pendiente for cuenta in cuentas if cuenta.moneda == "USD"),
+        Decimal("0"),
+    )
+    context = {
+        "cuentas_por_cobrar": cuentas,
+        "fuentes_cobro": fuentes_cobro,
+        "periodo_actual_cobro": periodo_cobro.strftime("%Y-%m"),
+        "periodo_cobro": periodo_cobro,
+        "fecha_actual_cobro": hoy.isoformat(),
+        "resumen_cobro_clp": resumen_clp,
+        "resumen_cobro_usd": resumen_usd,
+    }
+    return render(request, "cuentas_por_cobrar.html", context)
+
+
+def _volver_cuenta_cobro(cuenta, periodo=None, editar=None):
+    url = reverse("cuentas_por_cobrar")
+    parametros = []
+    if periodo:
+        parametros.append(f"periodo={periodo:%Y-%m}")
+    if editar:
+        parametros.append(f"editar={editar}")
+    if parametros:
+        url += "?" + "&".join(parametros)
+    return redirect(f"{url}#cuenta-{cuenta.pk}")
+
+
+@require_http_methods(["POST"])
+@login_required
+def crear_cuenta_por_cobrar(request):
+    nombre = request.POST.get("nombre", "").strip()
+    moneda = request.POST.get("moneda", "CLP")
+    if not nombre:
+        messages.error(request, "Indica un nombre para la cuenta por cobrar.")
+        return redirect("cuentas_por_cobrar")
+    if moneda not in dict(CuentaPorCobrar.MONEDA_CHOICES):
+        messages.error(request, "La moneda seleccionada no es válida.")
+        return redirect("cuentas_por_cobrar")
+    cuenta = CuentaPorCobrar.objects.create(
+        user=request.user,
+        nombre=nombre,
+        descripcion=request.POST.get("descripcion", "").strip(),
+        moneda=moneda,
+    )
+    messages.success(request, f"Cuenta por cobrar «{cuenta.nombre}» creada y agregada a Activos.")
+    return _volver_cuenta_cobro(cuenta)
+
+
+@require_http_methods(["POST"])
+@login_required
+def agregar_detalle_cuenta_por_cobrar(request):
+    cuenta = get_object_or_404(CuentaPorCobrar, pk=request.POST.get("cuenta_id"), user=request.user)
+    if not cuenta.activo:
+        messages.error(request, "La cuenta está archivada; reactívala antes de agregar movimientos.")
+        return _volver_cuenta_cobro(cuenta)
+
+    from patrimonio.services.cuentas_por_cobrar import informacion_fuente
+
+    seleccion = request.POST.get("fuente", "").strip()
+    fuente = _fuente_cobro_desde_seleccion(seleccion, request.user)
+
+    if fuente is not None:
+        info = informacion_fuente(fuente)
+        if info["moneda"] != cuenta.moneda:
+            messages.error(request, "La moneda de la transacción no coincide con la cuenta.")
+            return _volver_cuenta_cobro(cuenta)
+        if (
+            (
+                isinstance(fuente, MovimientoBancario)
+                and DetalleCuentaPorCobrar.objects.filter(movimiento=fuente).exists()
+            )
+            or (
+                isinstance(fuente, EventoFinancieroExterno)
+                and DetalleCuentaPorCobrar.objects.filter(evento_externo=fuente).exists()
+            )
+        ):
+            messages.info(request, "Esa transacción ya está asociada a una cuenta por cobrar.")
+            return _volver_cuenta_cobro(cuenta)
+        monto = info["monto"]
+        fecha = info["fecha"] or timezone.localdate()
+        origen = info["origen"]
+        clave = info["clave"]
+        descripcion = request.POST.get("descripcion", "").strip() or info["descripcion"]
+    else:
+        monto = _cobro_decimal(request.POST.get("monto"))
+        fecha = _cobro_fecha(request.POST.get("fecha"), timezone.localdate())
+        origen = "MANUAL"
+        clave = ""
+        descripcion = request.POST.get("descripcion", "").strip()
+
+    if not monto or not descripcion:
+        messages.error(request, "Para agregar una línea necesitas descripción y un monto mayor que cero.")
+        return _volver_cuenta_cobro(cuenta)
+    periodo = _cobro_periodo(request.POST.get("periodo"), fecha.replace(day=1))
+    detalle = DetalleCuentaPorCobrar.objects.create(
+        cuenta=cuenta,
+        descripcion=descripcion,
+        periodo=periodo,
+        fecha=fecha,
+        monto=monto,
+        origen=origen,
+        monto_manual=fuente is None,
+        provisional=fuente is None and request.POST.get("provisional") == "1",
+        movimiento=fuente if origen == "MOVIMIENTO" else None,
+        evento_externo=fuente if origen == "NEAT" else None,
+        clave_similitud=clave,
+    )
+    messages.success(request, f"Línea «{detalle.descripcion}» agregada por {monto} {cuenta.moneda}.")
+    return _volver_cuenta_cobro(cuenta, periodo)
+
+
+@require_http_methods(["POST"])
+@login_required
+def editar_detalle_cuenta_por_cobrar(request, pk):
+    detalle = get_object_or_404(
+        DetalleCuentaPorCobrar.objects.select_related("cuenta"),
+        pk=pk,
+        cuenta__user=request.user,
+    )
+    cuenta = detalle.cuenta
+    if not cuenta.activo:
+        messages.error(request, "La cuenta está archivada; reactívala antes de editar líneas.")
+        return _volver_cuenta_cobro(cuenta, detalle.periodo)
+
+    from patrimonio.services.cuentas_por_cobrar import informacion_fuente
+
+    fuente = _fuente_cobro_desde_seleccion(request.POST.get("fuente"), request.user)
+    if fuente is not None:
+        info = informacion_fuente(fuente)
+        if info["moneda"] != cuenta.moneda:
+            messages.error(request, "La moneda de la transacción no coincide con la cuenta.")
+            return _volver_cuenta_cobro(cuenta, detalle.periodo, detalle.pk)
+        if isinstance(fuente, MovimientoBancario):
+            existente = DetalleCuentaPorCobrar.objects.filter(movimiento=fuente).exclude(pk=detalle.pk).first()
+        else:
+            existente = DetalleCuentaPorCobrar.objects.filter(evento_externo=fuente).exclude(pk=detalle.pk).first()
+        if existente:
+            messages.info(
+                request,
+                f"No se cambió la línea: esa transacción ya está asociada a «{existente.descripcion}» "
+                f"({existente.periodo:%m/%Y}). Elige una transacción de otro mes para no duplicarla.",
+            )
+            return _volver_cuenta_cobro(cuenta, detalle.periodo, detalle.pk)
+        monto = info["monto"]
+        fecha = info["fecha"] or detalle.fecha
+        origen = info["origen"]
+        clave = info["clave"]
+        descripcion = request.POST.get("descripcion", "").strip() or detalle.descripcion
+    else:
+        monto = _cobro_decimal(request.POST.get("monto"))
+        fecha = _cobro_fecha(request.POST.get("fecha"), detalle.fecha)
+        origen = "MANUAL"
+        clave = ""
+        descripcion = request.POST.get("descripcion", "").strip() or detalle.descripcion
+
+    if not monto or not descripcion:
+        messages.error(request, "Para editar una línea necesitas descripción y un monto mayor que cero.")
+        return _volver_cuenta_cobro(cuenta, detalle.periodo, detalle.pk)
+
+    periodo = _cobro_periodo(request.POST.get("periodo"), fecha.replace(day=1))
+    detalle.descripcion = descripcion
+    detalle.periodo = periodo
+    detalle.fecha = fecha
+    detalle.monto = monto
+    detalle.origen = origen
+    detalle.monto_manual = fuente is None
+    detalle.provisional = fuente is None and request.POST.get("provisional") == "1"
+    detalle.movimiento = fuente if origen == "MOVIMIENTO" else None
+    detalle.evento_externo = fuente if origen == "NEAT" else None
+    detalle.clave_similitud = clave
+    detalle.save()
+    messages.success(request, f"Línea «{detalle.descripcion}» actualizada por {monto} {cuenta.moneda}.")
+    return _volver_cuenta_cobro(cuenta, periodo)
+
+
+@require_http_methods(["POST"])
+@login_required
+def registrar_abono_cuenta_por_cobrar(request):
+    cuenta = get_object_or_404(CuentaPorCobrar, pk=request.POST.get("cuenta_id"), user=request.user)
+    monto = _cobro_decimal(request.POST.get("monto"))
+    if not monto:
+        messages.error(request, "El abono debe ser mayor que cero.")
+        return _volver_cuenta_cobro(cuenta)
+    detalle = None
+    detalle_id = request.POST.get("detalle_id")
+    if detalle_id:
+        detalle = get_object_or_404(DetalleCuentaPorCobrar, pk=detalle_id, cuenta=cuenta)
+    abono = AbonoCuentaPorCobrar.objects.create(
+        cuenta=cuenta,
+        detalle=detalle,
+        fecha=_cobro_fecha(request.POST.get("fecha"), timezone.localdate()),
+        monto=monto,
+        descripcion=request.POST.get("descripcion", "").strip(),
+    )
+    destino = detalle.descripcion if detalle else "la cuenta completa"
+    messages.success(request, f"Abono de {abono.monto} {cuenta.moneda} registrado para {destino}.")
+    return _volver_cuenta_cobro(cuenta)
+
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_abono_cuenta_por_cobrar(request, pk):
+    abono = get_object_or_404(
+        AbonoCuentaPorCobrar.objects.select_related("cuenta"),
+        pk=pk,
+        cuenta__user=request.user,
+    )
+    cuenta = abono.cuenta
+    monto = abono.monto
+    abono.delete()
+    messages.success(request, f"Abono de {monto} {cuenta.moneda} quitado correctamente.")
+    return _volver_cuenta_cobro(cuenta)
+
+
+@require_http_methods(["POST"])
+@login_required
+def alternar_cuenta_por_cobrar(request, pk):
+    cuenta = get_object_or_404(CuentaPorCobrar, pk=pk, user=request.user)
+    cuenta.activo = not cuenta.activo
+    cuenta.save(update_fields=["activo", "updated_at"])
+    estado = "reactivada" if cuenta.activo else "archivada"
+    messages.success(request, f"Cuenta «{cuenta.nombre}» {estado}.")
+    return _volver_cuenta_cobro(cuenta)
+
+
+@require_http_methods(["POST"])
+@login_required
+def renovar_cuenta_por_cobrar(request, pk):
+    cuenta = get_object_or_404(CuentaPorCobrar, pk=pk, user=request.user)
+    periodo = _cobro_periodo(request.POST.get("periodo"), primer_dia_mes(timezone.localdate()))
+    if request.POST.get("confirmar") != "1":
+        propuesta_url = (
+            f"{reverse('cuentas_por_cobrar')}?periodo={periodo:%Y-%m}"
+            f"&propuesta={cuenta.pk}#cuenta-{cuenta.pk}"
+        )
+        return redirect(propuesta_url)
+
+    from patrimonio.services.cuentas_por_cobrar import renovar_cuenta
+
+    resultado = renovar_cuenta(cuenta, periodo)
+    if resultado["creados"]:
+        messages.success(
+            request,
+            f"Se agregaron {resultado['creados']} línea(s) detectada(s) para {periodo:%m/%Y}.",
+        )
+    else:
+        messages.info(request, f"No se encontró una transacción similar nueva para {periodo:%m/%Y}.")
+    if resultado["no_encontrados"]:
+        messages.info(
+            request,
+            "Puedes cargar manualmente las líneas sin coincidencia: "
+            + ", ".join(resultado["no_encontrados"][:3]),
+        )
+    return redirect(
+        f"{reverse('cuentas_por_cobrar')}?periodo={periodo:%Y-%m}#cuenta-{cuenta.pk}"
+    )
+
+
 @login_required
 def pasivos_view(request):
     """Liabilities dedicated page"""
@@ -426,7 +882,7 @@ def pasivos_view(request):
     ratio_da = (total_pasivos / activos_total * 100) if activos_total > 0 else 0
     
     # Available productos for linking
-    productos = Producto.objects.filter(activo=True).select_related('banco')
+    productos = Producto.objects.filter(user=user, activo=True).select_related('banco')
     
     context = {
         'grouped': grouped,
@@ -450,9 +906,6 @@ def departamentos(request):
     except TipoCambio.DoesNotExist:
         valor_uf = Decimal(0)
     
-    # Sync categories for departments if missing
-    ensure_departamento_categories(user)
-    
     departamentos_qs = Departamento.objects.filter(user=user).prefetch_related(
         'arrendatario', 'credito_hipotecario'
     )
@@ -468,27 +921,46 @@ def departamentos(request):
         for d in departamentos_qs
     )
     
-    bancos = Banco.objects.all()
+    bancos = Banco.objects.all().prefetch_related(
+        Prefetch(
+            "productos",
+            queryset=Producto.objects.filter(user=user, reemplazado_por__isnull=True).order_by("orden", "nombre"),
+            to_attr="productos_usuario",
+        )
+    )
+    houm = resumen_houm_departamentos(user)
     
     # Calculate ROI metrics for each departamento
     deptos_con_roi = []
     for d in departamentos_qs:
+        d.houm_resumen = houm['por_departamento'].get(d.id)
         info = {
             'depto': d,
             'valor_clp': d.valor_actual_uf * valor_uf,
+            'houm': d.houm_resumen,
         }
         
         if hasattr(d, 'arrendatario'):
             renta_esperada = d.arrendatario.monto_arriendo_clp
-            # Check if there's a category for this depto in RegistroMensual
-            cat_nombre = f"Arriendo {d.codigo}"
-            ingreso_real = RegistroMensual.objects.filter(
-                user=user, categoria__nombre=cat_nombre
-            ).aggregate(avg=Avg('monto'))['avg'] or Decimal(0)
+            houm_department = info['houm']
+            ingreso_real = (
+                houm_department['actual']['deposito']
+                if houm_department and houm_department['actual']
+                else MovimientoManual.objects.filter(
+                    user=user, departamento=d, direccion="INGRESO", naturaleza="OPERACIONAL"
+                ).aggregate(avg=Avg('monto_clp'))['avg'] or Decimal(0)
+            )
             
             info['renta_esperada'] = renta_esperada
             info['ingreso_real'] = ingreso_real
-            info['costo_admin'] = renta_esperada - ingreso_real if ingreso_real > 0 else Decimal(0)
+            info['costo_admin'] = (
+                houm_department['actual']['administracion']
+                if houm_department and houm_department['actual'] else Decimal(0)
+            )
+            info['deficit_houm'] = (
+                houm_department['actual']['deficit']
+                if houm_department and houm_department['actual'] else Decimal(0)
+            )
             info['pct_admin'] = (info['costo_admin'] / renta_esperada * 100) if renta_esperada > 0 and ingreso_real > 0 else 0
             
             # New Metric: % Ingreso vs Renta Mensual
@@ -526,19 +998,36 @@ def departamentos(request):
         else:
             info['renta_esperada'] = 0
             info['ingreso_real'] = 0
+            info['costo_admin'] = 0
+            info['deficit_houm'] = (
+                info['houm']['actual']['deficit']
+                if info['houm'] and info['houm']['actual'] else Decimal(0)
+            )
             info['pct_recaudacion'] = 0
             info['missing_pct'] = 100
-            info['dividendo_clp'] = 0
-            info['cobertura_dividendo'] = 0
-            info['diferencia_dividendo'] = 0
-            info['utilidad_patrimonial'] = 0
-            info['roi_total'] = 0
+            info['roi_cashflow'] = 0
+            valor_actual_clp = d.valor_actual_uf * valor_uf
+            if hasattr(d, 'credito_hipotecario'):
+                amort_mensual = d.credito_hipotecario.calcular_amortizacion_mensual() * valor_uf
+                dividendo_clp = d.credito_hipotecario.cuota_uf * valor_uf
+                info['roi_amort'] = float(amort_mensual * 12 / valor_actual_clp * 100) if valor_actual_clp > 0 else 0
+                info['dividendo_clp'] = dividendo_clp
+                info['cobertura_dividendo'] = 0
+                info['diferencia_dividendo'] = -dividendo_clp
+                info['utilidad_patrimonial'] = -dividendo_clp + amort_mensual
+            else:
+                info['roi_amort'] = 0
+                info['dividendo_clp'] = 0
+                info['cobertura_dividendo'] = 0
+                info['diferencia_dividendo'] = 0
+                info['utilidad_patrimonial'] = 0
+            info['roi_total'] = info['roi_amort']
         
         deptos_con_roi.append(info)
 
     # Productos CREDITO_HIPOTECARIO available from Entidades Financieras
     creditos_hip_productos = Producto.objects.filter(
-        tipo='CREDITO_HIPOTECARIO', activo=True
+        user=user, tipo='CREDITO_HIPOTECARIO', activo=True
     ).select_related('banco')
 
     # Calculate Global Portfolio Metrics for Cards
@@ -572,6 +1061,14 @@ def departamentos(request):
         'tipo_cambio': valor_uf,
         'bancos': bancos,
         'creditos_hip_productos': creditos_hip_productos,
+        'houm': houm,
+        'houm_chart': {
+            'labels': [row['etiqueta'] for row in houm['historial']],
+            'renta': [float(row['renta']) for row in houm['historial']],
+            'deposito': [float(row['deposito']) for row in houm['historial']],
+            'administracion': [float(row['administracion']) for row in houm['historial']],
+            'deficit': [float(row['deficit']) for row in houm['historial']],
+        },
     }
     
     return render(request, 'departamentos.html', context)
@@ -586,17 +1083,198 @@ def configuracion(request):
     except TipoCambio.DoesNotExist:
         tipo_cambio = None
     bancos = Banco.objects.all()
-    categorias = CategoriaIngreso.objects.filter(user=user)
-    
+    categorias = CategoriaTematica.objects.filter(user=user, activa=True)
+    config_notificaciones, _ = ConfiguracionNotificaciones.objects.get_or_create(user=user)
+
+    market_integrations = None
+    if request.user.is_staff:
+        credentials = {item.provider: item for item in CredencialIntegracion.objects.all()}
+        market_integrations = []
+        descriptions = {
+            CredencialIntegracion.PROVIDER_COINGECKO: "Precios, capitalización, supply y universo del scanner. La key es opcional para el plan gratuito.",
+            CredencialIntegracion.PROVIDER_COINMARKETCAP: "Validación independiente de identidad y metadata de los proyectos.",
+            CredencialIntegracion.PROVIDER_TOKENOMIST: "Calendarios de unlocks y eventos de dilución cuando se habilite el conector.",
+            CredencialIntegracion.PROVIDER_BRAVE_SEARCH: "Descubrimiento de proyectos y fuentes públicas en internet. La búsqueda se limita a resultados citables y no inicia sesión en redes sociales.",
+        }
+        for provider, label in CredencialIntegracion.PROVIDER_CHOICES:
+            credential = credentials.get(provider)
+            market_integrations.append({
+                "provider": provider,
+                "label": label,
+                "description": descriptions[provider],
+                "credential": credential,
+                "configured": bool(get_integration_api_key(provider)),
+            })
+
     context = {
         'tipo_cambio': tipo_cambio,
         'bancos': bancos,
         'categorias': categorias,
         'apple_pay_keys': ApplePayApiKey.objects.filter(user=user).order_by('-created_at'),
         'apple_pay_new_key': request.session.pop('apple_pay_new_key', None),
+        'market_integrations': market_integrations,
+        'integration_encryption_ready': bool(getattr(settings, "BANCA_FERNET_KEY", "")),
+        'notification_form': ConfiguracionNotificacionesForm(instance=config_notificaciones),
+        'telegram_configurado': bool(
+            config_notificaciones.telegram_bot_token_cifrado
+            and config_notificaciones.telegram_chat_id_cifrado
+        ),
+        'config_notificaciones': config_notificaciones,
+        'categorias_tematicas': CategoriaTematica.objects.filter(user=user, activa=True),
+        'productos_revision': Producto.objects.filter(user=user, requiere_revision=True).select_related('banco'),
+        'limites_categoria': LimiteCategoria.objects.filter(user=user).select_related('categoria'),
+        'notificaciones_recientes': RegistroNotificacion.objects.filter(user=user)[:8],
     }
     
     return render(request, 'configuracion.html', context)
+
+
+@require_http_methods(["POST"])
+@login_required
+def guardar_notificaciones(request):
+    config, _ = ConfiguracionNotificaciones.objects.get_or_create(user=request.user)
+    form = ConfiguracionNotificacionesForm(request.POST, instance=config)
+    if not form.is_valid():
+        detalle = "; ".join(
+            error for errores in form.errors.values() for error in errores
+        )
+        messages.error(request, f"No se guardó la configuración: {detalle}")
+        return redirect("configuracion")
+    try:
+        config = form.save()
+    except RuntimeError as exc:
+        messages.error(request, f"No se pudieron cifrar las credenciales: {exc}")
+        return redirect("configuracion")
+    if config.telegram_activo and not (
+        config.telegram_bot_token_cifrado and config.telegram_chat_id_cifrado
+    ):
+        config.telegram_activo = False
+        config.save(update_fields=["telegram_activo", "updated_at"])
+        messages.warning(
+            request,
+            "Las preferencias se guardaron, pero Telegram seguirá desactivado hasta guardar token y chat ID.",
+        )
+    else:
+        messages.success(request, "Notificaciones y credenciales personales guardadas.")
+    return redirect("configuracion")
+
+
+@require_http_methods(["POST"])
+@login_required
+def probar_notificaciones_telegram(request):
+    config = ConfiguracionNotificaciones.objects.filter(user=request.user).first()
+    if not config or not (
+        config.telegram_bot_token_cifrado and config.telegram_chat_id_cifrado
+    ):
+        messages.error(request, "Guarda primero el token del bot y el chat ID.")
+    elif probar_telegram(request.user):
+        messages.success(request, "Mensaje de prueba enviado correctamente a tu chat.")
+    else:
+        messages.error(
+            request,
+            "Telegram rechazó el envío. Revisa el token, el chat ID y que hayas iniciado el bot.",
+        )
+    return redirect("configuracion")
+
+
+@require_http_methods(["POST"])
+@login_required
+def retirar_notificaciones_telegram(request):
+    config = ConfiguracionNotificaciones.objects.filter(user=request.user).first()
+    if config:
+        config.clear_telegram()
+        config.save(
+            update_fields=[
+                "telegram_bot_token_cifrado",
+                "telegram_chat_id_cifrado",
+                "telegram_token_prefijo",
+                "telegram_activo",
+                "updated_at",
+            ]
+        )
+    messages.success(request, "Las credenciales de Telegram fueron retiradas.")
+    return redirect("configuracion")
+
+
+@require_http_methods(["POST"])
+@login_required
+def guardar_limite_categoria(request):
+    categoria = get_object_or_404(
+        CategoriaTematica,
+        pk=request.POST.get("categoria"),
+        user=request.user,
+        activa=True,
+    )
+    try:
+        monto = Decimal(request.POST.get("monto_mensual_clp", "0"))
+    except (InvalidOperation, TypeError):
+        monto = Decimal("0")
+    if monto <= 0:
+        messages.error(request, "El límite mensual debe ser mayor que cero.")
+        return redirect("configuracion")
+    LimiteCategoria.objects.update_or_create(
+        user=request.user,
+        categoria=categoria,
+        defaults={"monto_mensual_clp": monto, "activo": True},
+    )
+    messages.success(request, f"Límite de {categoria.nombre} guardado.")
+    return redirect("configuracion")
+
+
+@require_http_methods(["POST"])
+@login_required
+def borrar_limite_categoria(request, pk):
+    limite = get_object_or_404(LimiteCategoria, pk=pk, user=request.user)
+    nombre = limite.categoria.nombre
+    limite.delete()
+    messages.success(request, f"Límite de {nombre} eliminado.")
+    return redirect("configuracion")
+
+
+@user_passes_test(lambda user: user.is_staff)
+@require_http_methods(["POST"])
+def guardar_market_api_key(request, provider):
+    valid_providers = {choice[0] for choice in CredencialIntegracion.PROVIDER_CHOICES}
+    if provider not in valid_providers:
+        messages.error(request, "Proveedor de mercado no reconocido.")
+        return redirect("configuracion")
+    api_key = request.POST.get("api_key", "").strip()
+    if len(api_key) < 8 or len(api_key) > 500:
+        messages.error(request, "La API key debe tener entre 8 y 500 caracteres.")
+        return redirect("configuracion")
+    credential, _ = CredencialIntegracion.objects.get_or_create(
+        provider=provider,
+    )
+    try:
+        credential.set_api_key(api_key)
+    except RuntimeError as exc:
+        messages.error(request, f"No se pudo cifrar la API key: {exc}")
+        return redirect("configuracion")
+    credential.active = True
+    credential.updated_by = request.user
+    credential.save()
+    messages.success(request, f"API key de {credential.get_provider_display()} guardada y cifrada.")
+    return redirect("configuracion")
+
+
+@user_passes_test(lambda user: user.is_staff)
+@require_http_methods(["POST"])
+def retirar_market_api_key(request, provider):
+    valid_providers = {choice[0] for choice in CredencialIntegracion.PROVIDER_CHOICES}
+    if provider not in valid_providers:
+        messages.error(request, "Proveedor de mercado no reconocido.")
+        return redirect("configuracion")
+    credential = CredencialIntegracion.objects.filter(
+        provider=provider,
+    ).first()
+    if credential:
+        credential.api_key_cifrada = None
+        credential.key_prefix = ""
+        credential.active = False
+        credential.updated_by = request.user
+        credential.save(update_fields=["api_key_cifrada", "key_prefix", "active", "updated_by", "updated_at"])
+    messages.success(request, "La API key guardada en el panel fue retirada.")
+    return redirect("configuracion")
 
 
 @require_http_methods(["POST"])
@@ -688,7 +1366,7 @@ def crear_pasivo(request):
     monto_usd = request.POST.get('monto_usd') or 0
     
     producto_id = request.POST.get('producto_id')
-    producto = Producto.objects.get(id=producto_id) if producto_id else None
+    producto = Producto.objects.get(id=producto_id, user=request.user) if producto_id else None
     
     Pasivo.objects.create(
         user=request.user,
@@ -742,19 +1420,6 @@ def crear_departamento(request):
     depto.valor_actual_uf = request.POST.get('valor_actual_uf')
     depto.save()
     
-    # Auto-create INGRESO category for Carga Masiva
-    CategoriaIngreso.objects.get_or_create(
-        user=request.user,
-        nombre=f"Arriendo {depto.codigo}",
-        tipo='INGRESO',
-        defaults={
-            'mostrar_en_carga_masiva': True,
-            'moneda_defecto': 'CLP',
-            'contabilizar': True,
-            'activo': True,
-        }
-    )
-    
     return redirect('departamentos')
 
 
@@ -762,8 +1427,6 @@ def crear_departamento(request):
 @login_required
 def editar_departamento(request, pk):
     depto = Departamento.objects.get(pk=pk, user=request.user)
-    old_codigo = depto.codigo
-    
     depto.codigo = request.POST.get('codigo')
     depto.piso = request.POST.get('piso')
     depto.metros_cuadrados = request.POST.get('metros_cuadrados')
@@ -771,14 +1434,6 @@ def editar_departamento(request, pk):
     depto.valor_actual_uf = request.POST.get('valor_actual_uf')
     depto.save()
     
-    # Sync category name if code changed
-    if old_codigo != depto.codigo:
-        old_cat_nombre = f"Arriendo {old_codigo}"
-        new_cat_nombre = f"Arriendo {depto.codigo}"
-        CategoriaIngreso.objects.filter(
-            user=request.user, nombre=old_cat_nombre, tipo='INGRESO'
-        ).update(nombre=new_cat_nombre)
-        
     return redirect('departamentos')
 
 
@@ -786,10 +1441,6 @@ def editar_departamento(request, pk):
 @login_required
 def borrar_departamento(request, pk):
     depto = Departamento.objects.get(pk=pk, user=request.user)
-    # Also remove associated INGRESO category
-    CategoriaIngreso.objects.filter(
-        user=request.user, nombre=f"Arriendo {depto.codigo}", tipo='INGRESO'
-    ).delete()
     depto.delete()
     return redirect('departamentos')
 
@@ -879,7 +1530,7 @@ def crear_credito(request, depto_pk):
     producto = None
     banco = None
     if producto_id:
-        producto = Producto.objects.get(id=producto_id)
+        producto = Producto.objects.get(id=producto_id, user=request.user)
         banco = producto.banco
     elif banco_id:
         banco = Banco.objects.get(id=banco_id)
@@ -919,7 +1570,7 @@ def editar_credito(request, pk):
     producto_id = request.POST.get('producto_id')
     if producto_id:
         credito.producto_id = producto_id
-        credito.banco = Producto.objects.get(id=producto_id).banco
+        credito.banco = Producto.objects.get(id=producto_id, user=request.user).banco
     
     credito.monto_original_uf = request.POST.get('monto_original_uf', credito.monto_original_uf)
     credito.tasa_anual = request.POST.get('tasa_anual', credito.tasa_anual)
@@ -963,74 +1614,70 @@ def borrar_credito(request, pk):
 
 @login_required
 def bulk_gastos(request):
-    """Bulk update/create monthly expenses for a given month"""
+    """Carga rápida: totales mensuales convertidos a movimientos manuales."""
+    from calendar import monthrange
+    from gastos.services import convertir_a_clp
+
     user = request.user
     if request.method == "POST":
         year = int(request.POST.get('year'))
         month = int(request.POST.get('month'))
-        
+        periodo = date(year, month, 1)
+        fecha = date(year, month, monthrange(year, month)[1])
         for key, value in request.POST.items():
             if key.startswith('cat_'):
                 cat_id = key.split('_')[1]
                 monto = value.strip()
-                
                 if monto:
-                    decimal_monto = Decimal(monto.replace('.', '').replace(',', '.'))
-                    categoria = CategoriaIngreso.objects.get(id=cat_id, user=user)
-                    
-                    RegistroMensual.objects.update_or_create(
-                        user=user,
-                        year=year,
-                        mes=month,
-                        categoria=categoria,
+                    decimal_monto = Decimal(monto.replace(',', '.'))
+                    if decimal_monto <= 0:
+                        continue
+                    categoria = CategoriaTematica.objects.get(id=cat_id, user=user, activa=True)
+                    direccion = "INGRESO" if categoria.aplica_a == "INGRESO" else "EGRESO"
+                    monto_clp, tasa, estimado = convertir_a_clp(decimal_monto, "CLP", fecha)
+                    MovimientoManual.objects.update_or_create(
+                        user=user, periodo=periodo, categoria=categoria,
+                        direccion=direccion, es_resumen_mensual=True,
                         defaults={
-                            'monto': decimal_monto,
-                            'tipo': categoria.tipo if categoria.tipo != 'GASTO_FIJO' else 'GASTO',
-                            'moneda': 'CLP'
-                        }
+                            "fecha": fecha, "monto": decimal_monto, "moneda": "CLP",
+                            "monto_clp": monto_clp, "tipo_cambio": tasa,
+                            "monto_clp_estimado": estimado, "naturaleza": "OPERACIONAL",
+                            "descripcion": categoria.nombre,
+                        },
                     )
-        
         return redirect(f'{reverse("gastos-table")}?year={year}&month={month}')
 
     today = date.today()
     last_month_date = today.replace(day=1) - timedelta(days=1)
     
-    categorias = CategoriaIngreso.objects.filter(
-        user=user, mostrar_en_carga_masiva=True
-    ).select_related('banco_defecto')
-    
-    grouped_categorias = {}
-    for cat in categorias:
-        tipo = cat.get_tipo_display()
-        if tipo not in grouped_categorias:
-            grouped_categorias[tipo] = []
-        grouped_categorias[tipo].append(cat)
-        
-    tipo_order = {'Ingreso': 0, 'Gasto': 1, 'Gasto Fijo': 2, 'Tarjeta de Crédito': 3}
-    grouped_sorted = dict(sorted(grouped_categorias.items(), key=lambda x: tipo_order.get(x[0], 99)))
-    
+    categorias = CategoriaTematica.objects.filter(user=user, activa=True).order_by("aplica_a", "orden", "nombre")
     context = {
         'years': range(today.year - 2, today.year + 2),
         'default_year': last_month_date.year,
         'default_month': last_month_date.month,
-        'grouped_categorias': grouped_sorted,
+        'categorias': categorias,
     }
     return render(request, 'bulk_gastos_modal.html', context)
 
 
 @login_required
 def get_category_data(request, cat_pk):
-    """Return JSON with history for a category"""
+    """Histórico unificado de una categoría."""
     from django.http import JsonResponse
     user = request.user
-    categoria = CategoriaIngreso.objects.get(pk=cat_pk, user=user)
-    history = RegistroMensual.objects.filter(
-        user=user, categoria=categoria
-    ).order_by('year', 'mes')[:12]
-    
+    categoria = CategoriaTematica.objects.get(pk=cat_pk, user=user)
+    hoy = date.today().replace(day=1)
+    periodos = []
+    cursor = hoy
+    for _ in range(12):
+        periodos.append(cursor)
+        cursor = date(cursor.year - (cursor.month == 1), 12 if cursor.month == 1 else cursor.month - 1, 1)
+    periodos.reverse()
     data = {
-        'labels': [f"{h.mes:02d}-{h.year}" for h in history],
-        'values': [float(h.monto) for h in history],
+        'labels': [f"{p.month:02d}-{p.year}" for p in periodos],
+        'values': [str(sum((g["total_clp"] for g in resumen_gastos(
+            user, p, p, "consumo", {"categoria": str(cat_pk)}
+        )["categorias"]), Decimal("0"))) for p in periodos],
         'name': categoria.nombre
     }
     return JsonResponse(data)
@@ -1042,26 +1689,14 @@ def get_category_data(request, cat_pk):
 @login_required
 def crear_categoria(request):
     nombre = request.POST.get('nombre')
-    tipo = request.POST.get('tipo', 'GASTO')
-    contabilizar = request.POST.get('contabilizar') == 'on'
-    moneda_defecto = request.POST.get('moneda_defecto', 'CLP')
-    dia_cobro = request.POST.get('dia_cobro')
-    if dia_cobro and dia_cobro.isdigit():
-        dia_cobro = int(dia_cobro)
-    else:
-        dia_cobro = None
-    mostrar_en_carga_masiva = request.POST.get('mostrar_en_carga_masiva') == 'on'
-    
     if nombre:
-        CategoriaIngreso.objects.create(
+        CategoriaTematica.objects.create(
             user=request.user,
             nombre=nombre,
-            tipo=tipo,
-            contabilizar=contabilizar,
-            moneda_defecto=moneda_defecto,
-            dia_cobro=dia_cobro,
-            mostrar_en_carga_masiva=mostrar_en_carga_masiva,
-            activo=True
+            aplica_a=request.POST.get('aplica_a', request.POST.get('tipo', 'EGRESO')),
+            esencialidad_defecto=request.POST.get('esencialidad_defecto', 'OCIO'),
+            origen="USUARIO",
+            activa=True,
         )
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
@@ -1070,20 +1705,10 @@ def crear_categoria(request):
 @require_http_methods(["POST"])
 @login_required
 def editar_categoria(request, pk):
-    cat = CategoriaIngreso.objects.get(pk=pk, user=request.user)
+    cat = CategoriaTematica.objects.get(pk=pk, user=request.user)
     cat.nombre = request.POST.get('nombre', cat.nombre)
-    cat.tipo = request.POST.get('tipo', cat.tipo)
-    cat.contabilizar = request.POST.get('contabilizar') == 'on'
-    cat.moneda_defecto = request.POST.get('moneda_defecto', 'CLP')
-    
-    dia_cobro = request.POST.get('dia_cobro')
-    if dia_cobro and dia_cobro.isdigit():
-        cat.dia_cobro = int(dia_cobro)
-    else:
-        cat.dia_cobro = None
-        
-    cat.mostrar_en_carga_masiva = request.POST.get('mostrar_en_carga_masiva') == 'on'
-        
+    cat.aplica_a = request.POST.get('aplica_a', cat.aplica_a)
+    cat.esencialidad_defecto = request.POST.get('esencialidad_defecto', cat.esencialidad_defecto)
     cat.save()
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
@@ -1092,11 +1717,9 @@ def editar_categoria(request, pk):
 @require_http_methods(["POST"])
 @login_required
 def borrar_categoria(request, pk):
-    cat = CategoriaIngreso.objects.get(pk=pk, user=request.user)
-    if cat.producto_asociado:
-        pass
-    else:
-        cat.delete()
+    cat = CategoriaTematica.objects.get(pk=pk, user=request.user)
+    cat.activa = False
+    cat.save(update_fields=["activa"])
     next_url = request.POST.get('next', 'configuracion')
     return redirect(next_url)
 
@@ -1108,12 +1731,10 @@ def borrar_categoria(request, pk):
 def crear_banco(request):
     nombre = request.POST.get('nombre')
     notas = request.POST.get('notas', '')
-    mostrar = request.POST.get('mostrar_en_carga_masiva') == 'on'
     if nombre:
         Banco.objects.create(
             nombre=nombre,
             notas=notas,
-            mostrar_en_carga_masiva=mostrar,
             activo=True
         )
     return redirect('configuracion')
@@ -1125,7 +1746,6 @@ def editar_banco(request, pk):
     banco = Banco.objects.get(pk=pk)
     banco.nombre = request.POST.get('nombre', banco.nombre)
     banco.notas = request.POST.get('notas', banco.notas)
-    banco.mostrar_en_carga_masiva = request.POST.get('mostrar_en_carga_masiva') == 'on'
     banco.save()
     return redirect('configuracion')
 
@@ -1142,7 +1762,7 @@ def borrar_banco(request, pk):
 
 @login_required
 def calendario(request):
-    from gastos.models import CategoriaIngreso, GastoProgramado
+    from gastos.models import GastoProgramado
     from departamentos.models import Departamento
     import calendar
     from datetime import date
@@ -1158,7 +1778,6 @@ def calendario(request):
     month_days = cal.monthdayscalendar(year, month)
     month_name = calendar.month_name[month].capitalize()
 
-    categorias = CategoriaIngreso.objects.filter(user=request.user, dia_cobro__isnull=False)
     departamentos_cal = request.user.departamentos.filter(fecha_ultima_cuota__gte=date(year, month, 1))
     
     gastos_programados = GastoProgramado.objects.filter(user=request.user, activo=True)
@@ -1183,6 +1802,20 @@ def calendario(request):
     
     # Sort grid_gastos by day of the month for the "Next Payment" card
     grid_gastos.sort(key=lambda x: x.dia_cobro)
+    vencimientos_tarjetas = vencimientos_tdc(request.user, year, month)
+    from banca.services.calendario_externo import eventos_externos_calendario
+
+    eventos_externos = eventos_externos_calendario(request.user, year, month)
+    eventos_calendario = [
+        {
+            'dia_cobro': gasto.dia_cobro,
+            'nombre': gasto.nombre,
+            'monto': gasto.monto,
+            'tipo': 'programado',
+        }
+        for gasto in grid_gastos
+    ] + vencimientos_tarjetas + eventos_externos
+    eventos_calendario.sort(key=lambda evento: (evento['dia_cobro'], evento['tipo']))
 
     prev_month = month - 1 if month > 1 else 12
     prev_year = year if month > 1 else year - 1
@@ -1194,11 +1827,13 @@ def calendario(request):
         'month': month,
         'month_name': month_name,
         'month_days': month_days,
-        'categorias': categorias,
         'departamentos': departamentos_cal,
         'gastos_programados': gastos_programados,
         'ahorro_mensual_total': ahorro_mensual_total,
         'grid_gastos': grid_gastos,
+        'vencimientos_tarjetas': vencimientos_tarjetas,
+        'eventos_externos': eventos_externos,
+        'proximo_vencimiento': eventos_calendario[0] if eventos_calendario else None,
         'nav': {
             'prev_m': prev_month, 'prev_y': prev_year,
             'next_m': next_month, 'next_y': next_year
@@ -1257,57 +1892,23 @@ def crear_producto(request):
     nombre = request.POST.get('nombre')
     tipo = request.POST.get('tipo', 'TDC')
     tiene_cupo_usd = request.POST.get('tiene_cupo_usd') == 'on'
-    contabilizar = request.POST.get('contabilizar') == 'on'
     dia_cobro = request.POST.get('dia_cobro')
     dia_cobro = int(dia_cobro) if dia_cobro and dia_cobro.isdigit() else None
     
     prod = Producto.objects.create(
+        user=request.user,
         banco_id=banco_id,
         nombre=nombre,
         tipo=tipo,
+        ultimos4=request.POST.get('ultimos4', '')[-4:],
+        origen='MANUAL',
         tiene_cupo_usd=tiene_cupo_usd,
-        contabilizar=contabilizar,
+        contabilizar=True,
         dia_cobro=dia_cobro,
         activo=True
     )
     
-    from gastos.models import CategoriaIngreso
     banco = Banco.objects.get(id=banco_id)
-    if tipo == 'CREDITO_CONSUMO':
-        cat_tipo = 'CREDITO_CONSUMO'
-    elif tipo == 'CREDITO_HIPOTECARIO':
-        cat_tipo = 'CREDITO_HIPOTECARIO'
-    elif tipo in ['TDC', 'LINEA_CREDITO']:
-        cat_tipo = 'TDC'
-    else:
-        cat_tipo = 'COBRO_BANCO'
-    
-    CategoriaIngreso.objects.create(
-        user=request.user,
-        nombre=f"{banco.nombre} - {nombre} (CLP)" if tiene_cupo_usd else f"{banco.nombre} - {nombre}",
-        tipo=cat_tipo,
-        banco_defecto=banco,
-        producto_asociado=prod,
-        moneda_defecto='CLP',
-        mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva,
-        contabilizar=contabilizar,
-        dia_cobro=dia_cobro,
-        activo=True
-    )
-    
-    if tiene_cupo_usd:
-        CategoriaIngreso.objects.create(
-            user=request.user,
-            nombre=f"{banco.nombre} - {nombre} (USD)",
-            tipo=cat_tipo,
-            banco_defecto=banco,
-            producto_asociado=prod,
-            moneda_defecto='USD',
-            mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva,
-            contabilizar=contabilizar,
-            dia_cobro=dia_cobro,
-            activo=True
-        )
     
     # Auto-create Pasivo for relevant products
     if tipo in ['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO', 'TDC']:
@@ -1330,14 +1931,13 @@ def crear_producto(request):
 @require_http_methods(["POST"])
 @login_required
 def editar_producto(request, pk):
-    prod = Producto.objects.get(pk=pk)
+    prod = Producto.objects.get(pk=pk, user=request.user)
     prod.banco_id = request.POST.get('banco_id', prod.banco_id)
     prod.nombre = request.POST.get('nombre', prod.nombre)
     prod.tipo = request.POST.get('tipo', prod.tipo)
+    prod.ultimos4 = request.POST.get('ultimos4', prod.ultimos4)[-4:]
     
     prod.tiene_cupo_usd = request.POST.get('tiene_cupo_usd') == 'on'
-    prod.contabilizar = request.POST.get('contabilizar') == 'on'
-    
     dia_cobro = request.POST.get('dia_cobro')
     prod.dia_cobro = int(dia_cobro) if dia_cobro and dia_cobro.isdigit() else None
     
@@ -1347,69 +1947,29 @@ def editar_producto(request, pk):
     if prod.tipo in ['CREDITO_HIPOTECARIO', 'CREDITO_CONSUMO', 'TDC']:
         ensure_pasivos_for_products(request.user)
     
-    from gastos.models import CategoriaIngreso
-    banco = Banco.objects.get(id=prod.banco_id)
-    
-    if prod.tipo == 'CREDITO_CONSUMO':
-        cat_tipo = 'CREDITO_CONSUMO'
-    elif prod.tipo == 'CREDITO_HIPOTECARIO':
-        cat_tipo = 'CREDITO_HIPOTECARIO'
-    elif prod.tipo in ['TDC', 'LINEA_CREDITO']:
-        cat_tipo = 'TDC'
-    else:
-        cat_tipo = 'COBRO_BANCO'
-    
-    categorias = prod.categorias_vinculadas.all()
-    if categorias.exists():
-        if not prod.tiene_cupo_usd:
-            for cat in categorias:
-                if cat.moneda_defecto == 'USD':
-                    cat.delete()
-                else:
-                    cat.nombre = f"{banco.nombre} - {prod.nombre}"
-                    cat.tipo = cat_tipo
-                    cat.banco_defecto = banco
-                    cat.contabilizar = prod.contabilizar
-                    cat.dia_cobro = prod.dia_cobro
-                    cat.save(update_fields=['nombre', 'tipo', 'banco_defecto', 'contabilizar', 'dia_cobro'])
-        else:
-            clp_cat = categorias.filter(moneda_defecto='CLP').first()
-            if clp_cat:
-                clp_cat.nombre = f"{banco.nombre} - {prod.nombre} (CLP)"
-                clp_cat.tipo = cat_tipo
-                clp_cat.banco_defecto = banco
-                clp_cat.contabilizar = prod.contabilizar
-                clp_cat.dia_cobro = prod.dia_cobro
-                clp_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto', 'contabilizar', 'dia_cobro'])
-            else:
-                CategoriaIngreso.objects.create(
-                    user=request.user, nombre=f"{banco.nombre} - {prod.nombre} (CLP)", tipo=cat_tipo,
-                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='CLP', 
-                    mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, contabilizar=prod.contabilizar, dia_cobro=prod.dia_cobro, activo=True
-                )
-            
-            usd_cat = categorias.filter(moneda_defecto='USD').first()
-            if usd_cat:
-                usd_cat.nombre = f"{banco.nombre} - {prod.nombre} (USD)"
-                usd_cat.tipo = cat_tipo
-                usd_cat.banco_defecto = banco
-                usd_cat.contabilizar = prod.contabilizar
-                usd_cat.dia_cobro = prod.dia_cobro
-                usd_cat.save(update_fields=['nombre', 'tipo', 'banco_defecto', 'contabilizar', 'dia_cobro'])
-            else:
-                CategoriaIngreso.objects.create(
-                    user=request.user, nombre=f"{banco.nombre} - {prod.nombre} (USD)", tipo=cat_tipo,
-                    banco_defecto=banco, producto_asociado=prod, moneda_defecto='USD', 
-                    mostrar_en_carga_masiva=banco.mostrar_en_carga_masiva, contabilizar=prod.contabilizar, dia_cobro=prod.dia_cobro, activo=True
-                )
-        
     return redirect('configuracion')
 
 
 @require_http_methods(["POST"])
 @login_required
 def borrar_producto(request, pk):
-    prod = Producto.objects.get(pk=pk)
-    prod.categorias_vinculadas.all().delete()
-    prod.delete()
+    prod = Producto.objects.get(pk=pk, user=request.user)
+    prod.activo = False
+    prod.save(update_fields=['activo'])
+    return redirect('configuracion')
+
+
+@require_http_methods(["POST"])
+@login_required
+def vincular_producto_reemplazo(request):
+    from configuracion.services.productos import vincular_producto
+
+    anterior = get_object_or_404(Producto, pk=request.POST.get("anterior_id"), user=request.user)
+    canonico = get_object_or_404(Producto, pk=request.POST.get("canonico_id"), user=request.user)
+    try:
+        vincular_producto(request.user, anterior, canonico)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"{anterior.nombre} quedó vinculado a {canonico.nombre}.")
     return redirect('configuracion')
