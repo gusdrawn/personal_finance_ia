@@ -1,0 +1,16 @@
+.git/
+.gitignore
+.env
+._*
+.DS_Store
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+db.sqlite3*
+media/
+staticfiles/
+tmp/
+graphify-out/
+celerybeat-schedule*
+*.log

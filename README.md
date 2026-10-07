@@ -33,13 +33,15 @@ by category and each link opens the official site in a new tab.
 | Module | Description |
 | :--- | :--- |
 | **Dashboard** | Real-time overview of net worth, assets, liabilities, and liquidity. |
-| **Gastos** | Centro financiero con flujo de caja oficial y consumo categorizado, integrando TDC, Houm, Neat y movimientos manuales sin doble conteo. |
+| **Gastos Mensuales** | Consolidado de entradas confirmadas y salidas facturadas: cuentas por fecha real y tarjetas por vencimiento. Neat explica cargos bancarios sin sumarlos otra vez. |
+| **Movimientos** | Subpágina de Gastos para revisar transacciones y categorías, reclasificar manualmente, clasificar pendientes con IA y consultar cargos no facturados. |
 | **Patrimonio** | Asset and liability management with multi-currency support (CLP, USD, UF), including accounts receivable. |
 | **Departamentos** | Rental property ROI analysis, mortgage amortization, and tenant tracking. |
 | **Inversiones** | Portfolio management for stocks, crypto, and mutual funds. |
 | **Préstamos** | Gestión de bicicletas personales y de terceros con cálculo de intereses, visible también por bicicleta en cada card. |
 | **Configuración** | Centralized management for banks, products, categories, exchange rates, and Apple Pay API keys. |
 | **Banca** | Integración de movimientos, deudas, presupuesto, clasificación, sincronización de fuentes, importación masiva de estados de cuenta PDF y POC Apple Pay vía Atajo de iPhone. |
+| **Pendientes** | Registro transversal de Aseo, contribuciones, pagos, documentos y sincronizaciones; incluye recordatorios, calendario, Telegram, tareas manuales y asignaciones de pagos por propiedad. |
 | **Altcoin Scanner** | Scanner histórico de 45 proyectos más cola de descubrimiento fuera del top por capitalización, dossier auditable de web/redes/tokenomics, score fundamental y grafo verificable de fundadores, operadores, inversores, sponsors e instituciones. |
 | **Trading Research Center** | Portal de investigación multi-activo con screener, temáticas, QuantPro, valor justo, consenso, divergencia, estrategias, calendario económico, ficha completa y gráficas. |
 
@@ -47,10 +49,93 @@ by category and each link opens the official site in a new tab.
 
 ## 🛠 Technical Setup
 
+### Consolidado, movimientos y presupuesto
+
+En el Dashboard cada tarjeta tiene un asa para arrastrarla y flechas para moverla sin
+arrastrar. El orden se guarda en la cuenta del usuario y vuelve a aplicarse al entrar.
+
+En Movimientos, «Cargo» indica dinero que sale y «Abono» dinero que entra; el monto
+se muestra positivo para ambos. «Facturado» corresponde a tarjetas, mientras los
+movimientos de cuenta corriente se muestran como «Registrado en cuenta». El filtro
+«Tarjeta pendiente de cartola» reúne compras `NO_FACTURADO` y `PROVISIONAL` de
+Apple Pay; Apple Pay es el origen de la compra, no un segundo movimiento. Se puede
+filtrar haciendo clic en un segmento o en el nombre de una categoría de la gráfica.
+
+«Transferencias entre mis cuentas» está disponible en las categorías de ingreso y
+gasto al abrir Movimientos, incluso sin volver a sembrar categorías. Al elegirla,
+el cargo o abono se marca como transferencia y queda excluido de los ingresos y
+gastos reales. Sirve, por ejemplo, para enviar dinero a BCI y devolver el remanente
+a la cuenta principal; los pagos de servicios conservan sus categorías de gasto.
+La categoría se guarda con el botón ✓. «Más opciones» agrupa bicicletas, cuentas
+por cobrar y pagos de tarjeta, y comienza cerrado para simplificar cada fila.
+Los traspasos propios se eligen únicamente en el selector de categorías. Estas
+decisiones no enseñan una regla por glosa; las sugerencias de IA requieren revisión.
+
+La categoría «Bicicletas» se agrega a la semilla de categorías y a los usuarios
+existentes mediante migración. Al elegirla manualmente o vincular un movimiento a
+una bicicleta, se marca como transferencia para que no aumente gastos o ingresos;
+una sugerencia automática de esta categoría queda pendiente de revisión. El vínculo
+con una bicicleta concreta actualiza su avance. En Préstamos, «Monto
+vigente desde» registra los cambios de principal. «Historial de montos y correcciones»
+permite agregar saldos anteriores con su fecha efectiva; Movimientos muestra el monto
+y los cargos/abonos conocidos hasta el día elegido en «Hasta». Los saldos anteriores
+al primer registro quedan como desconocidos hasta ingresar una corrección histórica.
+
+Cada bicicleta de terceros tiene un vínculo por ID con su activo patrimonial. El capital
+inicial descuenta devoluciones CLP confirmadas hasta la fecha consultada; editar, desvincular
+o borrar un abono recalcula el saldo original y sus equivalentes. El saldo no baja de cero.
+Los nuevos ajustes e históricos registran un **saldo confirmado al cierre de su fecha**:
+incluyen los abonos anteriores, incluso los que se importen más tarde, y sólo descuentan
+nuevos abonos de fechas posteriores. Los registros históricos anteriores conservan su
+interpretación de capital. Las métricas de rentabilidad de la bicicleta siguen separadas.
+Los nuevos desembolsos que cambien el capital deben confirmarse como un ajuste de saldo.
+Cambiar nombre conserva la relación; eliminar una bicicleta conserva su activo histórico
+inactivo. La migración enlaza activos anteriores sólo cuando usuario, nombre y marca de
+autogeneración identifican un único préstamo y activo; los casos ambiguos requieren revisión.
+
+Configuración → Telegram y alertas presenta los últimos meses completos de gasto
+por categoría, incluyendo meses sin movimientos en el promedio. Los límites se
+configuran en CLP; al alcanzarlos se envía un aviso si Telegram y los avisos por
+categoría están activos. Banca → Configuración muestra el dinero disponible para
+ocio y el monto CLP de aviso; el porcentaje se edita en escala de 1 a 100.
+
+`/dashboard/gastos/` muestra caja confirmada; las compras de tarjeta se contabilizan una sola vez
+mediante el estado facturado al vencimiento. Las transferencias internas entre cuentas se
+excluyen; los reintegros vinculados a bicicletas y cuentas por cobrar conservan su entrada
+de caja. `/dashboard/gastos/movimientos/` muestra por defecto cargos y abonos
+confirmados, para poder corregir también ingresos previamente clasificados. El
+filtro «Cargos y abonos» permite elegir un solo sentido; la gráfica sigue mostrando
+gastos y no convierte los abonos en consumo. Reclasificar confirma la revisión y,
+si no hay una bicicleta vinculada, restaura la naturaleza correspondiente a la
+categoría. El selector de cada fila ofrece categorías del sentido del movimiento.
+También permite pasar a `NO_FACTURADO` o `PROVISIONAL` para
+revisar compras antes de recibir la cartola. Los pagos de Neat se ven como detalle de su
+cargo de tarjeta, se pueden reclasificar individualmente y no se convierten en una segunda salida.
+
+Las compras provisionales y no facturadas de tarjeta registradas en el mes se proyectan
+orientativamente al mes siguiente. La proyección suma el facturado ya conocido para ese
+vencimiento y las compras aún sin cartola; cuando una compra se factura sale de la segunda
+parte. La fecha y el monto definitivos llegan con la cartola.
+Los cargos no facturados de meses anteriores se muestran aparte para revisión y no se
+suponen automáticamente pagaderos el mes siguiente.
+El límite mensual CLP se configura en Banca → Configuración → Presupuesto e IA; cero lo
+desactiva. Si el uso estimado supera el umbral configurado y los avisos de Ocio están
+activos, se envía un aviso de Telegram. Las compras del Atajo de iPhone se intentan
+clasificar por reglas e IA al registrarse; las que no se reconocen quedan pendientes y
+pueden clasificarse desde la subpágina sin modificar decisiones manuales.
+
+El presupuesto de Ocio utiliza el detalle de consumo de Gastos, incluyendo manuales,
+cuotas, devoluciones y conciliaciones. El ingreso medio utiliza caja operacional y divide
+por todos los meses de la ventana configurada, también los meses sin ingresos; los reintegros
+de activos y las devoluciones de tarjeta no cuentan como ingreso económico. Desactivar
+**Contabilizar** en un producto lo excluye de los gastos, estados, cobertura, presupuesto,
+cupos y deudas patrimoniales. Se conserva toda su información para consulta y reactivación.
+En el Dashboard, Fijos, Suscripciones y Otros distribuyen cada aporte una sola vez.
+
 ### Requirements
 - Python 3.11+
 - Django 5.1+
-- SQLite (Development) / PostgreSQL (Production)
+- SQLite (desarrollo y despliegue actual)
 
 ### Installation
 1. **Clone the repository**
@@ -71,6 +156,36 @@ by category and each link opens the official site in a new tab.
    python manage.py createsuperuser
    ```
 
+### Docker dentro de WSL2 (desarrollo local)
+
+El proyecto incluye un Compose para ejecutar Django, Redis y el worker de Celery
+directamente dentro de Ubuntu en WSL2. No requiere Docker Desktop. Desde Ubuntu WSL,
+ubicado en la carpeta del proyecto:
+
+```bash
+docker compose up --build -d
+docker compose logs -f web
+```
+
+La aplicación queda disponible en <http://localhost:8000/>. El servicio `web` aplica
+las migraciones al iniciar, monta el código fuente y conserva la base SQLite del
+proyecto; el entorno de trading queda en modo `DEMO` para evitar llamadas externas
+durante las pruebas locales. Para ejecutar la suite:
+
+La configuración actual usa SQLite también en el despliegue documentado. PostgreSQL
+no está configurado por `settings.py`; no cambies el motor de base de datos sin
+preparar y validar por separado una migración de datos.
+
+```bash
+docker compose run --rm web python manage.py test
+```
+
+Para detener los servicios:
+
+```bash
+docker compose down
+```
+
 ---
 
 ## 📁 Project Structure
@@ -80,6 +195,7 @@ by category and each link opens the official site in a new tab.
 - `patrimonio/`: Asset/liability tracking and net worth snapshots.
 - `patrimonio/services/cuentas_por_cobrar.py`: Monthly renewal matching and WhatsApp collection text.
 - `departamentos/`: Rental properties, mortgages, and ROI calculations.
+- `pendientes/`: Obligaciones recurrentes, ocurrencias, asignaciones de pagos, recordatorios y tareas de actualización.
 - `inversiones/`: Investment portfolio and historical tracking.
 - `prestamos/`: Módulo de "Bicicletas" (préstamos personales y de terceros).
 - `configuracion/`: Global settings, banks, products, and exchange rates.
@@ -116,6 +232,37 @@ python load_real_data.py          # Load real historical data (from images)
 python manage.py sync_trading_data --mode full --symbols MCD  # Yahoo/Twelve Data + SEC EDGAR
 python manage.py link_altcoins_to_trading      # Migrar proyectos cripto existentes a fichas trading
 ```
+
+### Pendientes y obligaciones
+
+El centro está disponible en `/dashboard/pendientes/` y en el contador del encabezado.
+Las reglas de Aseo y contribuciones se configuran por propiedad y no se activan para
+propiedades existentes hasta indicar explícitamente la primera fecha. Las contribuciones
+parten con los meses referenciales abril, junio, septiembre y noviembre; cada propiedad
+puede cambiar fechas, periodicidad, monto, comuna, rol SII y enlace de pago. El Aseo no
+usa un calendario nacional fijo, por lo que la periodicidad municipal queda editable.
+
+Un pago puede vincularse a un movimiento bancario existente o crear un movimiento manual.
+Las asignaciones permiten repartir una sola transacción agrupada entre varias propiedades
+sin duplicar el gasto. Si el Aseo está incluido en contribuciones, se marca esa regla para
+excluirla de la proyección duplicada.
+
+Las reglas automáticas se generan de forma idempotente para productos TDC/CUENTA, fuentes
+Binance y operaciones de mercado. Las tareas de documentos se consideran atrasadas luego
+de 30 días sin evidencia y pueden resolverse como “Sin cartola” o “Sin movimientos”.
+
+Las fechas iniciales de contribuciones son referenciales y se basan en ChileAtiende/TGR y
+SII: [ChileAtiende](https://www.chileatiende.gob.cl/fichas/12176/1/pdf),
+[SII](https://www.sii.cl/preguntas_frecuentes/aval_contrib_bbrr/001_165_0310.htm).
+El Aseo depende de la ordenanza y portal municipal: [LeyChile](https://www.bcn.cl/leychile/navegar?i=30755),
+[Municipalidad de Santiago](https://tramites.munistgo.cl/pagoaseo) y la explicación del
+[SII sobre impuesto territorial](https://www.sii.cl/destacados/impuesto_territorial/).
+
+Los documentos municipales no se importan automáticamente. La información de Aseo y
+contribuciones se registra manualmente en cada propiedad desde **Pendientes → Configurar
+obligación**, y el pago se completa en la ocurrencia correspondiente, vinculando un
+movimiento existente o creando uno manual sin duplicar el gasto. Los PDF históricos ya
+guardados se conservan únicamente como auditoría.
 
 ### Centro de Investigación de Mercado
 
@@ -183,6 +330,68 @@ su API autenticada es opcional, está limitada a clientes elegibles de EE. UU. y
 credenciales creadas en la cuenta de Robinhood, por lo que no se simula con scraping ni se
 presenta como disponibilidad universal.
 
+## Catálogo de entidades financieras
+
+El catálogo de **Configuración → Entidades Financieras** es compartido. Solo los
+usuarios staff pueden crear o editar entidades. La eliminación, tanto desde
+Configuración como desde el admin, se bloquea si hay productos, credenciales,
+preferencias u otras relaciones de cualquier usuario. Para retirar una entidad
+en uso, desactívala desde el admin conservando sus datos. Los productos continúan
+siendo privados y administrables por su propietario; las notas de la entidad son
+información pública del catálogo.
+
+## Saldos originales y conversiones
+
+En **Activos**, los saldos cargados a mano muestran «Manual» y «Editar saldo». Las
+posiciones vinculadas a una integración muestran su fuente y el botón **Sincronizar**,
+que actualiza únicamente la cuenta asociada y vuelve a Activos con el resultado.
+Mientras se ejecuta, el botón muestra «Sincronizando…». Si falta la conexión o está
+inactiva, se ofrece **Configurar fuente**. Sus saldos no se editan ni eliminan desde
+el formulario manual. Los registros históricos de Binance sólo se reconocen como
+integrados cuando un historial y un log exitoso del mismo usuario corroboran su origen;
+el nombre del activo por sí solo no basta. Si la fuente no informa una posición, se
+conserva su saldo anterior y se muestra un aviso; el cierre de posiciones ausentes
+requiere todavía distinguir carteras completas y parciales.
+
+La ingesta de posiciones conserva la precisión de cantidades y precios recibidos;
+el valor monetario original se redondea a dos decimales al guardar, igual que sus
+equivalentes. Esto permite importar saldos de cripto calculados con muchas cifras
+decimales. Si alguna posición del lote no se puede guardar, se revierten todos sus
+cambios de activos e historial y la sincronización registra el error.
+
+El admin de Activos y Pasivos edita el **monto y la moneda original**. Los equivalentes
+CLP/USD se muestran como valores de referencia y se derivan al guardar un saldo manual.
+Al ingresar saldos manuales, se pueden pegar valores con más decimales desde Excel;
+el sistema los redondea a dos decimales al guardar.
+Los saldos sincronizados desde banca, fuentes de inversiones o cuentas por cobrar se
+actualizan desde su fuente. Los registros antiguos sin moneda original conservan sus
+valores de compatibilidad hasta una revisión explícita; no se infiere una moneda al
+editar sus notas. Las tasas de referencia de gastos y patrimonio se seleccionan de
+mindicador.cl con fecha igual o anterior a la operación, nunca desde una fecha futura.
+
+Un importe extranjero sin equivalente conocido se muestra como **CLP pendiente**,
+conservando monto y moneda originales. Gastos y proyecciones señalan que sus subtotales
+son parciales; la API devuelve `null` para ese equivalente y Excel deja la celda vacía.
+El cero informado sigue siendo un valor válido. Una tasa general no sustituye una tasa
+bancaria desconocida; volver a importar con la tasa bancaria completa actualiza la misma
+transacción. Un snapshot bancario parcial conserva los saldos anteriores de las monedas
+que no informa, mientras un cero explícito sí puede cerrar la deuda de esa moneda.
+
+Las hipotecas manuales se valoran directamente desde **CreditoHipotecario.saldo_actual_uf**,
+con la UF y dólar oficiales de referencia. Aparecen en Pasivos y Patrimonio sin persistir
+una segunda deuda; un saldo bancario del producto, incluido un cero explícito, sustituye
+esa valoración. Una propiedad inactiva sale del patrimonio y métricas vigentes, mientras
+su crédito sigue siendo deuda hasta cerrarlo por separado. Departamentos permite desactivar,
+reactivar y consultar propiedades inactivas conservando sus documentos y snapshots anteriores.
+La fecha efectiva de venta/baja y el historial de estados de propiedad siguen pendientes.
+
+Al editar un movimiento manual, una modificación de descripción, notas o categoría
+conserva su período y conversión. Cambiar importe, moneda o fecha recalcula la conversión;
+el período solo cambia si se envía expresamente. La fusión de categorías exige direcciones
+compatibles y rechaza resúmenes del mismo mes con moneda o naturaleza distintas, sin
+modificar parcialmente sus movimientos. Resúmenes de la misma moneda conservan la suma
+de sus importes originales y equivalentes y una tasa agregada de referencia.
+
 ## 🧪 Pruebas de regresión
 
 La suite usa el runner nativo de Django y una base de datos temporal. Cubre reglas
@@ -223,10 +432,45 @@ Houm aporta una sola vez el depósito neto confirmado de propiedades vinculadas 
 desglosa cargos conciliados sin sumar otro egreso. La cobertura de fuentes sigue disponible
 en la API, sin alertas persistentes en la pantalla de Gastos.
 
+Para auditar temporalmente ese cálculo, el detalle muestra las columnas **Cálculo** y
+**Aporte**. En una TDC, una devolución o abono reduce el egreso facturado y no se presenta
+como ingreso; un pago o transferencia de la TDC queda visible, pero aporta cero porque no
+es un gasto. Los abonos de una cuenta corriente sí conservan su tratamiento como ingresos
+de caja. Los filtros acotan las líneas visibles, categorías y gráficos, pero los totales de
+Ingresos, Egresos y Balance se calculan sobre todo el período seleccionado; sólo cambiar el
+período o la perspectiva modifica ese cálculo base.
+
 Las entradas manuales viven en `MovimientoManual`: `OPERACIONAL` afecta caja y, si es
 egreso, consumo; `ACTIVO_RECUPERABLE` e `INVERSION` sólo caja;
 `TRANSFERENCIA_INTERNA` no afecta ninguna perspectiva. Productos financieros son
 cuentas aisladas por usuario y `Banco` continúa como catálogo global.
+
+Una coincidencia entre registro manual y banco se presenta como **Posible duplicado**:
+fecha, moneda e importe sirven para proponerla, pero sólo **Mismo pago** confirma el
+vínculo. **Deshacer vínculo** vuelve a contabilizar el registro manual y conserva el
+rechazo al reimportar. La confirmación se conserva mientras sus datos sigan siendo
+compatibles. Confirmar toma el ciclo y las fechas de la fuente bancaria: en caja, una
+compra de tarjeta se imputa al vencimiento del estado, aunque el registro manual
+estuviera en el mes de compra. Las sugerencias sin confirmar conservan el registro
+manual; una tarjeta sin facturar no lo oculta automáticamente.
+
+La carga mensual distingue **Total del mes** e **Importe adicional**. Un total incluye
+los movimientos ya registrados en su categoría, dirección, naturaleza y mes: si declara
+$15.000 y hay $10.000 de detalle, aporta $5.000. Si el detalle supera el total declarado,
+se conserva todo el detalle, sin ajustes negativos. Un importe adicional se suma completo.
+El detalle y la exportación conservan tanto el importe declarado como su aporte al cálculo.
+La API usa `modo_resumen=TOTAL` (predeterminado) o `ADICIONAL`.
+
+Los certificados municipales históricos de pago pueden vincularse al cargo bancario
+desde **Banca → Importar → seleccionar certificado → Vincular pago bancario**. Se exige
+el mismo usuario y el importe total en CLP; un cargo respalda un solo certificado. El
+comprobante conserva sus asignaciones por rol, que explican el cargo sin añadir otro
+gasto. El consumo usa la fecha de la operación; una tarjeta en caja usa el vencimiento
+de su estado. Un certificado sin enlace conserva su tratamiento como gasto documentado.
+
+Después de actualizar, ejecuta `python manage.py migrate`. Las nuevas columnas preservan
+los registros existentes. Las confirmaciones automáticas antiguas vuelven a revisión;
+las confirmaciones explícitas del usuario se mantienen.
 
 API autenticada principal:
 
@@ -236,6 +480,9 @@ GET  /api/gastos/detalle/?perspectiva=consumo&categoria=12
 GET  /api/gastos/exportar.xlsx?<los mismos filtros>
 CRUD /api/gastos/manuales/
 POST /api/gastos/manuales/carga_mensual/
+GET  /api/gastos/manuales/conciliaciones-pendientes/?estado=SUGERIDA
+GET  /api/gastos/manuales/conciliaciones-pendientes/?estado=CONFIRMADA
+POST /api/gastos/manuales/{id}/resolver-conciliacion/
 CRUD /api/gastos/categorias/
 POST /api/gastos/categorias/{id}/fusionar/
 POST /api/gastos/facturados/{id}/pago-real/
@@ -295,11 +542,20 @@ simultáneamente. La POC detecta el banco, el tipo de producto, su identificador
 los montos del estado. En tarjetas extrae los cupos total/utilizado/disponible y el subcupo de
 avances; en cartolas de cuenta corriente extrae cargos, abonos y saldo final. En ambos casos
 crea o reutiliza el producto financiero, importa sin duplicar y conserva el PDF como auditoría.
+
+Cada PDF se procesa en una transacción financiera completa. Si falla una etapa posterior,
+se revierten movimientos, cambios de vigencia, cierre de provisionales y snapshots, y se
+conserva el documento con estado **ERROR** y su diagnóstico. Volver a subirlo reintenta el
+mismo registro. Un documento **PROCESADO** permanece idempotente por usuario y huella.
 Las pantallas de estados de cuenta y de **Banca → Houm / Neat** incluyen una zona de carga por
 arrastre: al pasar archivos sobre ella muestra una animación activa, acepta soltarlos directamente,
 informa los nombres y el tamaño seleccionados, permite limpiar la selección y conserva el selector
 tradicional como alternativa. También valida en el navegador el formato y el límite de 15 MB antes
 de iniciar el procesamiento.
+Las obligaciones municipales se registran manualmente desde **Pendientes → Configurar
+obligación**. Allí se define la propiedad, el tipo (Aseo o contribuciones), la periodicidad,
+la primera fecha y el monto estimado; cada vencimiento permite registrar el pago real sin
+duplicar el gasto. Los PDF municipales ya no se envían al importador de Banca.
 El cupo queda guardado como snapshot por usuario, banco, tarjeta y fecha: si el banco aumenta
 el cupo, el nuevo valor pasa a ser el vigente sin borrar el historial anterior. Al terminar cada lote, los movimientos operacionales
 pendientes pasan primero por las reglas aprendidas y luego por la IA configurada para el
@@ -315,33 +571,69 @@ real dentro de **Calendario & Planificación**, asociado a la tarjeta y al monto
 Cada nueva importación reemplaza el vencimiento vigente de ese período, manteniendo los
 períodos anteriores para consultar el historial.
 
+La ingesta conserva un identificador estable del banco cuando está disponible. Sin ese
+identificador conserva la cantidad de operaciones idénticas dentro de cada lote: dos
+compras iguales siguen siendo dos y reimportar el lote no las multiplica. Un lote parcial
+no elimina compras anteriores. El PDF y el conector pueden complementar las mismas filas;
+si una glosa cambia y ninguna fuente proporciona identidad estable, el caso requiere
+revisión y no se fusiona sólo por coincidir el importe.
+
+Al vincular productos se resuelven los identificadores anteriores hacia el producto
+canónico. Se conservan documentos, enlaces contables y la mayor cantidad de compras
+idénticas de las dos fuentes. Decisiones manuales o enlaces contables incompatibles
+detienen la operación completa con un aviso para revisar; no se borran al azar. Se
+mantiene un estado vigente por moneda y mes, y los pasivos sincronizados repetidos se
+conservan como historial inactivo, sin sumar dos veces el saldo.
+
 Los movimientos se pueden recategorizar desde la misma vista. El usuario puede editar el
 nombre estable del comercio antes de guardar; esa relación comercio → categoría queda asociada a
 su cuenta, tiene prioridad sobre la IA en futuras cargas y no se comparte con otros usuarios.
 
 En **Banca → Movimientos** (`/banca/movimientos/`) se puede buscar por comercio, glosa,
 banco, producto, categoría o huella, además de acotar por fechas y estado. La distribución
-visual por categoría usa el mismo conjunto filtrado que la tabla: al seleccionar un segmento
-se aplica automáticamente la categoría para agilizar la reclasificación.
+visual por categoría respeta búsqueda, fechas, producto y estado; al elegir una categoría
+conserva las demás en la gráfica para cambiar de foco. Un clic en el segmento o en el
+nombre filtra la tabla automáticamente para agilizar la reclasificación.
 Las decisiones de IA también se guardan como memoria para evitar repetir llamadas.
+La opción **Revisar uno por uno** abre el pendiente más antiguo y permite confirmarlo como
+ingreso, gasto o transferencia; las categorías de ingreso y gasto se muestran según el signo
+bancario y su glosa queda como regla privada del usuario. Las transferencias marcadas manualmente
+se excluyen del consumo; la detección automática posterior requiere evidencia en la glosa, el
+producto o la conciliación con NeatPagos.
+Para un abono entrante que devuelve dinero de un tercero, la revisión ofrece **Pago de cuenta por
+cobrar**. Al elegir la cuenta, se registra el abono, se reduce su saldo pendiente y el movimiento
+queda fuera de ingresos económicos, aunque sigue apareciendo como recuperación en el flujo de caja.
 
 Los cargos genéricos de NeatPagos se concilian con su detalle externo por usuario, monto,
 tarjeta disponible y una ventana cercana de fecha. Banca muestra el destinatario real y su
 categoría; Gastos sustituye el cargo genérico por ese desglose sin duplicar el total. El cruce
 se vuelve a intentar tanto al importar Neat como al importar o reanalizar la tarjeta.
 Los abonos de cuenta corriente también se cruzan con pagos Neat previos usando los tokens del
-destinatario, una ventana de cinco días hábiles y una tolerancia de monto. Cuando un subconjunto
-de pagos explica el abono, este queda como transferencia de bicicleta y no como ingreso; si no
-hay evidencia suficiente, una transferencia recibida permanece en revisión.
+destinatario, el principal pagado (sin la comisión cargada a la TDC), una ventana de cinco días
+hábiles y una tolerancia de monto. Cuando un subconjunto de pagos explica el abono, este y su
+cargo Neat de origen quedan como transferencia de bicicleta y no como ingreso o gasto. Los
+cargos Neat conciliados con una contraparte conocida también quedan como transferencia.
+Agrega en **Banca → Configuración → Contrapartes conocidas** los destinatarios que usas con
+NeatPagos, por ejemplo Jonathan, Fabiana y Stephany; el alias se compara con el nombre del pago.
+Los traspasos desde una cuenta corriente que incluyen el nombre completo del titular se reconocen
+como movimientos entre cuentas propias; abonos y traspasos salientes sin evidencia suficiente
+quedan en revisión para resolverlos uno por uno.
+El panel principal presenta consumo real y excluye transferencias y pagos de tarjeta. En Gastos
+Mensuales, la perspectiva **Pagos / flujo de caja** sigue disponible para revisar las salidas de
+caja; por eso ese total puede ser mayor que el gasto real.
 
 No es necesario volver a subir un PDF para actualizar la clasificación: **Recalcular este
 estado** o **Recalcular todos** reaplican reglas e IA y protegen siempre las decisiones
-manuales. El proveedor se consulta en lotes pequeños y las respuestas incompletas se
-reintentan solo para las glosas omitidas. Si la IA rechaza la solicitud, expira o devuelve
-una respuesta inválida, la pantalla muestra el motivo y el recálculo se revierte completo:
+manuales. El proveedor se consulta en lotes pequeños; las glosas omitidas se reintentan y
+las respuestas JSON inválidas se vuelven a pedir con lotes aún más pequeños. Si la IA
+rechaza la solicitud, expira o sigue devolviendo una respuesta inválida, la pantalla
+muestra el motivo y el recálculo se revierte completo:
 las categorías anteriores no quedan borradas ni parcialmente actualizadas. La URL, el
 modelo y sus políticas deben ser compatibles entre sí; en OpenCode algunos modelos exigen
 una autorización de uso de datos independiente aunque la API key sea válida.
+Al usar OpenCode Go, la app envía un identificador de sesión estable durante cada
+clasificación y se identifica con su propio `User-Agent`, como requiere ese endpoint;
+omite `reasoning_effort`, parámetro que OpenCode Go puede rechazar.
 
 **Reanalizar archivo** vuelve a ejecutar el parser sobre el PDF guardado para
 incorporar mejoras de extracción sin borrar movimientos ni correcciones del usuario. Si el
@@ -355,8 +647,9 @@ La conciliación separa los pagos de tarjeta del gasto operacional: glosas banca
 `MONTO CANCELADO` se consideran transferencias y los movimientos ya vinculados a un
 préstamo conservan esa naturaleza en recálculos posteriores. Así esos pagos no distorsionan
 los totales por categoría ni vuelven a quedar pendientes.
-Cuando una TDC se paga usando otra TDC, **Banca → Movimientos** permite elegir
-`Pago de otra TDC` en el selector financiero. El movimiento queda en
+Cuando una TDC se paga usando otra TDC o se mueve dinero entre cuentas propias,
+**Banca → Movimientos** permite elegir `Transferencia propia / pago de tarjeta` en el selector
+financiero. El movimiento queda en
 `Financiamiento / Pago de TDC`, con naturaleza de transferencia y fuera del consumo;
 no se crea una cuenta por cobrar ni un préstamo ficticio.
 
@@ -429,6 +722,12 @@ normal se vincula completo y un cargo NeatPagos conciliado ofrece una selección
 para cada destinatario. Una fuente sólo puede quedar asignada a una cuenta; al cambiarla,
 la obligación y sus abonos se trasladan juntos.
 
+El cargo bancario y su desglose Neat son representaciones del mismo pago. Cuando una de
+ellas ya está asignada, se rechaza asignar la otra, incluso a otra cuenta por cobrar.
+Para pasar del cargo completo al desglose, quita primero la asociación del cargo y
+asigna cada destinatario. Distintos destinatarios pueden seguir siendo obligaciones
+separadas; no se impide repartir un cargo entre ellos.
+
 Si el cargo ya ocurrió pero todavía no aparece en un estado importado, la línea se
 registra como **Provisional · falta estado** con el período, fecha y monto conocidos. No
 se reutiliza el movimiento facturado del mes anterior. Cuando llega el nuevo PDF, se
@@ -455,6 +754,21 @@ antes del día 1— y avisa si una transacción ya está asociada a otra línea.
 separados y todas las cuentas, fuentes y abonos están aislados por
 usuario. Los reportes CSV de Neat conservan el día de pago y el día de
 depósito, evitando que transacciones históricas aparezcan como si fueran de hoy.
+
+Un abono bancario vinculado a una cuenta USD conserva el importe original en USD,
+aunque aún no exista conversión CLP. Para revisar abonos anteriores que pudieran haber
+guardado el equivalente CLP como dólares, existe una reparación que simula por defecto:
+
+```bash
+python manage.py corregir_abonos_usd
+python manage.py corregir_abonos_usd --user-id 123
+python manage.py corregir_abonos_usd --user-id 123 --apply
+```
+
+La reparación solo cambia los casos cuyo abono coincide exactamente con el equivalente
+CLP y supera el importe original USD de su movimiento entrante. Conserva los abonos
+parciales, comprueba que cuenta y movimiento pertenezcan al mismo usuario y recalcula
+el activo por cobrar. Los demás importes requieren revisión individual.
 
 ## 📱 POC Apple Pay vía Atajo
 

@@ -30,6 +30,7 @@ ENV/
 db.sqlite3
 db.sqlite3-journal
 db.sqlite3.backup
+db.sqlite3.backup-*
 local_settings.py
 staticfiles/
 media/
@@ -49,6 +50,7 @@ graphify-out/
 
 # OS
 .DS_Store
+._*
 Thumbs.db
 
 # Environment variables
