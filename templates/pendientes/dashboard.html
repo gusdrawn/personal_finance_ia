@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Pendientes y obligaciones{% endblock %}
+{% block page_title %}Pendientes y obligaciones{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div>
+            <p class="text-xs uppercase tracking-[0.2em] text-emerald-400 font-black">Centro de control</p>
+            <h1 class="text-3xl font-black text-white mt-2">Lo que falta por hacer</h1>
+            <p class="text-sm text-slate-400 mt-2 max-w-2xl">Cada vencimiento puede marcarse como pagado, no aplica, sin cartola o sin movimientos. Las obligaciones de Aseo y contribuciones se configuran y registran manualmente.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="#configurar-obligacion" class="px-4 py-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-black uppercase tracking-widest hover:border-emerald-400/60">Configurar obligación</a>
+            <a href="{% url 'departamentos' %}" class="px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-xs font-black uppercase tracking-widest hover:border-emerald-500/50">Ver propiedades</a>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="glass rounded-2xl p-5 border-l-4 border-rose-500"><p class="text-xs uppercase text-slate-500 font-bold">Vencidas</p><p class="text-3xl font-black text-rose-300 mt-2">{{ vencidas|length }}</p></div>
+        <div class="glass rounded-2xl p-5 border-l-4 border-amber-500"><p class="text-xs uppercase text-slate-500 font-bold">Próximas</p><p class="text-3xl font-black text-amber-300 mt-2">{{ proximas|length }}</p></div>
+        <div class="glass rounded-2xl p-5 border-l-4 border-sky-500"><p class="text-xs uppercase text-slate-500 font-bold">Documentos</p><p class="text-3xl font-black text-sky-300 mt-2">{{ documentos|length }}</p></div>
+        <div class="glass rounded-2xl p-5 border-l-4 border-violet-500"><p class="text-xs uppercase text-slate-500 font-bold">Sincronizaciones</p><p class="text-3xl font-black text-violet-300 mt-2">{{ sincronizaciones|length }}</p></div>
+    </div>
+
+    <div class="glass rounded-2xl overflow-hidden">
+        <div class="p-5 border-b border-slate-800 flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
+            <h2 class="font-bold text-white">Pendientes activos</h2>
+            <form class="flex gap-2" method="get">
+                <select name="tipo" class="bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 px-3 py-2">
+                    <option value="">Todos los tipos</option>{% for value,label in tipos %}<option value="{{ value }}" {% if request.GET.tipo == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                </select>
+                <select name="departamento" class="bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 px-3 py-2">
+                    <option value="">Todas las propiedades</option>{% for p in propiedades %}<option value="{{ p.id }}" {% if request.GET.departamento == p.id|stringformat:'s' %}selected{% endif %}>{{ p.codigo }}</option>{% endfor %}
+                </select>
+                <button class="px-3 py-2 rounded-lg bg-slate-700 text-xs font-bold text-white">Filtrar</button>
+            </form>
+        </div>
+        <div class="divide-y divide-slate-800/70">
+            {% for item in pendientes %}
+            <div class="p-5 flex flex-col xl:flex-row xl:items-center gap-4 {% if item.fecha_vencimiento < today %}bg-rose-500/5{% endif %}">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center {% if item.regla.tipo == 'PAGO' %}bg-emerald-500/10 text-emerald-400{% elif item.regla.tipo == 'DOCUMENTO' %}bg-sky-500/10 text-sky-400{% else %}bg-violet-500/10 text-violet-400{% endif %}"><i class="fas {% if item.regla.tipo == 'PAGO' %}fa-money-bill-wave{% elif item.regla.tipo == 'DOCUMENTO' %}fa-file-arrow-up{% else %}fa-arrows-rotate{% endif %}"></i></div>
+                <div class="flex-1 min-w-0"><p class="font-bold text-white">{{ item.regla.nombre }}</p><p class="text-xs text-slate-500 mt-1">Vence {{ item.fecha_vencimiento|date:'d/m/Y' }}{% if item.regla.departamento %} · {{ item.regla.departamento.codigo }}{% endif %}{% if item.monto_esperado %} · ${{ item.monto_esperado|floatformat:0|intcomma }}{% endif %}</p></div>
+                <form method="post" action="{% url 'resolver_pendiente' item.id %}" class="flex flex-wrap items-center gap-2">
+                    {% csrf_token %}<input type="hidden" name="next" value="dashboard_pendientes">
+                    {% if item.regla.tipo == 'PAGO' %}<input name="monto" value="{% if item.monto_esperado %}{{ item.monto_esperado|stringformat:'f' }}{% endif %}" type="number" step="0.01" placeholder="Monto" class="w-28 bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs text-white">
+                    <select name="movimiento_bancario_id" class="max-w-[220px] bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs text-slate-300"><option value="">Crear movimiento manual</option>{% for mov in movimientos_recientes %}<option value="{{ mov.id }}">{{ mov.fecha|date:'d/m' }} · {{ mov.descripcion|truncatechars:24 }} · ${{ mov.monto_clp|floatformat:0|intcomma }}</option>{% endfor %}</select>{% endif %}
+                    {% if item.regla.url_pago %}{% if item.regla.tipo == 'SINCRONIZACION' and item.regla.automatica %}<button type="submit" formaction="{{ item.regla.url_pago }}" formmethod="post" class="px-3 py-2 rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-300 text-xs font-bold">Ejecutar</button>{% else %}<a href="{{ item.regla.url_pago }}" target="_blank" rel="noopener" class="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300">Abrir</a>{% endif %}{% endif %}
+                    <button name="estado" value="COMPLETADA" class="px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">{% if item.regla.tipo == 'PAGO' %}Pagar{% else %}Marcar listo{% endif %}</button>
+                    {% if item.regla.tipo == 'DOCUMENTO' %}<button name="estado" value="SIN_CARTOLA" class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 text-xs">Sin cartola</button><button name="estado" value="SIN_MOVIMIENTOS" class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 text-xs">Sin movimientos</button>{% endif %}
+                    {% if item.regla.tipo == 'PAGO' %}<button name="estado" value="INCLUIDA_EN_OTRO_PAGO" class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 text-xs">Incluida</button>{% endif %}
+                </form>
+            </div>
+            {% empty %}<div class="p-10 text-center text-slate-500">No hay pendientes activos. Puedes agregar una obligación por propiedad o una tarea manual.</div>{% endfor %}
+        </div>
+    </div>
+
+    <div id="configurar-obligacion" class="glass rounded-2xl p-6">
+        <div class="mb-5">
+            <p class="text-xs uppercase tracking-[0.2em] text-emerald-400 font-black">Registro manual</p>
+            <h2 class="font-bold text-white mt-2">Configurar obligación de propiedad</h2>
+            <p class="text-sm text-slate-400 mt-1">Define la fecha, periodicidad y monto estimado. Luego podrás marcar cada vencimiento como pagado y registrar el monto real.</p>
+        </div>
+        <form method="post" action="{% url 'pendientes_configurar_propiedad_manual' %}" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {% csrf_token %}
+            <label class="text-xs text-slate-400">Propiedad
+                <select name="departamento_id" required class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+                    <option value="">Selecciona una propiedad</option>
+                    {% for p in propiedades %}<option value="{{ p.id }}" {% if configurar_departamento_id == p.id|stringformat:'s' %}selected{% endif %}>{{ p.codigo }}</option>{% endfor %}
+                </select>
+            </label>
+            <label class="text-xs text-slate-400">Obligación
+                <select name="obligacion" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+                    <option value="ASEO">Aseo</option>
+                    <option value="CONTRIBUCIONES">Contribuciones</option>
+                </select>
+            </label>
+            <label class="text-xs text-slate-400">Periodicidad
+                <select name="periodicidad" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+                    <option value="TRIMESTRAL">Trimestral</option>
+                    <option value="MESES">Meses configurables</option>
+                    <option value="MENSUAL">Mensual</option>
+                    <option value="ANUAL">Anual</option>
+                    <option value="UNICA">Una vez</option>
+                </select>
+            </label>
+            <label class="text-xs text-slate-400">Primera fecha
+                <input name="fecha_inicio" type="date" required class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+            </label>
+            <label class="text-xs text-slate-400">Monto estimado (CLP)
+                <input name="monto_estimado" type="number" min="0" step="1" placeholder="22969" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+            </label>
+            <label class="text-xs text-slate-400">Día de vencimiento
+                <input name="dia_vencimiento" type="number" min="1" max="31" placeholder="30" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+            </label>
+            <label class="text-xs text-slate-400">Canal de cobro
+                <select name="canal_cobro" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+                    <option value="DIRECTO">Cobro directo</option>
+                    <option value="INCLUIDO_CONTRIBUCIONES">Incluido en contribuciones</option>
+                    <option value="DESCONOCIDO">Por confirmar</option>
+                </select>
+            </label>
+            <label class="text-xs text-slate-400">Enlace de pago (opcional)
+                <input name="url_pago" type="url" placeholder="https://..." class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white">
+            </label>
+            <div class="md:col-span-2 xl:col-span-4 flex justify-end">
+                <button class="px-5 py-3 rounded-xl bg-emerald-500 text-slate-950 font-black uppercase tracking-widest text-xs">Guardar obligación</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="grid grid-cols-1 gap-6">
+        <div class="glass rounded-2xl p-6">
+            <h2 class="font-bold text-white mb-5">Nueva tarea manual</h2>
+            <form method="post" action="{% url 'crear_tarea_pendiente' %}" class="space-y-3">{% csrf_token %}<input name="nombre" required placeholder="Ej: Subir cartola de cuenta corriente" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white"><div class="grid grid-cols-2 gap-3"><select name="tipo" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white"><option value="MANUAL">Manual</option><option value="DOCUMENTO">Documento</option><option value="SINCRONIZACION">Sincronización</option><option value="PAGO">Pago</option></select><input name="fecha_inicio" type="date" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white"></div><textarea name="descripcion" placeholder="Notas opcionales" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-white"></textarea><button class="w-full px-4 py-3 rounded-xl bg-violet-500 text-slate-950 font-black uppercase tracking-widest text-xs">Agregar pendiente</button></form>
+            <h2 class="font-bold text-white mt-8 mb-4">Últimas resoluciones</h2>{% for item in resueltas_recientes %}<div class="flex justify-between py-2 border-b border-slate-800 text-xs"><span class="text-slate-300">{{ item.regla.nombre }}</span><span class="text-slate-500">{{ item.get_estado_display }}</span></div>{% empty %}<p class="text-sm text-slate-500">Aún no hay resoluciones.</p>{% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}
