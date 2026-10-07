@@ -1,7 +1,22 @@
-from django.db import models
+from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+
+
+def normalizar_monto(monto):
+    """Round entered currency amounts to the two decimal places we store."""
+    return Decimal(str(monto or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+MONEDA_ORIGINAL_CHOICES = [("CLP", "Peso chileno"), ("USD", "Dólar")]
+
+
+def _saldo_sin_equivalente_clp(saldo):
+    monto = getattr(saldo, 'saldo_uf', None)
+    if monto is None and saldo.moneda_original == 'USD':
+        monto = saldo.monto_original
+    return bool(monto and not saldo.monto_clp)
 
 
 class Activo(models.Model):
@@ -35,8 +50,26 @@ class Activo(models.Model):
         help_text="Horizonte de inversión del activo"
     )
     es_liquido = models.BooleanField(default=True, help_text="¿Se puede liquidar fácilmente?")
+    # monto_clp/monto_usd se conservan como valores de compatibilidad y caché.
+    # El saldo canónico tiene una única moneda de origen.
     monto_clp = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     monto_usd = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    monto_original = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    moneda_original = models.CharField(
+        max_length=3, choices=MONEDA_ORIGINAL_CHOICES, null=True, blank=True
+    )
+    requiere_revision_moneda = models.BooleanField(default=False)
+    instrumento = models.ForeignKey(
+        "trading.Instrument",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="activos_patrimoniales",
+    )
+    fuente_externa = models.CharField(max_length=40, blank=True)
+    cuenta_fuente = models.CharField(max_length=120, blank=True)
+    id_fuente = models.CharField(max_length=180, blank=True)
+    requiere_revision_fuente = models.BooleanField(default=False)
     activo = models.BooleanField(default=True)
     notas = models.TextField(blank=True)
     departamento = models.OneToOneField(
@@ -53,9 +86,45 @@ class Activo(models.Model):
         verbose_name = 'Activo'
         verbose_name_plural = 'Activos'
         ordering = ['horizonte_temporal', 'tipo', 'nombre']
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "fuente_externa", "cuenta_fuente", "id_fuente"],
+                condition=~models.Q(id_fuente=""),
+                name="patrimonio_activo_fuente_identidad_unica",
+            )
+        ]
+
+    def clean(self):
+        if self.departamento_id and self.departamento.user_id != self.user_id:
+            raise ValidationError({"departamento": "La propiedad debe pertenecer al usuario."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def asignar_saldo_original(self, monto, moneda, tipo_cambio=None):
+        """Set the source balance and refresh available reporting-currency caches."""
+        valor = normalizar_monto(monto)
+        if moneda not in {"CLP", "USD"}:
+            raise ValidationError("La moneda del saldo debe ser CLP o USD.")
+        self.monto_original = valor
+        self.moneda_original = moneda
+        self.requiere_revision_moneda = False
+        if moneda == "CLP":
+            self.monto_clp = valor
+            if tipo_cambio and tipo_cambio.dolar:
+                self.monto_usd = (valor / tipo_cambio.dolar).quantize(Decimal("0.01"))
+        else:
+            self.monto_usd = valor
+            if tipo_cambio and tipo_cambio.dolar:
+                self.monto_clp = (valor * tipo_cambio.dolar).quantize(Decimal("0.01"))
 
     def __str__(self):
         return f"{self.nombre} - CLP ${self.monto_clp} / USD ${self.monto_usd}"
+
+    @property
+    def conversion_clp_desconocida(self):
+        return _saldo_sin_equivalente_clp(self)
 
 
 class CuentaPorCobrar(models.Model):
@@ -132,6 +201,9 @@ class CuentaPorCobrar(models.Model):
         activo.activo = self.activo
         activo.monto_clp = saldo if self.moneda == "CLP" else Decimal("0")
         activo.monto_usd = saldo if self.moneda == "USD" else Decimal("0")
+        activo.monto_original = saldo
+        activo.moneda_original = self.moneda
+        activo.requiere_revision_moneda = False
         activo.notas = self.descripcion
         activo.save(
             update_fields=[
@@ -142,6 +214,9 @@ class CuentaPorCobrar(models.Model):
                 "activo",
                 "monto_clp",
                 "monto_usd",
+                "monto_original",
+                "moneda_original",
+                "requiere_revision_moneda",
                 "notas",
                 "updated_at",
             ]
@@ -224,7 +299,16 @@ class DetalleCuentaPorCobrar(models.Model):
             raise ValidationError("El movimiento debe pertenecer al mismo usuario de la cuenta.")
         if self.evento_externo_id and self.evento_externo.user_id != self.cuenta.user_id:
             raise ValidationError("El evento NeatPagos debe pertenecer al mismo usuario de la cuenta.")
+        fuente = self.movimiento if self.movimiento_id else self.evento_externo if self.evento_externo_id else None
+        if fuente is not None:
+            from patrimonio.services.cuentas_por_cobrar import validar_fuente_no_solapada
 
+            try:
+                validar_fuente_no_solapada(fuente, self.cuenta, self.pk)
+            except ValueError as error:
+                raise ValidationError(str(error)) from error
+
+    @transaction.atomic
     def save(self, *args, **kwargs):
         self.full_clean()
         return super().save(*args, **kwargs)
@@ -242,7 +326,7 @@ class DetalleCuentaPorCobrar(models.Model):
 
 
 class AbonoCuentaPorCobrar(models.Model):
-    """Pago recibido, asociado opcionalmente a una línea específica."""
+    """Pago recibido, asociado opcionalmente a una línea y a su movimiento bancario."""
 
     cuenta = models.ForeignKey(
         CuentaPorCobrar, on_delete=models.CASCADE, related_name="abonos"
@@ -253,6 +337,13 @@ class AbonoCuentaPorCobrar(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="abonos",
+    )
+    movimiento = models.ForeignKey(
+        "banca.MovimientoBancario",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="abonos_cuentas_por_cobrar",
     )
     fecha = models.DateField(db_index=True)
     monto = models.DecimalField(
@@ -268,10 +359,19 @@ class AbonoCuentaPorCobrar(models.Model):
         verbose_name = "Abono de cuenta por cobrar"
         verbose_name_plural = "Abonos de cuentas por cobrar"
         ordering = ["-fecha", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["movimiento"],
+                condition=models.Q(movimiento__isnull=False),
+                name="patrimonio_abono_movimiento_unico",
+            )
+        ]
 
     def clean(self):
         if self.detalle_id and self.detalle.cuenta_id != self.cuenta_id:
             raise ValidationError("El abono debe apuntar a una línea de su misma cuenta.")
+        if self.movimiento_id and self.movimiento.user_id != self.cuenta.user_id:
+            raise ValidationError("El movimiento debe pertenecer al mismo usuario de la cuenta.")
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -321,6 +421,12 @@ class Pasivo(models.Model):
     tipo = models.CharField(max_length=25, choices=TIPO_PASIVO)
     monto_clp = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     monto_usd = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    monto_original = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    moneda_original = models.CharField(
+        max_length=3, choices=MONEDA_ORIGINAL_CHOICES, null=True, blank=True
+    )
+    requiere_revision_moneda = models.BooleanField(default=False)
+    sincronizado_banca = models.BooleanField(default=False)
     producto = models.ForeignKey(
         'configuracion.Producto',
         null=True,
@@ -337,6 +443,42 @@ class Pasivo(models.Model):
         verbose_name = 'Pasivo'
         verbose_name_plural = 'Pasivos'
         ordering = ['tipo', 'nombre']
+        constraints = [
+            models.UniqueConstraint(
+                fields=["producto", "moneda_original"],
+                condition=models.Q(sincronizado_banca=True, producto__isnull=False),
+                name="patrimonio_pasivo_banca_producto_moneda_unico",
+            )
+        ]
+
+    def clean(self):
+        if self.producto_id and self.producto.user_id != self.user_id:
+            raise ValidationError({"producto": "El producto debe pertenecer al usuario."})
+
+    @property
+    def conversion_clp_desconocida(self):
+        return _saldo_sin_equivalente_clp(self)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def asignar_saldo_original(self, monto, moneda, tipo_cambio=None):
+        """Set the source balance and refresh available reporting-currency caches."""
+        valor = normalizar_monto(monto)
+        if moneda not in {"CLP", "USD"}:
+            raise ValidationError("La moneda del saldo debe ser CLP o USD.")
+        self.monto_original = valor
+        self.moneda_original = moneda
+        self.requiere_revision_moneda = False
+        if moneda == "CLP":
+            self.monto_clp = valor
+            if tipo_cambio and tipo_cambio.dolar:
+                self.monto_usd = (valor / tipo_cambio.dolar).quantize(Decimal("0.01"))
+        else:
+            self.monto_usd = valor
+            if tipo_cambio and tipo_cambio.dolar:
+                self.monto_clp = (valor * tipo_cambio.dolar).quantize(Decimal("0.01"))
 
     def __str__(self):
         return f"{self.nombre} - CLP ${self.monto_clp} / USD ${self.monto_usd}"
@@ -353,6 +495,8 @@ class SnapshotPatrimonio(models.Model):
     patrimonio_neto_clp = models.DecimalField(max_digits=15, decimal_places=2)
     patrimonio_neto_usd = models.DecimalField(max_digits=15, decimal_places=2)
     activos_liquidos_clp = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    valor_dolar = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    valor_uf = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
     notas = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

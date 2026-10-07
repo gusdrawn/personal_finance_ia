@@ -105,13 +105,18 @@
                 </div>
                 <div class="flex items-center space-x-4">
                     <div class="text-right">
-                        <p class="font-bold text-white tracking-tight">${{ pasivo.monto_clp|floatformat:0|intcomma }}</p>
+                        <p class="font-bold text-white tracking-tight">{% if pasivo.conversion_clp_desconocida %}CLP pendiente{% else %}${{ pasivo.monto_clp|floatformat:0|intcomma }}{% endif %}</p>
                         {% if pasivo.monto_usd > 0 %}
                         <p class="text-[10px] text-slate-500 font-mono">US${{ pasivo.monto_usd|floatformat:2|intcomma }}</p>
                         {% endif %}
+                        {% if pasivo.requiere_revision_moneda %}<p class="text-[10px] text-amber-300">Revisar moneda de origen</p>{% endif %}
+                        {% if pasivo.credito_origen_id %}<p class="text-[10px] text-slate-400">{{ pasivo.saldo_uf|floatformat:2|intcomma }} UF · saldo del hipotecario</p>{% endif %}
                     </div>
                     <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onclick="openEditPasivoModal({{ pasivo.id }}, '{{ pasivo.nombre|escapejs }}', '{{ pasivo.tipo }}', {{ pasivo.monto_clp }}, {{ pasivo.monto_usd }}, '{{ pasivo.notas|escapejs }}', {{ pasivo.producto_id|default:'null' }})" class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center">
+                        {% if pasivo.credito_origen_id %}
+                        <a href="{% url 'departamentos' %}" class="text-xs text-sky-300">Editar en Departamentos</a>
+                        {% else %}
+                        <button onclick="openEditPasivoModal({{ pasivo.id }}, '{{ pasivo.nombre|escapejs }}', '{{ pasivo.tipo }}', {{ pasivo.monto_original|default:pasivo.monto_clp }}, '{{ pasivo.moneda_original|default:'CLP' }}', '{{ pasivo.notas|escapejs }}', {{ pasivo.producto_id|default:'null' }})" class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center">
                             <i class="fas fa-pen text-[10px]"></i>
                         </button>
                         {% if not pasivo.producto %}
@@ -126,6 +131,7 @@
                         <span class="w-8 h-8 rounded-lg bg-slate-700/50 text-slate-500 flex items-center justify-center cursor-not-allowed" title="Vinculado a Entidad Financiera">
                             <i class="fas fa-lock text-[10px]"></i>
                         </span>
+                        {% endif %}
                         {% endif %}
                     </div>
                 </div>
@@ -188,20 +194,17 @@
                 <p class="text-[10px] font-black uppercase text-rose-400 mb-3 tracking-widest flex items-center">
                     <i class="fas fa-calculator mr-2"></i>Montos de Deuda
                 </p>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-[1fr_2fr] gap-4">
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">CLP</label>
-                        <div class="relative">
-                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                            <input type="number" name="monto_clp" id="pas-clp" step="1" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-8 pr-4 py-2 text-white focus:outline-none focus:border-rose-500">
-                        </div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Moneda del saldo</label>
+                        <select name="moneda_original" id="pas-currency" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-rose-500">
+                            <option value="CLP">CLP</option><option value="USD">USD</option>
+                        </select>
                     </div>
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">USD</label>
-                        <div class="relative">
-                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">US$</span>
-                            <input type="number" name="monto_usd" id="pas-usd" step="0.01" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-12 pr-4 py-2 text-white focus:outline-none focus:border-rose-500">
-                        </div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Monto</label>
+                        <input type="number" name="monto_original" id="pas-amount" min="0" step="any" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-rose-500">
+                        <p class="mt-1 text-[10px] text-slate-500">Puedes pegar valores desde Excel; se guardan con 2 decimales.</p>
                     </div>
                 </div>
             </div>
@@ -225,20 +228,20 @@
         document.getElementById('pas-nombre').value = '';
         document.getElementById('pas-tipo').value = 'OTRO';
         document.getElementById('pas-producto').value = '';
-        document.getElementById('pas-clp').value = 0;
-        document.getElementById('pas-usd').value = 0;
+        document.getElementById('pas-amount').value = 0;
+        document.getElementById('pas-currency').value = 'CLP';
         document.getElementById('pas-notas').value = '';
         document.getElementById('modal-pasivo').classList.remove('hidden');
     }
 
-    function openEditPasivoModal(id, nombre, tipo, clp, usd, notas, productoId) {
+    function openEditPasivoModal(id, nombre, tipo, monto, moneda, notas, productoId) {
         document.getElementById('pasivo-form').action = window.APP_BASE_PATH + "/dashboard/pasivos/editar/" + id + "/";
         document.getElementById('pasivo-modal-title').innerText = "Editar Pasivo";
         document.getElementById('pas-nombre').value = nombre;
         document.getElementById('pas-tipo').value = tipo;
         document.getElementById('pas-producto').value = productoId || '';
-        document.getElementById('pas-clp').value = clp;
-        document.getElementById('pas-usd').value = usd;
+        document.getElementById('pas-amount').value = monto;
+        document.getElementById('pas-currency').value = moneda;
         document.getElementById('pas-notas').value = notas || '';
         document.getElementById('modal-pasivo').classList.remove('hidden');
     }

@@ -1,13 +1,18 @@
 from django.shortcuts import get_object_or_404, render, redirect
+from django.http import JsonResponse
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
+from django.db.models.deletion import ProtectedError
 from django.views.decorators.http import require_http_methods
 from django.db.models import Sum, Q, F, Avg, Prefetch
 from django.urls import reverse
 from django.utils import timezone
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+import json
 
 from gastos.models import GastoProgramado, MovimientoManual
 from gastos.services import resumen_gastos
@@ -17,29 +22,43 @@ from patrimonio.models import (
     CuentaPorCobrar,
     DetalleCuentaPorCobrar,
     HistorialActivo,
+    normalizar_monto,
     Pasivo,
     SnapshotPatrimonio,
 )
+from patrimonio.services.valoracion import resumen_patrimonio
+from patrimonio.services.sincronizacion import origen_activo, origenes_activos
 from departamentos.models import Departamento, Estacionamiento, Arrendatario, CreditoHipotecario
 from configuracion.models import TipoCambio, Banco, CredencialIntegracion, Producto
 from configuracion.services.integrations import get_integration_api_key
+from configuracion.services.bancos import banco_en_uso
+from configuracion.services.tipos_cambio import tipo_cambio_para
 from banca.forms import ConfiguracionNotificacionesForm
 from banca.models import (
     ApplePayApiKey,
     CategoriaTematica,
+    ConfiguracionBanca,
     ConfiguracionNotificaciones,
     EventoFinancieroExterno,
     LimiteCategoria,
     MovimientoBancario,
     RegistroNotificacion,
+    VinculoPropiedadExterna,
 )
 from banca.services.analisis import cupos_tdc, vencimientos_tdc
 from banca.services.notificador import probar_telegram
 from banca.services.houm_analytics import resumen_houm_departamentos
+from core.models import PreferenciaDashboard
 from patrimonio.services.cuentas_por_cobrar import (
     fecha_evento_neat,
     primer_dia_mes,
     ventana_fuentes_cobro,
+)
+
+DASHBOARD_WIDGETS = (
+    "patrimonio", "activos", "pasivos", "liquidez_resumen", "cupos",
+    "flujo", "liquidez_grafico", "patrimonio_historico", "tendencia",
+    "propiedades", "top_activos",
 )
 
 
@@ -74,61 +93,42 @@ def ensure_pasivos_for_products(user):
 def dashboard(request):
     """Dashboard with key metrics and charts"""
     user = request.user
-    
-    # Get latest exchange rates
-    try:
-        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
-        valor_uf = tipo_cambio.uf
-    except TipoCambio.DoesNotExist:
-        tipo_cambio = None
-        valor_uf = Decimal(0)
-    
-    # Calculate patrimony from unified Activo model
-    activos_all = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
-    total_activos_base = sum(a.monto_clp for a in activos_all) if activos_all.exists() else 0
-    
-    pasivos = Pasivo.objects.filter(user=user, activo=True)
-    total_pasivos = sum(p.monto_clp for p in pasivos) if pasivos.exists() else 0
-    
-    total_departamentos = 0
-    if tipo_cambio:
-        departamentos_todos = Departamento.objects.filter(user=user)
-        total_departamentos = sum(d.valor_actual_uf * tipo_cambio.uf for d in departamentos_todos)
-        
-    total_activos = total_activos_base + total_departamentos
-    patrimonio_neto = total_activos - total_pasivos
-    
-    # Calculate liquidity
-    total_liquidos = sum(a.monto_clp for a in activos_all.filter(es_liquido=True))
-    total_no_liquidos = total_activos - total_liquidos
-    liquidez_pct = (total_liquidos / total_activos * 100) if total_activos > 0 else 0
-    
-    # Flujo de caja: misma fuente de verdad que Gastos Mensuales.
+
+    patrimonio_actual = resumen_patrimonio(user)
+    tipo_cambio = patrimonio_actual["tipo_cambio"]
+    activos_all = patrimonio_actual["activos"]
+    pasivos = patrimonio_actual["pasivos"]
+    for activo in activos_all:
+        valor = patrimonio_actual["valores_activos"][activo.pk]
+        activo.monto_clp, activo.monto_usd = valor.clp, valor.usd
+    total_activos = patrimonio_actual["activos_total_clp"]
+    total_pasivos = patrimonio_actual["pasivos_total_clp"]
+    patrimonio_neto = patrimonio_actual["patrimonio_neto_clp"]
+    total_liquidos = patrimonio_actual["activos_liquidos_clp"]
+    total_no_liquidos = patrimonio_actual["activos_no_liquidos_clp"]
+    liquidez_pct = patrimonio_actual["liquidez_pct"]
+
+    # El panel comparte la caja facturada del consolidado mensual.
     selected_year = request.GET.get('year')
     selected_month = request.GET.get('month')
-    if selected_year and selected_month:
-        target_year = int(selected_year)
-        target_month = int(selected_month)
-    else:
-        ultimo_mes = date.today().replace(day=1) - timedelta(days=1)
+    ultimo_mes = date.today().replace(day=1) - timedelta(days=1)
+    try:
+        periodo_solicitado = date(int(selected_year), int(selected_month), 1)
+        target_year, target_month = periodo_solicitado.year, periodo_solicitado.month
+    except (TypeError, ValueError):
         target_year, target_month = ultimo_mes.year, ultimo_mes.month
     periodo_dashboard = date(target_year, target_month, 1)
     flujo = resumen_gastos(user, periodo_dashboard, periodo_dashboard, "caja")
     ingresos = flujo["totales"]["ingresos_clp"]
     total_gastos = flujo["totales"]["egresos_clp"]
-    gastos_fijos = sum(
-        (grupo["total_clp"] for grupo in flujo["categorias"]
-         if grupo["direccion"] == "EGRESO"
-         and any(item["esencialidad"] == "FIJO" for item in grupo["movimientos"])),
-        Decimal("0"),
-    )
-    suscripciones = sum(
-        (grupo["total_clp"] for grupo in flujo["categorias"]
-         if grupo["direccion"] == "EGRESO" and grupo["categoria"] == "Suscripciones"),
-        Decimal("0"),
-    )
+    salidas = [item for grupo in flujo['categorias'] for item in grupo['movimientos'] if item['direccion'] == 'EGRESO']
+    # Each contribution belongs to exactly one summary segment.
+    gastos_fijos = sum(((item['monto_calculo_clp'] or Decimal('0')) for item in salidas
+                       if item['esencialidad'] == 'FIJO' and item['categoria'] != 'Suscripciones'), Decimal('0'))
+    suscripciones = sum(((item['monto_calculo_clp'] or Decimal('0')) for item in salidas
+                         if item['categoria'] == 'Suscripciones'), Decimal('0'))
     tarjetas = sum(
-        (item["monto_clp"] for grupo in flujo["categorias"] for item in grupo["movimientos"]
+        ((item["monto_calculo_clp"] or Decimal('0')) for grupo in flujo["categorias"] for item in grupo["movimientos"]
          if item["direccion"] == "EGRESO" and item["fuente"] == "TDC"),
         Decimal("0"),
     )
@@ -141,7 +141,7 @@ def dashboard(request):
     snapshot_pasivos = [float(s.pasivos_total_clp) for s in snapshots]
     snapshot_neto = [float(s.patrimonio_neto_clp) for s in snapshots]
     
-    # Histórico unificado de caja (facturados por vencimiento + Houm + manuales).
+    # Histórico de caja confirmada, consistente con Gastos Mensuales.
     today = date.today()
     historico_meses = []
     def restar_meses(base, cantidad):
@@ -163,7 +163,7 @@ def dashboard(request):
     
     # Get departments and top activos for previews
     departamentos = Departamento.objects.filter(user=user)[:3]
-    top_activos = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO').order_by('-monto_clp')[:4]
+    top_activos = sorted(activos_all, key=lambda activo: activo.monto_clp, reverse=True)[:4]
 
     resumen_cupos = cupos_tdc(user)
     
@@ -174,6 +174,10 @@ def dashboard(request):
     ]
     
     context = {
+        'widget_order': (
+            PreferenciaDashboard.objects.filter(user=user)
+            .values_list('orden_widgets', flat=True).first() or list(DASHBOARD_WIDGETS)
+        ),
         'patrimonio_neto': patrimonio_neto,
         'total_activos': total_activos,
         'total_pasivos': total_pasivos,
@@ -182,6 +186,7 @@ def dashboard(request):
         'liquidez_pct': liquidez_pct,
         'ingresos_mes': ingresos,
         'gastos_mes': total_gastos,
+        'balance_mes': ingresos - total_gastos,
         'gastos_fijos': gastos_fijos,
         'suscripciones': suscripciones,
         'tarjetas': tarjetas,
@@ -199,14 +204,37 @@ def dashboard(request):
         'available_months': available_months,
         'cupos_tdc': resumen_cupos,
         'cobertura_estados': flujo['cobertura'],
+        'flujo_sin_conversion': flujo.get('sin_conversion', 0),
+        'filas_por_revisar_moneda': patrimonio_actual["filas_por_revisar_moneda"],
+        'falta_tasa_usd': patrimonio_actual["falta_tasa_usd"],
+        'falta_tasa_uf': patrimonio_actual["falta_tasa_uf"],
     }
     
     return render(request, 'dashboard.html', context)
 
 
 @login_required
+@require_http_methods(["POST"])
+def guardar_dashboard_widgets(request):
+    try:
+        payload = json.loads(request.body)
+        orden = payload.get("orden") if isinstance(payload, dict) else None
+    except (ValueError, TypeError):
+        return JsonResponse({"error": "Formato inválido"}, status=400)
+    if (not isinstance(orden, list) or not orden or len(orden) > len(DASHBOARD_WIDGETS)
+            or any(not isinstance(item, str) or item not in DASHBOARD_WIDGETS for item in orden)
+            or len(orden) != len(set(orden))):
+        return JsonResponse({"error": "Orden inválido"}, status=400)
+    PreferenciaDashboard.objects.update_or_create(
+        user=request.user, defaults={"orden_widgets": orden},
+    )
+    return JsonResponse({"ok": True})
+
+
+@login_required
 def gastos_table(request):
-    """Centro financiero: caja oficial y consumo categorizado."""
+    """Consolidado mensual de entradas y obligaciones ya facturadas."""
+    from banca.services.presupuesto import proyeccion_no_facturados
     user = request.user
     today = date.today()
     last_month_date = today.replace(day=1) - timedelta(days=1)
@@ -234,7 +262,7 @@ def gastos_table(request):
     context = {
         'current_year': selected_year,
         'current_month': selected_month,
-        'initial_perspective': request.GET.get('perspectiva', 'consumo'),
+        'initial_perspective': 'caja',
         'default_year': last_month_date.year,
         'default_month': last_month_date.month,
         'years': years,
@@ -244,11 +272,12 @@ def gastos_table(request):
         'departamentos_manual': Departamento.objects.filter(user=user, vinculos_externos__isnull=True, activo=True),
         'gastos_programados': gastos_programados,
         'periodos_movimientos': periodos_movimientos[:12],
+        'proyeccion': proyeccion_no_facturados(user),
         'total_ahorro_anual': total_ahorro_programado,
         'total_ahorro_trimestral': Decimal('0'),
     }
     
-    return render(request, 'gastos_table.html', context)
+    return render(request, 'gastos_consolidado.html', context)
 
 
 @login_required
@@ -256,27 +285,19 @@ def patrimonio(request):
     """Patrimony/Net worth view - Summary page"""
     user = request.user
     
-    activos_all = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
-    pasivos = Pasivo.objects.filter(user=user, activo=True)
-    departamentos = Departamento.objects.filter(user=user)
-    
-    try:
-        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
-        valor_uf = tipo_cambio.uf
-    except TipoCambio.DoesNotExist:
-        valor_uf = Decimal(0)
-        tipo_cambio = None
-    
-    # Totals
-    total_activos_base = sum(a.monto_clp for a in activos_all)
-    total_departamentos = sum(d.valor_actual_uf * valor_uf for d in departamentos)
-    total_activos = total_activos_base + total_departamentos
-    total_pasivos = sum(p.monto_clp for p in pasivos)
-    patrimonio_neto = total_activos - total_pasivos
-    
-    total_liquidos = sum(a.monto_clp for a in activos_all.filter(es_liquido=True))
-    total_no_liquidos = total_activos - total_liquidos
-    liquidez_pct = (total_liquidos / total_activos * 100) if total_activos > 0 else 0
+    resumen = resumen_patrimonio(user)
+    activos_all, pasivos = resumen["activos"], resumen["pasivos"]
+    tipo_cambio = resumen["tipo_cambio"]
+    for activo in activos_all:
+        valor = resumen["valores_activos"][activo.pk]
+        activo.monto_clp, activo.monto_usd = valor.clp, valor.usd
+    total_activos = resumen["activos_total_clp"]
+    total_pasivos = resumen["pasivos_total_clp"]
+    patrimonio_neto = resumen["patrimonio_neto_clp"]
+    total_liquidos = resumen["activos_liquidos_clp"]
+    total_no_liquidos = resumen["activos_no_liquidos_clp"]
+    liquidez_pct = resumen["liquidez_pct"]
+    departamentos = resumen["departamentos"]
     
     snapshots = SnapshotPatrimonio.objects.filter(user=user).order_by('-fecha')[:12]
     
@@ -287,10 +308,13 @@ def patrimonio(request):
         'total_liquidos': total_liquidos,
         'total_no_liquidos': total_no_liquidos,
         'liquidez_pct': liquidez_pct,
-        'activos_count': activos_all.count() + departamentos.count(),
-        'pasivos_count': pasivos.count(),
+        'activos_count': len(activos_all) + len(departamentos),
+        'pasivos_count': len(pasivos),
         'snapshots': snapshots,
         'tipo_cambio': tipo_cambio,
+        'filas_por_revisar_moneda': resumen["filas_por_revisar_moneda"],
+        'falta_tasa_usd': resumen["falta_tasa_usd"],
+        'falta_tasa_uf': resumen["falta_tasa_uf"],
     }
     
     return render(request, 'patrimonio.html', context)
@@ -301,15 +325,17 @@ def activos_view(request):
     """Unified Assets view (replaces Inversiones)"""
     user = request.user
     
-    try:
-        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
-        valor_uf = tipo_cambio.uf
-    except TipoCambio.DoesNotExist:
-        valor_uf = Decimal(0)
-        tipo_cambio = None
+    resumen = resumen_patrimonio(user)
+    tipo_cambio = resumen["tipo_cambio"]
+    valor_uf = tipo_cambio.uf if tipo_cambio else Decimal("0")
     
     # All user assets (excluding departamentos which are auto-generated)
-    activos_qs = Activo.objects.filter(user=user, activo=True).exclude(tipo='DEPARTAMENTO')
+    activos_qs = resumen["activos"]
+    origenes = origenes_activos(user, activos_qs)
+    for activo in activos_qs:
+        activo.origen_sincronizacion = origenes[activo.pk]
+        valor = resumen["valores_activos"][activo.pk]
+        activo.monto_clp, activo.monto_usd = valor.clp, valor.usd
     
     # Build departamento assets
     departamentos = Departamento.objects.filter(user=user)
@@ -333,7 +359,7 @@ def activos_view(request):
             'depto_id': d.id,
         })
     
-    total_invertido = sum(a.monto_clp for a in activos_qs) + total_depto_clp
+    total_invertido = resumen["activos_total_clp"]
     
     # Group by horizonte_temporal
     HORIZONTE_ORDER = {'EFECTIVO': 0, 'CORTO_PLAZO': 1, 'MEDIANO_PLAZO': 2, 'LARGO_PLAZO': 3}
@@ -341,7 +367,7 @@ def activos_view(request):
     
     grouped = {}
     for h_key, h_label in Activo.HORIZONTE_CHOICES:
-        items = list(activos_qs.filter(horizonte_temporal=h_key))
+        items = [a for a in activos_qs if a.horizonte_temporal == h_key]
         # Add depto assets to LARGO_PLAZO
         if h_key == 'LARGO_PLAZO':
             grouped[h_key] = {
@@ -366,9 +392,9 @@ def activos_view(request):
         chart_data.append({'nombre': d['nombre'], 'monto': float(d['monto_clp'])})
     
     # Liquidity totals
-    total_liquidos = sum(a.monto_clp for a in activos_qs.filter(es_liquido=True))
-    total_no_liquidos = total_invertido - total_liquidos
-    liquidez_pct = (total_liquidos / total_invertido * 100) if total_invertido > 0 else 0
+    total_liquidos = resumen["activos_liquidos_clp"]
+    total_no_liquidos = resumen["activos_no_liquidos_clp"]
+    liquidez_pct = resumen["liquidez_pct"]
     
     # Portfolio history (from HistorialActivo)
     from django.db.models.functions import TruncMonth
@@ -389,10 +415,14 @@ def activos_view(request):
         'total_liquidos': total_liquidos,
         'total_no_liquidos': total_no_liquidos,
         'liquidez_pct': liquidez_pct,
-        'activos_count': activos_qs.count() + len(depto_activos),
+        'activos_count': len(activos_qs) + len(depto_activos),
         'chart_data': chart_data,
         'historico': historico if historico['labels'] else None,
         'tipo_cambio': tipo_cambio,
+        'filas_por_revisar_moneda': resumen["filas_por_revisar_moneda"],
+        'filas_por_revisar_fuente': sum(a.requiere_revision_fuente for a in activos_qs),
+        'falta_tasa_usd': resumen["falta_tasa_usd"],
+        'falta_tasa_uf': resumen["falta_tasa_uf"],
     }
     
     return render(request, 'activos.html', context)
@@ -679,7 +709,7 @@ def agregar_detalle_cuenta_por_cobrar(request):
         messages.error(request, "Para agregar una línea necesitas descripción y un monto mayor que cero.")
         return _volver_cuenta_cobro(cuenta)
     periodo = _cobro_periodo(request.POST.get("periodo"), fecha.replace(day=1))
-    detalle = DetalleCuentaPorCobrar.objects.create(
+    detalle = DetalleCuentaPorCobrar(
         cuenta=cuenta,
         descripcion=descripcion,
         periodo=periodo,
@@ -692,6 +722,11 @@ def agregar_detalle_cuenta_por_cobrar(request):
         evento_externo=fuente if origen == "NEAT" else None,
         clave_similitud=clave,
     )
+    try:
+        detalle.save()
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+        return _volver_cuenta_cobro(cuenta, periodo)
     messages.success(request, f"Línea «{detalle.descripcion}» agregada por {monto} {cuenta.moneda}.")
     return _volver_cuenta_cobro(cuenta, periodo)
 
@@ -745,6 +780,7 @@ def editar_detalle_cuenta_por_cobrar(request, pk):
         return _volver_cuenta_cobro(cuenta, detalle.periodo, detalle.pk)
 
     periodo = _cobro_periodo(request.POST.get("periodo"), fecha.replace(day=1))
+    periodo_anterior = detalle.periodo
     detalle.descripcion = descripcion
     detalle.periodo = periodo
     detalle.fecha = fecha
@@ -755,7 +791,11 @@ def editar_detalle_cuenta_por_cobrar(request, pk):
     detalle.movimiento = fuente if origen == "MOVIMIENTO" else None
     detalle.evento_externo = fuente if origen == "NEAT" else None
     detalle.clave_similitud = clave
-    detalle.save()
+    try:
+        detalle.save()
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+        return _volver_cuenta_cobro(cuenta, periodo_anterior, detalle.pk)
     messages.success(request, f"Línea «{detalle.descripcion}» actualizada por {monto} {cuenta.moneda}.")
     return _volver_cuenta_cobro(cuenta, periodo)
 
@@ -851,13 +891,13 @@ def pasivos_view(request):
     # # Sync relevant products that don't have a Pasivo yet (e.g. existing TDC)
     # ensure_pasivos_for_products(user)
     
-    try:
-        tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
-    except TipoCambio.DoesNotExist:
-        tipo_cambio = None
-    
-    pasivos_all = Pasivo.objects.filter(user=user, activo=True)
-    total_pasivos = sum(p.monto_clp for p in pasivos_all)
+    resumen = resumen_patrimonio(user)
+    tipo_cambio = resumen["tipo_cambio"]
+    pasivos_all = resumen["pasivos"]
+    for pasivo in pasivos_all:
+        valor = resumen["valores_pasivos"][pasivo.pk]
+        pasivo.monto_clp, pasivo.monto_usd = valor.clp, valor.usd
+    total_pasivos = resumen["pasivos_total_clp"]
     
     # Group by tipo
     TIPO_ORDER = {'TDC': 0, 'CREDITO_HIPOTECARIO': 1, 'CREDITO_CONSUMO': 2, 'PRESTAMO': 3, 'OTRO': 4}
@@ -865,7 +905,7 @@ def pasivos_view(request):
     
     grouped = {}
     for t_key, t_label in Pasivo.TIPO_PASIVO:
-        items = list(pasivos_all.filter(tipo=t_key))
+        items = [p for p in pasivos_all if p.tipo == t_key]
         if items:
             grouped[t_key] = {
                 'label': t_label,
@@ -874,10 +914,7 @@ def pasivos_view(request):
             }
     
     # Activos for ratio
-    activos_total = sum(a.monto_clp for a in Activo.objects.filter(user=user, activo=True))
-    departamentos = Departamento.objects.filter(user=user)
-    if tipo_cambio:
-        activos_total += sum(d.valor_actual_uf * tipo_cambio.uf for d in departamentos)
+    activos_total = resumen["activos_total_clp"]
     
     ratio_da = (total_pasivos / activos_total * 100) if activos_total > 0 else 0
     
@@ -887,10 +924,13 @@ def pasivos_view(request):
     context = {
         'grouped': grouped,
         'total_pasivos': total_pasivos,
-        'pasivos_count': pasivos_all.count(),
+        'pasivos_count': len(pasivos_all),
         'ratio_da': ratio_da,
         'tipo_cambio': tipo_cambio,
         'productos': productos,
+        'filas_por_revisar_moneda': resumen["filas_por_revisar_moneda"],
+        'falta_tasa_usd': resumen["falta_tasa_usd"],
+        'falta_tasa_uf': resumen["falta_tasa_uf"],
     }
     
     return render(request, 'pasivos.html', context)
@@ -909,16 +949,29 @@ def departamentos(request):
     departamentos_qs = Departamento.objects.filter(user=user).prefetch_related(
         'arrendatario', 'credito_hipotecario'
     )
+    mostrar_inactivos = request.GET.get('inactivos') == '1'
+    if not mostrar_inactivos:
+        departamentos_qs = departamentos_qs.filter(activo=True)
+    houm_ids = dict(
+        VinculoPropiedadExterna.objects.filter(
+            user=user, fuente="houm", activo=True
+        ).values_list("departamento_id", "external_property_id")
+    )
+    for departamento in departamentos_qs:
+        # Se expone como dato de presentación; la relación externa sigue siendo
+        # la fuente única y conserva el historial de vinculaciones Houm.
+        departamento.houm_id = houm_ids.get(departamento.id, "")
     
     total_arriendos = sum(
         d.arrendatario.monto_arriendo_clp 
-        for d in departamentos_qs if hasattr(d, 'arrendatario')
+        for d in departamentos_qs if d.activo and hasattr(d, 'arrendatario') and d.arrendatario.activo
     )
-    promedio_arriendo = total_arriendos / departamentos_qs.count() if departamentos_qs.count() > 0 else 0
+    cantidad_vigentes = sum(d.activo for d in departamentos_qs)
+    promedio_arriendo = total_arriendos / cantidad_vigentes if cantidad_vigentes else 0
     
     total_valor_actual = sum(
         d.valor_actual_uf * valor_uf 
-        for d in departamentos_qs
+        for d in departamentos_qs if d.activo
     )
     
     bancos = Banco.objects.all().prefetch_related(
@@ -933,7 +986,9 @@ def departamentos(request):
     # Calculate ROI metrics for each departamento
     deptos_con_roi = []
     for d in departamentos_qs:
+        from pendientes.services.resumen import resumen_propiedad
         d.houm_resumen = houm['por_departamento'].get(d.id)
+        d.pendientes_resumen = resumen_propiedad(d)
         info = {
             'depto': d,
             'valor_clp': d.valor_actual_uf * valor_uf,
@@ -1031,23 +1086,25 @@ def departamentos(request):
     ).select_related('banco')
 
     # Calculate Global Portfolio Metrics for Cards
-    total_ingreso_real = sum(i['ingreso_real'] for i in deptos_con_roi)
-    total_renta_pactada = sum(i['renta_esperada'] for i in deptos_con_roi)
-    total_cobertura_dividendo = sum(i['diferencia_dividendo'] for i in deptos_con_roi)
-    total_utilidad_patrimonial = sum(i['utilidad_patrimonial'] for i in deptos_con_roi)
+    roi_vigente = [i for i in deptos_con_roi if i['depto'].activo]
+    total_ingreso_real = sum(i['ingreso_real'] for i in roi_vigente)
+    total_renta_pactada = sum(i['renta_esperada'] for i in roi_vigente)
+    total_cobertura_dividendo = sum(i['diferencia_dividendo'] for i in roi_vigente)
+    total_utilidad_patrimonial = sum(i['utilidad_patrimonial'] for i in roi_vigente)
     
     total_amort_uf = sum(
         d.credito_hipotecario.calcular_amortizacion_mensual()
-        for d in departamentos_qs if hasattr(d, 'credito_hipotecario')
+        for d in departamentos_qs if d.activo and hasattr(d, 'credito_hipotecario') and d.credito_hipotecario.activo
     )
     total_amort_clp = total_amort_uf * valor_uf
     
     # Average Cap Rate (weighted by current market value)
-    total_value_clp = sum(i['valor_clp'] for i in deptos_con_roi)
+    total_value_clp = sum(i['valor_clp'] for i in roi_vigente)
     avg_cap_rate = float(total_ingreso_real * 12 / total_value_clp * 100) if total_value_clp > 0 else 0
 
     context = {
         'departamentos': departamentos_qs,
+        'mostrar_inactivos': mostrar_inactivos,
         'deptos_con_roi': deptos_con_roi,
         'total_arriendos': total_renta_pactada,
         'total_ingreso_real': total_ingreso_real,
@@ -1075,6 +1132,16 @@ def departamentos(request):
 
 
 @login_required
+def departamentos_importar_documentos(request):
+    """Compatibilidad para enlaces antiguos del importador municipal."""
+    messages.info(
+        request,
+        "El importador de Aseo fue retirado. Registra la obligación y sus pagos manualmente en Pendientes.",
+    )
+    return redirect("dashboard_pendientes")
+
+
+@login_required
 def configuracion(request):
     """Configuration/Settings view"""
     user = request.user
@@ -1082,8 +1149,13 @@ def configuracion(request):
         tipo_cambio = TipoCambio.objects.filter(fuente='mindicador.cl').latest('fecha')
     except TipoCambio.DoesNotExist:
         tipo_cambio = None
-    bancos = Banco.objects.all()
+    bancos = Banco.objects.prefetch_related(Prefetch(
+        "productos", queryset=Producto.objects.filter(user=user), to_attr="productos_usuario"
+    ))
     categorias = CategoriaTematica.objects.filter(user=user, activa=True)
+    from banca.services.presupuesto import detalle_promedios_categoria
+    config_banca = ConfiguracionBanca.objects.filter(user=user).first()
+    meses_promedio = config_banca.ventana_meses_ingreso if config_banca else 3
     config_notificaciones, _ = ConfiguracionNotificaciones.objects.get_or_create(user=user)
 
     market_integrations = None
@@ -1120,9 +1192,11 @@ def configuracion(request):
             and config_notificaciones.telegram_chat_id_cifrado
         ),
         'config_notificaciones': config_notificaciones,
-        'categorias_tematicas': CategoriaTematica.objects.filter(user=user, activa=True),
+        'categorias_tematicas': CategoriaTematica.objects.filter(user=user, activa=True, aplica_a__in=("EGRESO", "AMBOS")),
         'productos_revision': Producto.objects.filter(user=user, requiere_revision=True).select_related('banco'),
         'limites_categoria': LimiteCategoria.objects.filter(user=user).select_related('categoria'),
+        'promedios_categoria': detalle_promedios_categoria(user, meses_promedio),
+        'meses_promedio': meses_promedio,
         'notificaciones_recientes': RegistroNotificacion.objects.filter(user=user)[:8],
     }
     
@@ -1204,6 +1278,7 @@ def guardar_limite_categoria(request):
         pk=request.POST.get("categoria"),
         user=request.user,
         activa=True,
+        aplica_a__in=("EGRESO", "AMBOS"),
     )
     try:
         monto = Decimal(request.POST.get("monto_mensual_clp", "0"))
@@ -1312,36 +1387,103 @@ def revocar_apple_pay_key(request, pk):
 
 # ===================== ACTIVOS CRUD =====================
 
+def _aplicar_saldo_original(request, objeto):
+    """Read the single-source-currency form, while retaining old POST compatibility."""
+    raw = request.POST.get("monto_original")
+    moneda = request.POST.get("moneda_original") or getattr(objeto, "moneda_original", None) or "CLP"
+    if raw is None and ("monto_clp" in request.POST or "monto_usd" in request.POST):
+        try:
+            clp = Decimal(request.POST.get("monto_clp") or "0")
+            usd = Decimal(request.POST.get("monto_usd") or "0")
+        except InvalidOperation:
+            raise ValueError("El monto debe ser numérico.")
+        if not clp.is_finite() or not usd.is_finite() or clp < 0 or usd < 0:
+            raise ValueError("El monto no puede ser negativo.")
+        if clp and usd:
+            objeto.monto_clp = normalizar_monto(clp)
+            objeto.monto_usd = normalizar_monto(usd)
+            objeto.monto_original = objeto.moneda_original = None
+            objeto.requiere_revision_moneda = True
+            return
+        raw, moneda = str(usd if usd else clp), "USD" if usd else "CLP"
+    try:
+        monto = Decimal(raw or "0")
+    except InvalidOperation:
+        raise ValueError("El monto debe ser numérico.")
+    if not monto.is_finite() or monto < 0:
+        raise ValueError("El monto no puede ser negativo.")
+    if moneda not in {"CLP", "USD"}:
+        raise ValueError("Selecciona CLP o USD como moneda del saldo.")
+    tipo_cambio = tipo_cambio_para()
+    objeto.asignar_saldo_original(monto, moneda, tipo_cambio)
+
+
+def _redirigir_con_error_saldo(request, mensaje, url):
+    messages.error(request, mensaje)
+    return redirect(url)
+
 @require_http_methods(["POST"])
 @login_required
 def crear_activo(request):
-    monto_clp = request.POST.get('monto_clp') or 0
-    monto_usd = request.POST.get('monto_usd') or 0
-    
-    Activo.objects.create(
+    activo = Activo(
         user=request.user,
         nombre=request.POST.get('nombre', 'Nuevo Activo'),
         tipo=request.POST.get('tipo', 'OTRO'),
         horizonte_temporal=request.POST.get('horizonte_temporal', 'EFECTIVO'),
         es_liquido=request.POST.get('es_liquido') == 'on',
-        monto_clp=monto_clp,
-        monto_usd=monto_usd,
         notas=request.POST.get('notas', ''),
     )
+    try:
+        _aplicar_saldo_original(request, activo)
+    except ValueError as error:
+        return _redirigir_con_error_saldo(request, str(error), "activos")
+    activo.save()
     next_url = request.POST.get('next', 'activos')
     return redirect(next_url)
 
 
 @require_http_methods(["POST"])
 @login_required
+def sincronizar_activo(request, pk):
+    activo = get_object_or_404(Activo, pk=pk, user=request.user, activo=True)
+    origen = origen_activo(activo)
+    if not origen.credencial:
+        messages.error(request, 'Revisa la cuenta y su conexión en Banca → Configuración.')
+        return redirect('activos')
+    from banca.services.sync import run_sync
+
+    try:
+        log = run_sync(origen.credencial, modo='full')
+    except Exception:
+        messages.error(request, 'No se pudo sincronizar la fuente. Revisa su configuración.')
+        return redirect('activos')
+    if log.exito:
+        activo.refresh_from_db()
+        if activo.updated_at >= log.iniciado:
+            messages.success(request, f'{origen.etiqueta}: sincronización completada.')
+        else:
+            messages.warning(request, f'{origen.etiqueta}: la fuente no informó un nuevo saldo para este activo. Se conserva el anterior.')
+    else:
+        messages.error(request, 'No se pudo completar la sincronización. Revisa el historial en Banca → Sync.')
+    return redirect('activos')
+
+
+@require_http_methods(["POST"])
+@login_required
 def editar_activo(request, pk):
-    activo = Activo.objects.get(pk=pk, user=request.user)
+    activo = get_object_or_404(Activo, pk=pk, user=request.user)
+    if hasattr(activo, 'prestamo_recuperable'):
+        return _redirigir_con_error_saldo(request, 'Edita el capital y los abonos desde Bicicletas.', 'activos')
+    if origen_activo(activo).externo:
+        return _redirigir_con_error_saldo(request, 'Este saldo se actualiza con Sincronizar desde su fuente.', 'activos')
     activo.nombre = request.POST.get('nombre', activo.nombre)
     activo.tipo = request.POST.get('tipo', activo.tipo)
     activo.horizonte_temporal = request.POST.get('horizonte_temporal', activo.horizonte_temporal)
     activo.es_liquido = request.POST.get('es_liquido') == 'on'
-    activo.monto_clp = request.POST.get('monto_clp') or 0
-    activo.monto_usd = request.POST.get('monto_usd') or 0
+    try:
+        _aplicar_saldo_original(request, activo)
+    except ValueError as error:
+        return _redirigir_con_error_saldo(request, str(error), "activos")
     activo.notas = request.POST.get('notas', activo.notas)
     activo.save()
     next_url = request.POST.get('next', 'activos')
@@ -1351,7 +1493,11 @@ def editar_activo(request, pk):
 @require_http_methods(["POST"])
 @login_required
 def borrar_activo(request, pk):
-    activo = Activo.objects.get(pk=pk, user=request.user)
+    activo = get_object_or_404(Activo, pk=pk, user=request.user)
+    if hasattr(activo, 'prestamo_recuperable'):
+        return _redirigir_con_error_saldo(request, 'Desactiva la bicicleta para conservar su historial.', 'activos')
+    if origen_activo(activo).externo:
+        return _redirigir_con_error_saldo(request, 'Este activo está vinculado a una fuente de sincronización.', 'activos')
     activo.delete()
     next_url = request.POST.get('next', 'activos')
     return redirect(next_url)
@@ -1362,21 +1508,21 @@ def borrar_activo(request, pk):
 @require_http_methods(["POST"])
 @login_required
 def crear_pasivo(request):
-    monto_clp = request.POST.get('monto_clp') or 0
-    monto_usd = request.POST.get('monto_usd') or 0
-    
     producto_id = request.POST.get('producto_id')
-    producto = Producto.objects.get(id=producto_id, user=request.user) if producto_id else None
+    producto = get_object_or_404(Producto, id=producto_id, user=request.user) if producto_id else None
     
-    Pasivo.objects.create(
+    pasivo = Pasivo(
         user=request.user,
         nombre=request.POST.get('nombre', 'Nueva Deuda'),
         tipo=request.POST.get('tipo', 'OTRO'),
-        monto_clp=monto_clp,
-        monto_usd=monto_usd,
         producto=producto,
         notas=request.POST.get('notas', ''),
     )
+    try:
+        _aplicar_saldo_original(request, pasivo)
+    except ValueError as error:
+        return _redirigir_con_error_saldo(request, str(error), "pasivos")
+    pasivo.save()
     next_url = request.POST.get('next', 'pasivos')
     return redirect(next_url)
 
@@ -1384,11 +1530,13 @@ def crear_pasivo(request):
 @require_http_methods(["POST"])
 @login_required
 def editar_pasivo(request, pk):
-    pasivo = Pasivo.objects.get(pk=pk, user=request.user)
+    pasivo = get_object_or_404(Pasivo, pk=pk, user=request.user)
     pasivo.nombre = request.POST.get('nombre', pasivo.nombre)
     pasivo.tipo = request.POST.get('tipo', pasivo.tipo)
-    pasivo.monto_clp = request.POST.get('monto_clp') or 0
-    pasivo.monto_usd = request.POST.get('monto_usd') or 0
+    try:
+        _aplicar_saldo_original(request, pasivo)
+    except ValueError as error:
+        return _redirigir_con_error_saldo(request, str(error), "pasivos")
     pasivo.notas = request.POST.get('notas', pasivo.notas)
     pasivo.save()
     next_url = request.POST.get('next', 'pasivos')
@@ -1409,6 +1557,49 @@ def borrar_pasivo(request, pk):
 
 # ===================== DEPARTAMENTOS CRUD =====================
 
+def _guardar_id_houm(user, departamento, valor):
+    """Actualiza el vínculo Houm editable sin duplicar la relación externa."""
+    external_id = (valor or "").strip()
+    actuales = VinculoPropiedadExterna.objects.filter(
+        user=user, fuente="houm", departamento=departamento, activo=True
+    )
+    if not external_id:
+        actuales.update(activo=False)
+        return
+
+    conflicto = (
+        VinculoPropiedadExterna.objects.filter(
+            user=user, fuente="houm", external_property_id=external_id, activo=True
+        )
+        .exclude(departamento=departamento)
+        .select_related("departamento")
+        .first()
+    )
+    if conflicto:
+        raise ValueError(
+            f"El ID Houm {external_id} ya está vinculado a {conflicto.departamento.codigo}."
+        )
+
+    vinculo = VinculoPropiedadExterna.objects.filter(
+        user=user, fuente="houm", external_property_id=external_id
+    ).first()
+    if vinculo is None:
+        vinculo = VinculoPropiedadExterna(
+            user=user,
+            fuente="houm",
+            external_property_id=external_id,
+            departamento=departamento,
+            nombre_externo=departamento.codigo,
+            activo=True,
+        )
+    else:
+        vinculo.departamento = departamento
+        vinculo.activo = True
+        if not vinculo.nombre_externo:
+            vinculo.nombre_externo = departamento.codigo
+    vinculo.save()
+    actuales.exclude(pk=vinculo.pk).update(activo=False)
+
 @require_http_methods(["POST"])
 @login_required
 def crear_departamento(request):
@@ -1419,6 +1610,13 @@ def crear_departamento(request):
     depto.valor_compra_uf = request.POST.get('valor_compra_uf')
     depto.valor_actual_uf = request.POST.get('valor_actual_uf')
     depto.save()
+    depto.comuna = request.POST.get('comuna', '').strip()
+    depto.rol_sii = request.POST.get('rol_sii', '').strip()
+    depto.save(update_fields=['comuna', 'rol_sii', 'updated_at'])
+    try:
+        _guardar_id_houm(request.user, depto, request.POST.get('houm_id'))
+    except ValueError as exc:
+        messages.error(request, str(exc))
     
     return redirect('departamentos')
 
@@ -1433,6 +1631,13 @@ def editar_departamento(request, pk):
     depto.valor_compra_uf = request.POST.get('valor_compra_uf')
     depto.valor_actual_uf = request.POST.get('valor_actual_uf')
     depto.save()
+    depto.comuna = request.POST.get('comuna', '').strip()
+    depto.rol_sii = request.POST.get('rol_sii', '').strip()
+    depto.save(update_fields=['comuna', 'rol_sii', 'updated_at'])
+    try:
+        _guardar_id_houm(request.user, depto, request.POST.get('houm_id'))
+    except ValueError as exc:
+        messages.error(request, str(exc))
     
     return redirect('departamentos')
 
@@ -1443,6 +1648,16 @@ def borrar_departamento(request, pk):
     depto = Departamento.objects.get(pk=pk, user=request.user)
     depto.delete()
     return redirect('departamentos')
+
+
+@require_http_methods(['POST'])
+@login_required
+def alternar_departamento(request, pk):
+    depto = get_object_or_404(Departamento, pk=pk, user=request.user)
+    depto.activo = not depto.activo
+    depto.save(update_fields=['activo', 'updated_at'])
+    messages.success(request, 'Propiedad reactivada.' if depto.activo else 'Propiedad inactiva. Se conservan sus documentos y su deuda pendiente.')
+    return redirect(reverse('departamentos') + '?inactivos=1')
 
 
 @login_required
@@ -1624,6 +1839,9 @@ def bulk_gastos(request):
         month = int(request.POST.get('month'))
         periodo = date(year, month, 1)
         fecha = date(year, month, monthrange(year, month)[1])
+        modo_resumen = request.POST.get("modo_resumen", "TOTAL")
+        if modo_resumen not in {"TOTAL", "ADICIONAL"}:
+            return HttpResponse("Modo de resumen inválido.", status=400)
         for key, value in request.POST.items():
             if key.startswith('cat_'):
                 cat_id = key.split('_')[1]
@@ -1643,6 +1861,7 @@ def bulk_gastos(request):
                             "monto_clp": monto_clp, "tipo_cambio": tasa,
                             "monto_clp_estimado": estimado, "naturaleza": "OPERACIONAL",
                             "descripcion": categoria.nombre,
+                            "modo_resumen": modo_resumen,
                         },
                     )
         return redirect(f'{reverse("gastos-table")}?year={year}&month={month}')
@@ -1729,6 +1948,8 @@ def borrar_categoria(request, pk):
 @require_http_methods(["POST"])
 @login_required
 def crear_banco(request):
+    if not request.user.is_staff:
+        raise PermissionDenied
     nombre = request.POST.get('nombre')
     notas = request.POST.get('notas', '')
     if nombre:
@@ -1743,7 +1964,9 @@ def crear_banco(request):
 @require_http_methods(["POST"])
 @login_required
 def editar_banco(request, pk):
-    banco = Banco.objects.get(pk=pk)
+    if not request.user.is_staff:
+        raise PermissionDenied
+    banco = get_object_or_404(Banco, pk=pk)
     banco.nombre = request.POST.get('nombre', banco.nombre)
     banco.notas = request.POST.get('notas', banco.notas)
     banco.save()
@@ -1752,9 +1975,18 @@ def editar_banco(request, pk):
 
 @require_http_methods(["POST"])
 @login_required
+@transaction.atomic
 def borrar_banco(request, pk):
-    banco = Banco.objects.get(pk=pk)
-    banco.delete()
+    if not request.user.is_staff:
+        raise PermissionDenied
+    banco = get_object_or_404(Banco.objects.select_for_update(), pk=pk)
+    if banco_en_uso(banco):
+        messages.error(request, "No se puede eliminar una entidad financiera en uso. Conserva sus relaciones y desactívala desde la administración si corresponde.")
+        return redirect('configuracion')
+    try:
+        banco.delete()
+    except ProtectedError:
+        messages.error(request, "No se puede eliminar una entidad financiera en uso.")
     return redirect('configuracion')
 
 
@@ -1770,6 +2002,7 @@ def calendario(request):
     try:
         year = int(request.GET.get('year', date.today().year))
         month = int(request.GET.get('month', date.today().month))
+        date(year, month, 1)
     except (ValueError, TypeError):
         year = date.today().year
         month = date.today().month
@@ -1780,7 +2013,9 @@ def calendario(request):
 
     departamentos_cal = request.user.departamentos.filter(fecha_ultima_cuota__gte=date(year, month, 1))
     
-    gastos_programados = GastoProgramado.objects.filter(user=request.user, activo=True)
+    gastos_programados = GastoProgramado.objects.filter(
+        user=request.user, activo=True, regla_pendiente__isnull=True
+    )
     ahorro_mensual_total = sum(g.ahorro_mensual for g in gastos_programados)
     
     grid_gastos = []
@@ -1806,6 +2041,15 @@ def calendario(request):
     from banca.services.calendario_externo import eventos_externos_calendario
 
     eventos_externos = eventos_externos_calendario(request.user, year, month)
+    from pendientes.services.calendario import materializar_usuario
+    from pendientes.models import OcurrenciaPendiente
+    materializar_usuario(request.user)
+    pendientes_calendario = OcurrenciaPendiente.objects.filter(
+        regla__user=request.user,
+        regla__activa=True,
+        fecha_vencimiento__year=year,
+        fecha_vencimiento__month=month,
+    ).select_related('regla', 'regla__departamento')
     eventos_calendario = [
         {
             'dia_cobro': gasto.dia_cobro,
@@ -1815,6 +2059,17 @@ def calendario(request):
         }
         for gasto in grid_gastos
     ] + vencimientos_tarjetas + eventos_externos
+    eventos_calendario += [
+        {
+            'dia_cobro': ocurrencia.fecha_vencimiento.day,
+            'nombre': ocurrencia.regla.nombre,
+            'monto': ocurrencia.monto_esperado,
+            'tipo': 'pendiente',
+            'estado': ocurrencia.estado,
+        }
+        for ocurrencia in pendientes_calendario
+        if ocurrencia.estado == 'PENDIENTE'
+    ]
     eventos_calendario.sort(key=lambda evento: (evento['dia_cobro'], evento['tipo']))
 
     prev_month = month - 1 if month > 1 else 12
@@ -1833,6 +2088,8 @@ def calendario(request):
         'grid_gastos': grid_gastos,
         'vencimientos_tarjetas': vencimientos_tarjetas,
         'eventos_externos': eventos_externos,
+        'pendientes_calendario': pendientes_calendario,
+        'today': date.today(),
         'proximo_vencimiento': eventos_calendario[0] if eventos_calendario else None,
         'nav': {
             'prev_m': prev_month, 'prev_y': prev_year,

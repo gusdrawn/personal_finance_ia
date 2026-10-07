@@ -125,6 +125,31 @@ def informacion_fuente(fuente) -> dict:
     raise TypeError("Fuente financiera no soportada")
 
 
+def validar_fuente_no_solapada(fuente, cuenta, detalle_id=None):
+    """Impide cobrar el cargo y su desglose por cualquiera de las interfaces."""
+    from banca.models import ConciliacionEventoExterno, MovimientoBancario
+
+    if fuente.user_id != cuenta.user_id:
+        raise ValueError("La fuente y la cuenta deben pertenecer al mismo usuario.")
+    if isinstance(fuente, MovimientoBancario):
+        cargos = [fuente.pk]
+        eventos = ConciliacionEventoExterno.objects.filter(
+            movimiento=fuente, evento__user=fuente.user, evento__fuente="neat", rol="CARGO",
+        ).values("evento_id")
+        solapados = DetalleCuentaPorCobrar.objects.filter(cuenta__user=fuente.user, evento_externo_id__in=eventos)
+    else:
+        cargos = list(ConciliacionEventoExterno.objects.filter(
+            evento=fuente, movimiento__user=fuente.user, rol="CARGO",
+        ).values_list("movimiento_id", flat=True))
+        solapados = DetalleCuentaPorCobrar.objects.filter(cuenta__user=fuente.user, movimiento_id__in=cargos)
+    if transaction.get_connection().in_atomic_block:
+        list(MovimientoBancario.objects.select_for_update().filter(pk__in=cargos).order_by("pk"))
+    if detalle_id:
+        solapados = solapados.exclude(pk=detalle_id)
+    if solapados.exists():
+        raise ValueError("Este pago ya está asignado mediante su cargo bancario o su desglose Neat. Quita esa asignación antes de usar la otra fuente.")
+
+
 @transaction.atomic
 def asignar_fuente_a_cuenta(fuente, cuenta: CuentaPorCobrar | None):
     """Vincula una transacción a una sola cuenta por cobrar o la libera.
@@ -138,6 +163,9 @@ def asignar_fuente_a_cuenta(fuente, cuenta: CuentaPorCobrar | None):
         raise TypeError("Fuente financiera no soportada")
     if cuenta is not None and fuente.user_id != cuenta.user_id:
         raise ValueError("La fuente y la cuenta deben pertenecer al mismo usuario.")
+    fuente = type(fuente).objects.select_for_update().get(pk=fuente.pk)
+    if cuenta is not None:
+        validar_fuente_no_solapada(fuente, cuenta)
 
     filtro = (
         {"movimiento": fuente}
@@ -275,6 +303,10 @@ def _buscar_fuente_similar(cuenta, detalle, periodo, usados):
     descriptor_anterior = _descriptor_detalle(detalle)
     puntuados = []
     for candidato in candidatos:
+        try:
+            validar_fuente_no_solapada(candidato, cuenta)
+        except ValueError:
+            continue
         clave = clave_fuente(candidato)
         descriptor = (
             normalizar_referencia(candidato.descripcion)
@@ -286,6 +318,8 @@ def _buscar_fuente_similar(cuenta, detalle, periodo, usados):
         ).ratio()
         puntuados.append((puntuacion, informacion_fuente(candidato)["fecha"] or inicio, candidato))
 
+    if not puntuados:
+        return None
     puntuados.sort(key=lambda item: (item[0], item[1], item[2].id), reverse=True)
     mejor = puntuados[0]
     if mejor[0] < 0.62:

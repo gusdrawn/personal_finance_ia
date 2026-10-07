@@ -1,8 +1,10 @@
 """Tests del core: cálculo de vencimientos próximos para recordatorios del Calendario."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 import os
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -19,6 +21,7 @@ from core.services.recordatorios import (
     vencimientos_proximos,
 )
 from gastos.models import GastoProgramado
+from pendientes.models import OcurrenciaPendiente, ReglaPendiente
 from banca.models import ApplePayApiKey
 from configuracion.models import CredencialIntegracion
 from configuracion.services.integrations import get_coinmarketcap_api_key
@@ -96,6 +99,33 @@ class VencimientosProximosTest(TestCase):
         self.assertEqual(nombres, ["Netflix"])
         self.assertNotIn("Seguro", nombres)
 
+    def test_gasto_programado_vinculado_no_duplica_el_recordatorio(self):
+        hoy = date.today()
+        vencimiento = hoy + timedelta(days=2)
+        mes_anterior = date(
+            vencimiento.year - (vencimiento.month == 1),
+            12 if vencimiento.month == 1 else vencimiento.month - 1,
+            min(vencimiento.day, 28),
+        )
+        gasto = GastoProgramado.objects.create(
+            user=self.user, nombre="Internet", monto=Decimal("25000"),
+            fecha_inicio=mes_anterior, frecuencia="MENSUAL",
+        )
+        regla = ReglaPendiente.objects.create(
+            user=self.user, nombre="Internet", tipo="PAGO", periodicidad="MENSUAL",
+            fecha_inicio=vencimiento, monto_estimado=Decimal("25000"),
+            gasto_programado=gasto,
+        )
+        OcurrenciaPendiente.objects.create(
+            regla=regla, fecha_vencimiento=vencimiento,
+            monto_esperado=Decimal("25000"),
+        )
+
+        items = vencimientos_proximos(self.user, dias=3, hoy=hoy)
+
+        self.assertEqual([item["nombre"] for item in items], ["Internet"])
+        self.assertEqual(items[0]["tipo"], "pendiente")
+
 
 class QuickLinksTemplateTest(TestCase):
     """El menú compartido conserva todos los accesos externos y su apertura segura."""
@@ -161,6 +191,106 @@ class QuickLinksTemplateTest(TestCase):
         )
 
         self.assertNotIn("Accesos rápidos", rendered)
+
+
+class DashboardGastoRealTest(TestCase):
+    def test_dashboard_usa_caja_facturada_y_balance_consistente_con_gastos_mensuales(self):
+        user = User.objects.create_user(username="dashboard_consumo", password="secret")
+        self.client.force_login(user)
+        resumen = {
+            "totales": {
+                "ingresos_clp": Decimal("100000"),
+                "egresos_clp": Decimal("50000"),
+            },
+            "categorias": [],
+            "cobertura": [],
+        }
+
+        with patch("core.views.resumen_gastos", return_value=resumen) as resumen_mock:
+            response = self.client.get(reverse("dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(resumen_mock.call_args_list)
+        self.assertTrue(all(call.args[3] == "caja" for call in resumen_mock.call_args_list))
+        self.assertContains(response, "Tarjetas por monto facturado al vencimiento")
+        self.assertEqual(response.context["balance_mes"], Decimal("50000"))
+
+    def test_fechas_invalidas_de_dashboard_y_calendario_usar_periodo_seguro(self):
+        user = User.objects.create_user(username="fechas_invalidas", password="secret")
+        self.client.force_login(user)
+        hoy = date.today()
+
+        dashboard = self.client.get(reverse("dashboard"), {"year": "2026", "month": "13"})
+        calendario = self.client.get(reverse("calendario"), {"year": "2026", "month": "13"})
+
+        ultimo_mes = date(hoy.year, hoy.month, 1) - timedelta(days=1)
+        self.assertEqual((dashboard.context["target_year"], dashboard.context["target_month"]), (ultimo_mes.year, ultimo_mes.month))
+        self.assertEqual((calendario.context["year"], calendario.context["month"]), (hoy.year, hoy.month))
+
+    def test_calendario_muestra_un_solo_evento_para_gasto_y_regla_vinculados(self):
+        user = User.objects.create_user(username="calendario_vinculo", password="secret")
+        hoy = date.today()
+        vencimiento = hoy + timedelta(days=2)
+        mes_anterior = date(
+            vencimiento.year - (vencimiento.month == 1),
+            12 if vencimiento.month == 1 else vencimiento.month - 1,
+            min(vencimiento.day, 28),
+        )
+        gasto = GastoProgramado.objects.create(
+            user=user, nombre="Internet", monto=Decimal("25000"),
+            fecha_inicio=mes_anterior, frecuencia="MENSUAL",
+        )
+        regla = ReglaPendiente.objects.create(
+            user=user, nombre="Internet", tipo="PAGO", periodicidad="MENSUAL",
+            fecha_inicio=vencimiento, monto_estimado=Decimal("25000"),
+            gasto_programado=gasto,
+        )
+        OcurrenciaPendiente.objects.create(
+            regla=regla, fecha_vencimiento=vencimiento,
+            monto_esperado=Decimal("25000"),
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(
+            reverse("calendario"), {"year": vencimiento.year, "month": vencimiento.month}
+        )
+
+        gasto_programado = [g for g in response.context["grid_gastos"] if g.nombre == "Internet"]
+        ocurrencias = [
+            item for item in response.context["pendientes_calendario"]
+            if item.regla.nombre == "Internet" and item.estado == "PENDIENTE"
+        ]
+        self.assertEqual(len(gasto_programado) + len(ocurrencias), 1)
+        self.assertEqual(len(ocurrencias), 1)
+
+
+class ProductionSettingsTest(TestCase):
+    def importar_settings_con_entorno(self, **cambios):
+        entorno = os.environ.copy()
+        entorno.update({"DJANGO_DEBUG": "0", "DJANGO_SECRET_KEY": " ", "DJANGO_ALLOWED_HOSTS": "localhost"})
+        entorno.update(cambios)
+        return subprocess.run(
+            [sys.executable, "-c", "import finanzas_project.settings"],
+            cwd=os.path.dirname(os.path.dirname(__file__)),
+            env=entorno,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_produccion_falla_sin_secreto_o_hosts_explicitos(self):
+        sin_secreto = self.importar_settings_con_entorno()
+        sin_hosts = self.importar_settings_con_entorno(
+            DJANGO_SECRET_KEY="test-only-secret", DJANGO_ALLOWED_HOSTS=" "
+        )
+        valido = self.importar_settings_con_entorno(
+            DJANGO_SECRET_KEY="test-only-secret", DJANGO_ALLOWED_HOSTS="localhost"
+        )
+
+        self.assertNotEqual(sin_secreto.returncode, 0)
+        self.assertIn("DJANGO_SECRET_KEY", sin_secreto.stderr)
+        self.assertNotEqual(sin_hosts.returncode, 0)
+        self.assertIn("DJANGO_ALLOWED_HOSTS", sin_hosts.stderr)
+        self.assertEqual(valido.returncode, 0, valido.stderr)
 
 
 class ApplePayConfigurationTest(TestCase):

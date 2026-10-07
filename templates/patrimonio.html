@@ -5,6 +5,13 @@
 {% block page_title %}Estado del Patrimonio{% endblock %}
 
 {% block content %}
+{% if filas_por_revisar_moneda or falta_tasa_usd or falta_tasa_uf %}
+<div class="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm text-amber-100">
+    {% if filas_por_revisar_moneda %}<p>{{ filas_por_revisar_moneda }} saldo(s) antiguo(s) requieren confirmar su moneda de origen. Revisa los activos y pasivos marcados.</p>{% endif %}
+    {% if falta_tasa_usd %}<p>No hay tipo de cambio USD disponible para valorar todos los saldos.</p>{% endif %}
+    {% if falta_tasa_uf %}<p>No hay tipo de cambio UF disponible para valorar las propiedades.</p>{% endif %}
+</div>
+{% endif %}
 <!-- Summary Cards -->
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
     <div class="glass p-6 rounded-2xl border-t-4 border-emerald-500 card-stat">

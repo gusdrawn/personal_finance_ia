@@ -5,10 +5,12 @@
 {% block page_title %}Resumen Ejecutivo{% endblock %}
 
 {% block content %}
+{% if flujo_sin_conversion %}<p class="mb-4 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-200">Subtotal CLP parcial: {{ flujo_sin_conversion }} movimiento{{ flujo_sin_conversion|pluralize }} con conversión pendiente.</p>{% endif %}
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2"><p class="text-xs text-slate-400">Arrastra una tarjeta o usa sus flechas para ordenar tu dashboard. El orden se guarda en tu cuenta.</p><span id="widget-save-status" class="text-xs text-slate-500" aria-live="polite"></span></div>
 <!-- Top Metrics -->
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+<section id="dashboard-widgets" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pb-8">
     <!-- Patrimonio Card -->
-    <div class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
+    <div data-widget="patrimonio" class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
         <div class="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-colors"></div>
         <div class="relative">
             <div class="flex items-center space-x-3 mb-4">
@@ -25,7 +27,7 @@
     </div>
 
     <!-- Activos Card -->
-    <div class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
+    <div data-widget="activos" class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
         <div class="absolute -right-4 -top-4 w-24 h-24 bg-sky-500/10 rounded-full blur-2xl group-hover:bg-sky-500/20 transition-colors"></div>
         <div class="relative">
             <div class="flex items-center space-x-3 mb-4">
@@ -42,7 +44,7 @@
     </div>
 
     <!-- Pasivos Card -->
-    <div class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
+    <div data-widget="pasivos" class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
         <div class="absolute -right-4 -top-4 w-24 h-24 bg-rose-500/10 rounded-full blur-2xl group-hover:bg-rose-500/20 transition-colors"></div>
         <div class="relative">
             <div class="flex items-center space-x-3 mb-4">
@@ -59,7 +61,7 @@
     </div>
 
     <!-- Liquidez Card -->
-    <div class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
+    <div data-widget="liquidez_resumen" class="glass p-6 rounded-2xl card-stat relative group overflow-hidden">
         <div class="absolute -right-4 -top-4 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl group-hover:bg-indigo-500/20 transition-colors"></div>
         <div class="relative">
             <div class="flex items-center space-x-3 mb-4">
@@ -74,11 +76,9 @@
             </div>
         </div>
     </div>
-</div>
-
 {% if cupos_tdc.tarjetas %}
 <!-- Cupos de tarjetas -->
-<div class="glass p-8 rounded-2xl">
+<div data-widget="cupos" class="glass p-8 rounded-2xl md:col-span-2 lg:col-span-4">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
             <h3 class="text-xl font-bold text-white"><i class="fas fa-credit-card mr-3 text-emerald-400"></i>Cupo disponible de tarjetas</h3>
@@ -121,15 +121,14 @@
 </div>
 {% endif %}
 
-<!-- Row 2: Flujo de Caja + Composición + Liquidez Pie -->
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <!-- Ingresos vs Gastos with Month Selector -->
-    <div class="lg:col-span-2 glass p-8 rounded-2xl">
+<!-- Row 2: Ingresos y gastos reales + Composición + Liquidez Pie -->
+    <!-- Ingresos vs consumo with Month Selector -->
+    <div data-widget="flujo" class="md:col-span-2 lg:col-span-3 glass p-8 rounded-2xl">
         <div class="flex items-center justify-between mb-6">
             <div>
-                <h3 class="text-xl font-bold text-white">Flujo de Caja</h3>
-                <p class="text-slate-400 text-sm">Ingresos vs gastos mensuales</p>
-                <a href="{% url 'gastos-table' %}?year={{ target_year }}&month={{ target_month }}&perspectiva=caja" class="text-xs text-emerald-400 hover:underline">Abrir detalle en Gastos Mensuales</a>
+                <h3 class="text-xl font-bold text-white">Entradas y salidas confirmadas</h3>
+                <p class="text-slate-400 text-sm">Tarjetas por monto facturado al vencimiento; compras no facturadas en proyección aparte.</p>
+                <a href="{% url 'gastos-table' %}?year={{ target_year }}&month={{ target_month }}" class="text-xs text-emerald-400 hover:underline">Abrir detalle en Gastos Mensuales</a>
             </div>
             <div class="flex items-center space-x-2">
                 <select id="month-selector" onchange="changeMonth()" class="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-bold focus:outline-none focus:border-emerald-500">
@@ -146,24 +145,24 @@
         </div>
         <div class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10">
-                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Ingresos</p>
+                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Entradas</p>
                 <p class="text-2xl font-bold text-emerald-400">${{ ingresos_mes|floatformat:0|intcomma|default:"0" }}</p>
             </div>
             <div class="p-4 rounded-xl bg-rose-500/5 border border-rose-500/10">
-                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Gastos</p>
+                <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Salidas facturadas</p>
                 <p class="text-2xl font-bold text-rose-400">${{ gastos_mes|floatformat:0|intcomma|default:"0" }}</p>
             </div>
             <div class="p-4 rounded-xl bg-sky-500/5 border border-sky-500/10">
                 <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Balance</p>
                 <p class="text-2xl font-bold {% if ingresos_mes > gastos_mes %}text-emerald-400{% else %}text-rose-400{% endif %}">
-                    ${{ ingresos_mes|floatformat:0|intcomma|default:"0" }}
+                    ${{ balance_mes|floatformat:0|intcomma|default:"0" }}
                 </p>
             </div>
         </div>
     </div>
 
     <!-- Liquidez Pie -->
-    <div class="glass p-8 rounded-2xl flex flex-col">
+    <div data-widget="liquidez_grafico" class="glass p-8 rounded-2xl flex flex-col">
         <h3 class="text-xl font-bold text-white mb-2">Liquidez</h3>
         <p class="text-slate-400 text-sm mb-6">Líquido vs No Líquido</p>
         <div class="flex-1 flex items-center justify-center">
@@ -172,11 +171,9 @@
             </div>
         </div>
     </div>
-</div>
-
 <!-- Row 3: Histórico de Patrimonio -->
 {% if snapshot_labels %}
-<div class="glass p-8 rounded-2xl">
+<div data-widget="patrimonio_historico" class="glass p-8 rounded-2xl md:col-span-2 lg:col-span-4">
     <div class="flex items-center justify-between mb-6">
         <div>
             <h3 class="text-xl font-bold text-white"><i class="fas fa-chart-area mr-3 text-indigo-400"></i>Evolución Patrimonial</h3>
@@ -194,12 +191,12 @@
 </div>
 {% endif %}
 
-<!-- Row 4: Histórico de Gastos -->
-<div class="glass p-8 rounded-2xl">
+<!-- Row 4: Histórico de Ingresos y Gastos Reales -->
+<div data-widget="tendencia" class="glass p-8 rounded-2xl md:col-span-2 lg:col-span-4">
     <div class="flex items-center justify-between mb-6">
         <div>
-            <h3 class="text-xl font-bold text-white"><i class="fas fa-chart-bar mr-3 text-amber-400"></i>Tendencia de Ingresos & Gastos</h3>
-            <p class="text-slate-400 text-sm">Últimos 6 meses</p>
+            <h3 class="text-xl font-bold text-white"><i class="fas fa-chart-bar mr-3 text-amber-400"></i>Tendencia de Ingresos y Gastos Reales</h3>
+            <p class="text-slate-400 text-sm">Últimos 6 meses · excluye transferencias</p>
         </div>
         <div class="flex space-x-2">
             <button onclick="toggleDataset(0)" id="btn-ingresos" class="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/40 transition-colors">Ingresos</button>
@@ -213,9 +210,8 @@
 </div>
 
 <!-- Row 5: Quick Links -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
     <!-- Departamentos -->
-    <div class="glass rounded-2xl overflow-hidden flex flex-col">
+    <div data-widget="propiedades" class="glass rounded-2xl overflow-hidden flex flex-col md:col-span-2 lg:col-span-2">
         <div class="p-6 border-b border-slate-800/50 flex justify-between items-center">
             <div class="flex items-center space-x-3">
                 <i class="fas fa-building text-orange-400"></i>
@@ -249,7 +245,7 @@
     </div>
 
     <!-- Top Activos -->
-    <div class="glass rounded-2xl overflow-hidden flex flex-col">
+    <div data-widget="top_activos" class="glass rounded-2xl overflow-hidden flex flex-col md:col-span-2 lg:col-span-2">
         <div class="p-6 border-b border-slate-800/50 flex justify-between items-center">
             <div class="flex items-center space-x-3">
                 <i class="fas fa-chart-line text-blue-400"></i>
@@ -277,7 +273,51 @@
             {% endfor %}
         </div>
     </div>
-</div>
+</section>
+
+{{ widget_order|json_script:"dashboard-widget-order" }}
+<script>
+(() => {
+    const grid = document.getElementById('dashboard-widgets');
+    const saved = JSON.parse(document.getElementById('dashboard-widget-order').textContent);
+    const nodes = [...grid.querySelectorAll(':scope > [data-widget]')];
+    const byId = new Map(nodes.map(node => [node.dataset.widget, node]));
+    [...saved, ...nodes.map(node => node.dataset.widget)].forEach(id => { if (byId.has(id)) grid.appendChild(byId.get(id)); });
+    const status = document.getElementById('widget-save-status');
+    const save = async () => {
+        const orden = [...grid.querySelectorAll(':scope > [data-widget]')].map(node => node.dataset.widget);
+        status.textContent = 'Guardando orden…';
+        try {
+            const response = await fetch('{% url "guardar_dashboard_widgets" %}', {
+                method: 'POST', credentials: 'same-origin',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+                body: JSON.stringify({orden}),
+            });
+            if (!response.ok) throw new Error('No se pudo guardar');
+            status.textContent = 'Orden guardado';
+        } catch (error) { status.textContent = 'No se pudo guardar el orden'; }
+    };
+    nodes.forEach(node => {
+        const controls = document.createElement('div');
+        controls.className = 'relative z-10 flex justify-end gap-1 mb-2';
+        controls.innerHTML = '<span draggable="true" class="widget-handle text-[10px] text-slate-500 cursor-grab" title="Arrastrar tarjeta">⠿</span><button type="button" aria-label="Mover tarjeta hacia arriba" class="widget-up text-xs rounded bg-slate-700/70 px-2 text-slate-300">↑</button><button type="button" aria-label="Mover tarjeta hacia abajo" class="widget-down text-xs rounded bg-slate-700/70 px-2 text-slate-300">↓</button>';
+        node.prepend(controls);
+        controls.querySelector('.widget-up').addEventListener('click', () => { const previous = node.previousElementSibling; if (previous) { grid.insertBefore(node, previous); save(); } });
+        controls.querySelector('.widget-down').addEventListener('click', () => { const next = node.nextElementSibling; if (next) { grid.insertBefore(next, node); save(); } });
+        controls.querySelector('.widget-handle').addEventListener('dragstart', event => { event.dataTransfer.setData('text/plain', node.dataset.widget); event.dataTransfer.effectAllowed = 'move'; });
+        node.addEventListener('dragover', event => event.preventDefault());
+        node.addEventListener('drop', event => {
+            event.preventDefault();
+            const dragged = byId.get(event.dataTransfer.getData('text/plain'));
+            if (dragged && dragged !== node) {
+                const rect = node.getBoundingClientRect();
+                grid.insertBefore(dragged, event.clientY > rect.top + rect.height / 2 ? node.nextSibling : node);
+                save();
+            }
+        });
+    });
+})();
+</script>
 
 <script>
     // Global Chart.js config

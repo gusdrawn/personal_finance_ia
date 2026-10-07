@@ -1,13 +1,14 @@
 """Pruebas de regresión para la integración de bicicletas de terceros."""
 
 from decimal import Decimal
+from datetime import date
 
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
 from patrimonio.models import Activo
-from prestamos.models import Prestamo
+from prestamos.models import HistorialPrestamo, Prestamo
 
 
 class PrestamoTercerosViewTest(TestCase):
@@ -126,3 +127,29 @@ class PrestamoTercerosViewTest(TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertTrue(Prestamo.objects.filter(pk=prestamo.id).exists())
+
+    def test_edicion_registra_fecha_y_conserva_monto_anterior(self):
+        self.client.post(reverse("crear_prestamo"), {
+            "nombre": "Bici Ana", "tipo": "TERCEROS", "monto_total": "20000000",
+            "fecha_cambio": "2026-01-01",
+        })
+        prestamo = Prestamo.objects.get(user=self.user)
+        self.client.post(reverse("editar_prestamo", args=[prestamo.pk]), {
+            "nombre": "Bici Ana", "tipo": "TERCEROS", "monto_total": "8000000",
+            "fecha_cambio": "2026-09-10", "activo": "on",
+        })
+        prestamo.refresh_from_db()
+        self.assertEqual(prestamo.estado_en(date(2026, 8, 31)).monto_total, Decimal("20000000"))
+        self.assertEqual(prestamo.estado_en(date(2026, 9, 30)).monto_total, Decimal("8000000"))
+        self.assertEqual(prestamo.monto_total, Decimal("8000000"))
+
+    def test_registro_retroactivo_no_cambia_vigente_y_ajeno_se_rechaza(self):
+        prestamo = Prestamo.objects.create(user=self.user, nombre="Bici", tipo="PERSONAL", monto_total=Decimal("8000000"))
+        HistorialPrestamo.objects.create(prestamo=prestamo, fecha=date(2026, 9, 10), monto_total=Decimal("8000000"))
+        ruta = reverse("registrar_historial_prestamo", args=[prestamo.pk])
+        self.client.post(ruta, {"fecha_cambio": "2026-08-01", "monto_total": "20000000", "activo": "on"})
+        prestamo.refresh_from_db()
+        self.assertEqual(prestamo.monto_total, Decimal("8000000"))
+        self.assertEqual(prestamo.estado_en(date(2026, 8, 31)).monto_total, Decimal("20000000"))
+        self.client.force_login(User.objects.create_user(username="otro_historial"))
+        self.assertEqual(self.client.post(ruta, {"fecha_cambio": "2026-07-01", "monto_total": "30000000"}).status_code, 404)

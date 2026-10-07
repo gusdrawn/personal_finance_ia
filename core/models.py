@@ -31,6 +31,12 @@ class UserProfile(models.Model):
         return f"Profile of {self.user.username}"
 
 
+class PreferenciaDashboard(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="preferencia_dashboard")
+    orden_widgets = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class Periodo(models.Model):
     """Tracks the active year/month for data entry"""
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='periodo_activo')

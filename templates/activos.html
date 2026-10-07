@@ -5,6 +5,14 @@
 {% block page_title %}Gestión de Activos{% endblock %}
 
 {% block content %}
+{% if filas_por_revisar_moneda or filas_por_revisar_fuente or falta_tasa_usd or falta_tasa_uf %}
+<div class="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm text-amber-100">
+    {% if filas_por_revisar_moneda %}<p>{{ filas_por_revisar_moneda }} saldo(s) requieren confirmar la moneda de origen.</p>{% endif %}
+    {% if filas_por_revisar_fuente %}<p>{{ filas_por_revisar_fuente }} posición(es) importada(s) requieren revisar su instrumento o fuente.</p>{% endif %}
+    {% if falta_tasa_usd %}<p>No hay tipo de cambio USD disponible para valorar todos los saldos.</p>{% endif %}
+    {% if falta_tasa_uf %}<p>No hay tipo de cambio UF disponible para valorar las propiedades.</p>{% endif %}
+</div>
+{% endif %}
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
     <div class="glass p-6 rounded-2xl border-t-4 border-amber-500 card-stat">
         <div class="flex items-center justify-between mb-2">
@@ -82,8 +90,8 @@
     
     <div class="space-y-2">
         {% for activo in group.items %}
-        <div class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
-            <div class="flex justify-between items-center">
+        <div data-activo-id="{{ activo.pk }}" class="p-4 rounded-xl bg-slate-800/30 border border-slate-700/30 hover:bg-slate-800/50 transition-all group">
+            <div class="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
                 <div class="flex items-center space-x-4">
                     <div class="w-10 h-10 rounded-lg flex items-center justify-center
                         {% if activo.es_liquido %}bg-emerald-500/10 text-emerald-400{% else %}bg-slate-700/50 text-slate-400{% endif %}">
@@ -103,6 +111,12 @@
                         <p class="font-bold text-slate-200 group-hover:text-white transition-colors">{{ activo.nombre }}</p>
                         <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
                             <span class="text-[10px] uppercase font-bold text-slate-500">{{ activo.get_tipo_display }}</span>
+                            {% if activo.origen_sincronizacion.externo %}
+                            <span class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-sky-500/10 text-sky-300">Por sincronización · {{ activo.origen_sincronizacion.etiqueta }}</span>
+                            {% if not activo.origen_sincronizacion.credencial %}<span class="text-[10px] text-amber-300">Conexión por revisar</span>{% endif %}
+                            {% elif activo.tipo != 'CUENTA_COBRAR' and not activo.prestamo_recuperable %}
+                            <span class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-700/50 text-slate-300">Manual</span>
+                            {% endif %}
                             {% if activo.es_liquido %}
                             <span class="px-1.5 py-0.5 text-[9px] font-black rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Líquido</span>
                             {% else %}
@@ -115,19 +129,33 @@
                         </div>
                     </div>
                 </div>
-                <div class="flex items-center space-x-4">
+                <div class="flex items-center justify-between gap-4 sm:justify-end">
                     <div class="text-right">
-                        <p class="font-bold text-white tracking-tight">${{ activo.monto_clp|floatformat:0|intcomma }}</p>
+                        <p class="font-bold text-white tracking-tight">{% if activo.conversion_clp_desconocida %}CLP pendiente{% else %}${{ activo.monto_clp|floatformat:0|intcomma }}{% endif %}</p>
                         {% if activo.monto_usd > 0 %}
                         <p class="text-[10px] text-slate-500 font-mono">US${{ activo.monto_usd|floatformat:2|intcomma }}</p>
                         {% endif %}
+                        {% if activo.requiere_revision_moneda %}<p class="text-[10px] text-amber-300">Revisar moneda de origen</p>{% endif %}
+                        {% if activo.requiere_revision_fuente %}<p class="text-[10px] text-amber-300">Revisar fuente de inversión</p>{% endif %}
                     </div>
-                    <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div class="flex flex-wrap items-center gap-1">
                         {% if activo.tipo == 'CUENTA_COBRAR' %}
                         <a href="{% url 'cuentas_por_cobrar' %}#cuenta-{{ activo.cuenta_por_cobrar.id }}" class="px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white text-[10px] font-bold">Administrar</a>
+                        {% elif activo.prestamo_recuperable %}
+                        <a href="{% url 'prestamos_index' %}" class="text-xs text-sky-300">Administrar en Bicicletas</a>
+                        {% elif activo.origen_sincronizacion.externo %}
+                        {% if activo.origen_sincronizacion.credencial %}
+                        <form action="{% url 'sincronizar_activo' activo.pk %}" method="post" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Sincronizando…';">
+                            {% csrf_token %}
+                            <button type="submit" title="Actualiza todas las posiciones de esta cuenta" class="px-3 py-2 rounded-lg bg-sky-500/15 text-sky-300 hover:bg-sky-500 hover:text-white disabled:opacity-50 text-xs font-bold"><i class="fas fa-rotate mr-1"></i>Sincronizar</button>
+                        </form>
                         {% else %}
-                        <button onclick="openEditActivoModal({{ activo.id }}, '{{ activo.nombre|escapejs }}', '{{ activo.tipo }}', '{{ activo.horizonte_temporal }}', {{ activo.es_liquido|yesno:'true,false' }}, {{ activo.monto_clp }}, {{ activo.monto_usd }}, '{{ activo.notas|escapejs }}')" class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center justify-center">
+                        <a href="{% url 'banca_config' %}" class="px-3 py-2 rounded-lg bg-amber-500/10 text-amber-300 text-xs font-bold">Configurar fuente</a>
+                        {% endif %}
+                        {% else %}
+                        <button title="Editar saldo manual" aria-label="Editar saldo manual" onclick="openEditActivoModal({{ activo.id }}, '{{ activo.nombre|escapejs }}', '{{ activo.tipo }}', '{{ activo.horizonte_temporal }}', {{ activo.es_liquido|yesno:'true,false' }}, {{ activo.monto_original|default:activo.monto_clp }}, '{{ activo.moneda_original|default:'CLP' }}', '{{ activo.notas|escapejs }}')" class="px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors flex items-center gap-1 text-xs font-bold">
                             <i class="fas fa-pen text-[10px]"></i>
+                            Editar saldo
                         </button>
                         <form action="{% url 'borrar_activo' activo.id %}" method="POST" onsubmit="return confirm('¿Eliminar este activo?')" class="inline">
                             {% csrf_token %}
@@ -281,20 +309,17 @@
                 <p class="text-[10px] font-black uppercase text-sky-400 mb-3 tracking-widest flex items-center">
                     <i class="fas fa-calculator mr-2"></i>Montos
                 </p>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-[1fr_2fr] gap-4">
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">CLP</label>
-                        <div class="relative">
-                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
-                            <input type="number" name="monto_clp" id="act-clp" step="1" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-8 pr-4 py-2 text-white focus:outline-none focus:border-sky-500">
-                        </div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Moneda del saldo</label>
+                        <select name="moneda_original" id="act-currency" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500">
+                            <option value="CLP">CLP</option><option value="USD">USD</option>
+                        </select>
                     </div>
                     <div>
-                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">USD</label>
-                        <div class="relative">
-                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">US$</span>
-                            <input type="number" name="monto_usd" id="act-usd" step="0.01" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg pl-12 pr-4 py-2 text-white focus:outline-none focus:border-sky-500">
-                        </div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Monto</label>
+                        <input type="number" name="monto_original" id="act-amount" min="0" step="any" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-sky-500">
+                        <p class="mt-1 text-[10px] text-slate-500">Puedes pegar valores desde Excel; se guardan con 2 decimales.</p>
                     </div>
                 </div>
             </div>
@@ -320,21 +345,21 @@
         document.getElementById('act-tipo').value = 'EFECTIVO';
         document.getElementById('act-horizonte').value = 'EFECTIVO';
         document.getElementById('act-liquido').checked = true;
-        document.getElementById('act-clp').value = 0;
-        document.getElementById('act-usd').value = 0;
+        document.getElementById('act-amount').value = 0;
+        document.getElementById('act-currency').value = 'CLP';
         document.getElementById('act-notas').value = '';
         document.getElementById('modal-activo').classList.remove('hidden');
     }
 
-    function openEditActivoModal(id, nombre, tipo, horizonte, esLiquido, clp, usd, notas) {
+    function openEditActivoModal(id, nombre, tipo, horizonte, esLiquido, monto, moneda, notas) {
         document.getElementById('activo-form').action = window.APP_BASE_PATH + "/dashboard/activos/editar/" + id + "/";
         document.getElementById('activo-modal-title').innerText = "Editar Activo";
         document.getElementById('act-nombre').value = nombre;
         document.getElementById('act-tipo').value = tipo;
         document.getElementById('act-horizonte').value = horizonte;
         document.getElementById('act-liquido').checked = esLiquido;
-        document.getElementById('act-clp').value = clp;
-        document.getElementById('act-usd').value = usd;
+        document.getElementById('act-amount').value = monto;
+        document.getElementById('act-currency').value = moneda;
         document.getElementById('act-notas').value = notas || '';
         document.getElementById('modal-activo').classList.remove('hidden');
     }

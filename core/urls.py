@@ -1,10 +1,13 @@
 from django.urls import path
 from . import views
+from banca.views import banca_movimientos
 from configuracion.views import update_rates, take_snapshot
 
 urlpatterns = [
     path('', views.dashboard, name='dashboard'),
+    path('widgets/orden/', views.guardar_dashboard_widgets, name='guardar_dashboard_widgets'),
     path('gastos/', views.gastos_table, name='gastos-table'),
+    path('gastos/movimientos/', banca_movimientos, name='gastos_movimientos'),
     path('patrimonio/', views.patrimonio, name='patrimonio'),
     path('departamentos/', views.departamentos, name='departamentos'),
     path('activos/', views.activos_view, name='activos'),
@@ -12,10 +15,13 @@ urlpatterns = [
     path('pasivos/', views.pasivos_view, name='pasivos'),
     path('configuracion/', views.configuracion, name='configuracion'),
     path('calendario/', views.calendario, name='calendario'),
+    # El nombre se conserva para redirigir marcadores antiguos al registro manual.
+    path('departamentos/importar/', views.departamentos_importar_documentos, name='departamentos_importar_documentos'),
     
     # Activos CRUD
     path('activos/crear/', views.crear_activo, name='crear_activo'),
     path('activos/editar/<int:pk>/', views.editar_activo, name='editar_activo'),
+    path('activos/<int:pk>/sincronizar/', views.sincronizar_activo, name='sincronizar_activo'),
     path('activos/borrar/<int:pk>/', views.borrar_activo, name='borrar_activo'),
 
     # Cuentas por cobrar
@@ -36,6 +42,7 @@ urlpatterns = [
     path('departamentos/crear/', views.crear_departamento, name='crear_departamento'),
     path('departamentos/editar/<int:pk>/', views.editar_departamento, name='editar_departamento'),
     path('departamentos/borrar/<int:pk>/', views.borrar_departamento, name='borrar_departamento'),
+    path('departamentos/alternar/<int:pk>/', views.alternar_departamento, name='alternar_departamento'),
     path('departamentos/estacionamientos/', views.estacionamientos, name='estacionamientos'),
     path('departamentos/<int:depto_pk>/arrendatario/crear/', views.crear_arrendatario, name='crear_arrendatario'),
     path('departamentos/arrendatario/editar/<int:pk>/', views.editar_arrendatario, name='editar_arrendatario'),

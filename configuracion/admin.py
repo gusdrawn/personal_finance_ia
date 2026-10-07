@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import Banco, CredencialIntegracion, Producto, TipoCambio, ConfiguracionGeneral
+from .services.bancos import banco_en_uso
 
 
 @admin.register(Banco)
@@ -9,6 +10,11 @@ class BancoAdmin(admin.ModelAdmin):
     search_fields = ['nombre']
     list_editable = ['orden', 'activo']
     readonly_fields = ['created_at', 'updated_at']
+
+    def has_delete_permission(self, request, obj=None):
+        return super().has_delete_permission(request, obj) and (
+            obj is None or not banco_en_uso(obj)
+        )
 
 
 @admin.register(Producto)

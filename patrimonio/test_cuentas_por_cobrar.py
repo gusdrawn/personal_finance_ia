@@ -620,7 +620,7 @@ class CuentaPorCobrarTest(TestCase):
             monto=Decimal("42000"),
         )
 
-        cobros = self.client.get(reverse("cuentas_por_cobrar"))
+        cobros = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-09"})
         activos = self.client.get(reverse("activos"))
 
         self.assertContains(cobros, "Texto para cobrar")
