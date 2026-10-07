@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator
 from decimal import Decimal
@@ -54,6 +55,10 @@ class MovimientoManual(models.Model):
     descripcion = models.CharField(max_length=255)
     notas = models.TextField(blank=True)
     es_resumen_mensual = models.BooleanField(default=False)
+    modo_resumen = models.CharField(
+        max_length=10, choices=[("TOTAL", "Total del mes"), ("ADICIONAL", "Importe adicional")],
+        default="TOTAL", help_text="TOTAL incluye lo ya registrado en la categoría; ADICIONAL se suma.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -93,6 +98,59 @@ class MovimientoManual(models.Model):
 
     def __str__(self):
         return f"{self.fecha} · {self.descripcion} · {self.monto} {self.moneda}"
+
+
+class ConciliacionMovimientoManual(models.Model):
+    """Link or review suggestion between a manual entry and its bank source."""
+
+    ESTADOS = [
+        ("SUGERIDA", "Sugerida"),
+        ("CONFIRMADA", "Confirmada"),
+        ("DESCARTADA", "Descartada"),
+        ("OBSOLETA", "Sin vigencia"),
+    ]
+    movimiento_manual = models.ForeignKey(
+        MovimientoManual, on_delete=models.CASCADE, related_name="conciliaciones_bancarias"
+    )
+    movimiento_bancario = models.ForeignKey(
+        "banca.MovimientoBancario",
+        on_delete=models.CASCADE,
+        related_name="conciliaciones_manuales",
+    )
+    estado = models.CharField(max_length=12, choices=ESTADOS, default="SUGERIDA")
+    confirmada_manual = models.BooleanField(default=False)
+    creada_at = models.DateTimeField(auto_now_add=True)
+    actualizada_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-actualizada_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["movimiento_manual", "movimiento_bancario"],
+                name="gastos_conciliacion_manual_banco_unica",
+            ),
+            models.UniqueConstraint(
+                fields=["movimiento_manual"],
+                condition=models.Q(estado="CONFIRMADA"),
+                name="gastos_conciliacion_manual_confirmada_unica",
+            ),
+            models.UniqueConstraint(
+                fields=["movimiento_bancario"],
+                condition=models.Q(estado="CONFIRMADA"),
+                name="gastos_conciliacion_banco_confirmada_unica",
+            ),
+        ]
+
+    def clean(self):
+        if self.movimiento_manual_id and self.movimiento_bancario_id:
+            if self.movimiento_manual.user_id != self.movimiento_bancario.user_id:
+                raise ValidationError("Los movimientos deben pertenecer al mismo usuario.")
+            if self.movimiento_manual.es_resumen_mensual:
+                raise ValidationError("Un resumen mensual no se puede conciliar con un movimiento bancario.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
 
 FRECUENCIA_CHOICES = [

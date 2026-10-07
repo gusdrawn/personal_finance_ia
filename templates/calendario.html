@@ -139,6 +139,12 @@
                                 {% endif %}
                             {% endfor %}
 
+                            {% for pendiente in pendientes_calendario %}
+                                {% if pendiente.fecha_vencimiento.day == day and pendiente.estado == 'PENDIENTE' %}
+                                <a href="{% url 'dashboard_pendientes' %}" class="block px-2 py-1 rounded-md bg-rose-500/10 border-l-2 border-rose-500 text-[9px] font-bold text-rose-300 truncate" title="{{ pendiente.regla.nombre }}">✅ {{ pendiente.regla.nombre }}</a>
+                                {% endif %}
+                            {% endfor %}
+
                             <!-- Departamentos (Hipotecarios) -->
                             {% for depto in departamentos %}
                                 {% if depto.fecha_ultima_cuota.day == day %}

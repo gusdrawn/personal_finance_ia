@@ -17,6 +17,8 @@ urlpatterns = [
     path('accounts/', include('django.contrib.auth.urls')),
     path('api/auth/', include('rest_framework.urls')),
     path('api/gastos/', include('gastos.urls')),
+    path('api/pendientes/', include('pendientes.api_urls')),
+    path('dashboard/pendientes/', include('pendientes.urls')),
     path('prestamos/', include('prestamos.urls')),
     path('banca/', include('banca.urls')),
     path('altcoins/', include('altcoins.urls')),

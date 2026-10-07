@@ -63,13 +63,22 @@
                     <i class="fas fa-chart-line w-6"></i>
                     <span class="font-medium">Dashboard</span>
                 </a>
-                <a href="{% url 'gastos-table' %}" class="sidebar-item {% if 'gastos' in request.resolver_match.url_name %}active{% endif %}">
+                <a href="{% url 'gastos-table' %}" class="sidebar-item {% if request.resolver_match.url_name == 'gastos-table' %}active{% endif %}">
                     <i class="fas fa-receipt w-6"></i>
                     <span class="font-medium">Gastos Mensuales</span>
+                </a>
+                <a href="{% url 'gastos_movimientos' %}" class="sidebar-item {% if request.resolver_match.url_name == 'gastos_movimientos' %}active{% endif %} pl-12 text-sm opacity-90">
+                    <i class="fas fa-list w-5"></i>
+                    <span class="font-medium">Movimientos</span>
                 </a>
                 <a href="{% url 'calendario' %}" class="sidebar-item {% if 'calendario' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="far fa-calendar-alt w-6"></i>
                     <span class="font-medium">Calendario & Previsión</span>
+                </a>
+                <a href="{% url 'dashboard_pendientes' %}" class="sidebar-item {% if 'pendiente' in request.resolver_match.url_name %}active{% endif %}">
+                    <i class="fas fa-list-check w-6"></i>
+                    <span class="font-medium">Pendientes</span>
+                    {% if pendientes_header_count %}<span class="ml-auto text-[10px] font-black bg-rose-500 text-white rounded-full px-2 py-0.5">{{ pendientes_header_count }}</span>{% endif %}
                 </a>
                 <a href="{% url 'patrimonio' %}" class="sidebar-item {% if 'patrimonio' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="fas fa-vault w-6"></i>
@@ -174,9 +183,10 @@
                     </div>
                 </nav>
                 <div class="app-header-user">
-                    <button class="w-10 h-10 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition-colors bg-slate-800/50">
+                    <a href="{% url 'dashboard_pendientes' %}" class="relative w-10 h-10 rounded-full flex items-center justify-center text-slate-400 hover:text-white transition-colors bg-slate-800/50" title="Pendientes y recordatorios">
                         <i class="far fa-bell"></i>
-                    </button>
+                        {% if pendientes_header_count %}<span class="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center">{{ pendientes_header_count }}</span>{% endif %}
+                    </a>
                     <div class="h-6 w-[1px] bg-slate-800"></div>
                     <div class="flex items-center space-x-3 pl-2">
                         <div class="text-right hidden sm:block">

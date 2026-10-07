@@ -20,8 +20,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-$d5b^(^dazcb-iav&n1l)k#_56*5ewq3sx51oii_s6j2w+7*(*'
+# Set below from the environment; production startup refuses an empty key.
+SECRET_KEY = ''
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'banca',
     'altcoins',
     'trading',
+    'pendientes',
 
     'django.contrib.humanize',
 ]
@@ -88,6 +89,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'pendientes.context_processors.pendientes_header',
             ],
         },
     },
@@ -197,6 +199,9 @@ for _env_key in (
     'CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND', 'BANK_SYNC_SESSION_DIR',
     'TRADING_DATA_MODE',
     'TRADING_TWELVE_DATA_API_KEY', 'TRADING_FMP_API_KEY', 'TRADING_FRED_API_KEY',
+    'DJANGO_SECRET_KEY', 'DJANGO_DEBUG', 'DJANGO_ALLOWED_HOSTS',
+    'CSRF_TRUSTED_ORIGINS', 'SESSION_COOKIE_SECURE', 'CSRF_COOKIE_SECURE',
+    'SECURE_SSL_REDIRECT', 'FORCE_SCRIPT_NAME', 'STATIC_URL', 'MEDIA_URL',
 ):
     if not os.environ.get(_env_key):
         _env_val = _config(_env_key, default='')
@@ -228,13 +233,24 @@ def _env_bool(name, default=False):
     return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', SECRET_KEY)
-DEBUG = _env_bool('DJANGO_DEBUG', default=DEBUG)
+DEBUG = _env_bool('DJANGO_DEBUG', default=True)
+if DEBUG:
+    import secrets
+    SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY') or secrets.token_urlsafe(50)
+else:
+    SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '').strip()
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get('DJANGO_ALLOWED_HOSTS', ','.join(ALLOWED_HOSTS)).split(',')
     if host.strip()
 ]
+if not DEBUG:
+    from django.core.exceptions import ImproperlyConfigured
+
+    if not SECRET_KEY:
+        raise ImproperlyConfigured('DJANGO_SECRET_KEY es obligatorio cuando DJANGO_DEBUG=False.')
+    if not ALLOWED_HOSTS or '*' in ALLOWED_HOSTS:
+        raise ImproperlyConfigured('Configura DJANGO_ALLOWED_HOSTS explícitamente en producción.')
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
@@ -250,8 +266,9 @@ LOGOUT_REDIRECT_URL = os.environ.get('LOGOUT_REDIRECT_URL', LOGOUT_REDIRECT_URL)
 
 # Seguridad detrás del proxy HTTPS de Cloudflare/Passenger.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', default=False)
-CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', default=False)
+SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', default=not DEBUG)
+CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', default=not DEBUG)
+SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', default=not DEBUG)
 
 # WhiteNoise permite servir los assets recolectados cuando DEBUG está desactivado.
 STORAGES = {

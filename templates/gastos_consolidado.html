@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+{% load humanize %}
+{% block title %}Gastos Mensuales - FinanzasPersonalesIA{% endblock %}
+{% block page_title %}Gastos Mensuales{% endblock %}
+{% block content %}
+<p id="conversion-pendiente" class="hidden mb-4 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-200"></p>
+{% if proyeccion.sin_conversion %}<p class="mb-4 text-sm text-amber-200">Proyección CLP parcial: {{ proyeccion.sin_conversion }} importe{{ proyeccion.sin_conversion|pluralize }} con conversión pendiente.</p>{% endif %}
+<div class="space-y-6">
+  <div class="flex flex-wrap items-center gap-2 text-sm">
+    <span class="px-4 py-2 rounded-lg bg-emerald-500 text-white font-semibold">Consolidado mensual</span>
+    <a href="{% url 'gastos_movimientos' %}" class="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white">Movimientos y categorías</a>
+    <a href="{% url 'banca_config' %}" class="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white">Presupuesto</a>
+  </div>
+  <p class="text-sm text-slate-400">Entradas de caja y salidas confirmadas del período. Las tarjetas se imputan por el monto facturado al vencimiento; sus movimientos y los pagos Neat solo explican ese total. <a href="{% url 'banca_deudas' %}" class="text-sky-300 hover:underline">Deudas y cupos</a> muestra el saldo actual de obligaciones, por lo que puede diferir del flujo del mes.</p>
+
+  <div class="glass rounded-2xl p-5 flex flex-wrap items-end gap-3">
+    <label class="text-xs text-slate-400">Desde<input id="desde" type="month" value="{{ current_year }}-{{ current_month|stringformat:'02d' }}" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"></label>
+    <label class="text-xs text-slate-400">Hasta<input id="hasta" type="month" value="{{ current_year }}-{{ current_month|stringformat:'02d' }}" class="block mt-1 bg-slate-900 border-slate-700 rounded-lg"></label>
+    <button id="aplicar" type="button" class="btn-premium px-4 py-2">Aplicar</button>
+    <button id="nuevo-manual" type="button" class="px-4 py-2 rounded-lg bg-emerald-600 text-white">Movimiento manual</button>
+    <button id="carga-mensual" type="button" class="px-4 py-2 rounded-lg bg-slate-700 text-white">Carga mensual</button>
+    <a id="exportar" href="#" class="px-4 py-2 rounded-lg bg-sky-700 text-white">Exportar</a>
+  </div>
+
+  <div class="grid sm:grid-cols-3 gap-4">
+    <div class="glass rounded-xl p-5"><p class="text-xs text-slate-400 uppercase">Entradas confirmadas</p><p id="ingresos" class="text-2xl font-bold text-emerald-300 mt-2">$0</p></div>
+    <div class="glass rounded-xl p-5"><p class="text-xs text-slate-400 uppercase">Salidas facturadas y confirmadas</p><p id="egresos" class="text-2xl font-bold text-rose-300 mt-2">$0</p></div>
+    <div class="glass rounded-xl p-5"><p class="text-xs text-slate-400 uppercase">Balance de caja</p><p id="balance" class="text-2xl font-bold text-sky-300 mt-2">$0</p></div>
+  </div>
+
+  <div class="glass rounded-2xl p-5 border border-sky-500/20">
+    <div class="flex flex-wrap justify-between gap-4">
+      <div><h2 class="font-bold">Próximo mes: total previsto</h2><p class="text-xs text-slate-400 mt-1">Ya facturado: ${{ proyeccion.facturado_clp|floatformat:0|intcomma }} · {{ proyeccion.cantidad }} compras sin facturar: ${{ proyeccion.total_clp|floatformat:0|intcomma }}. Las compras de {{ proyeccion.periodo_compras|date:"m/Y" }} se estiman para {{ proyeccion.periodo_estimado|date:"m/Y" }}; la cartola fijará su vencimiento real.</p></div>
+      <div class="text-right"><p class="text-xl font-bold {% if proyeccion.alerta %}text-amber-300{% else %}text-sky-300{% endif %}">${{ proyeccion.total_proyectado_clp|floatformat:0|intcomma }}</p>{% if proyeccion.presupuesto_clp %}<p class="text-xs text-slate-400">{{ proyeccion.porcentaje_usado }}% del presupuesto mensual</p>{% else %}<a href="{% url 'banca_config' %}" class="text-xs text-amber-300">Configurar presupuesto</a>{% endif %}</div>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-3 text-xs"><a href="{% url 'gastos_movimientos' %}?estado=NO_FACTURADO&fecha_desde={{ proyeccion.periodo_compras|date:'Y-m-d' }}&fecha_hasta={{ proyeccion.fin_compras|date:'Y-m-d' }}" class="text-sky-300">Ver no facturados</a><a href="{% url 'gastos_movimientos' %}?estado=PROVISIONAL&fecha_desde={{ proyeccion.periodo_compras|date:'Y-m-d' }}&fecha_hasta={{ proyeccion.fin_compras|date:'Y-m-d' }}" class="text-sky-300">Ver compras iPhone</a><span class="text-slate-400">{{ proyeccion.sin_categoria }} sin clasificar</span></div>
+    {% if proyeccion.atrasados_cantidad %}<p class="text-xs text-amber-300 mt-3">{{ proyeccion.atrasados_cantidad }} cargo{{ proyeccion.atrasados_cantidad|pluralize }} de meses anteriores sigue{{ proyeccion.atrasados_cantidad|pluralize:"n" }} sin facturar ({{ proyeccion.atrasados_clp|floatformat:0|intcomma }} CLP). Se deja{{ proyeccion.atrasados_cantidad|pluralize:"n" }} para revisión y no entra{{ proyeccion.atrasados_cantidad|pluralize:"n" }} en la proyección. <a href="{% url 'gastos_movimientos' %}?estado=NO_FACTURADO&fecha_desde=&fecha_hasta={{ proyeccion.fin_anterior|date:'Y-m-d' }}" class="underline">No facturados</a> · <a href="{% url 'gastos_movimientos' %}?estado=PROVISIONAL&fecha_desde=&fecha_hasta={{ proyeccion.fin_anterior|date:'Y-m-d' }}" class="underline">Provisionales</a></p>{% endif %}
+  </div>
+
+  <section id="conciliaciones-manuales" class="hidden glass rounded-2xl p-5 border border-amber-500/20"><h2 class="font-bold text-amber-200">Posibles duplicados manuales</h2><p class="text-xs text-slate-400 mt-1 mb-3">Confirma si un registro manual y uno bancario son el mismo pago.</p><div id="conciliaciones-lista" class="space-y-3"></div></section>
+
+  <section class="glass rounded-2xl p-5"><h2 class="font-bold mb-1">Cartolas y vencimientos</h2><p class="text-xs text-slate-400 mb-4">El importe facturado de cada tarjeta se cuenta una sola vez.</p><div id="estados-lista" class="grid md:grid-cols-2 xl:grid-cols-3 gap-3"></div></section>
+  <div class="grid xl:grid-cols-2 gap-5">
+    <section class="glass rounded-2xl p-5"><h2 class="font-bold text-emerald-300">Entradas de caja</h2><div id="entradas-lista" class="mt-3 space-y-2"></div></section>
+    <section class="glass rounded-2xl p-5"><h2 class="font-bold text-rose-300">Salidas por producto</h2><p class="text-xs text-slate-400 mt-1">Incluye el facturado de tarjetas, cuentas y registros manuales confirmados.</p><div id="salidas-lista" class="mt-3 space-y-2"></div></section>
+  </div>
+</div>
+
+<div id="modal-manual" class="fixed inset-0 z-50 hidden bg-slate-950/80 p-4 flex items-center justify-center"><form id="form-manual" class="glass rounded-2xl p-6 w-full max-w-lg space-y-4"><div class="flex justify-between"><h3 class="font-bold text-lg">Nuevo movimiento manual</h3><button type="button" id="cerrar-manual">×</button></div><div class="grid grid-cols-2 gap-3">
+  <label class="text-xs text-slate-400">Fecha<input name="fecha" type="date" required class="block w-full mt-1 bg-slate-900 rounded-lg"></label><label class="text-xs text-slate-400">Dirección<select name="direccion" class="block w-full mt-1 bg-slate-900 rounded-lg"><option>EGRESO</option><option>INGRESO</option></select></label><label class="text-xs text-slate-400">Monto<input name="monto" type="number" min="0.01" step="0.01" required class="block w-full mt-1 bg-slate-900 rounded-lg"></label><label class="text-xs text-slate-400">Moneda<select name="moneda" class="block w-full mt-1 bg-slate-900 rounded-lg"><option>CLP</option><option>USD</option><option>UF</option></select></label><label class="text-xs text-slate-400">Categoría<select name="categoria" required class="block w-full mt-1 bg-slate-900 rounded-lg">{% for c in categorias %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}</select></label><label class="text-xs text-slate-400">Naturaleza<select name="naturaleza" class="block w-full mt-1 bg-slate-900 rounded-lg"><option value="OPERACIONAL">Operacional</option><option value="ACTIVO_RECUPERABLE">Activo recuperable</option><option value="INVERSION">Inversión</option><option value="TRANSFERENCIA_INTERNA">Transferencia interna</option></select></label></div><label class="text-xs text-slate-400">Descripción<input name="descripcion" required class="block w-full mt-1 bg-slate-900 rounded-lg"></label><p id="manual-error" class="text-sm text-rose-400"></p><button class="w-full py-2 rounded-lg bg-emerald-600 text-white">Guardar</button></form></div>
+<div id="modal-bulk" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-slate-950/80">{% include 'bulk_gastos_modal.html' %}</div>
+
+<script>
+const apiBase = `${window.APP_BASE_PATH}/api/gastos`;
+const clp = value => value===null?'CLP pendiente':new Intl.NumberFormat('es-CL', {style:'currency', currency:'CLP', maximumFractionDigits:0}).format(Number(value||0));
+const esc = value => {const node=document.createElement('div');node.textContent=value??'';return node.innerHTML};
+const periodos = () => new URLSearchParams({desde:document.getElementById('desde').value,hasta:document.getElementById('hasta').value,perspectiva:'caja'});
+const csrf = '{{ csrf_token }}';
+async function cargar(){
+  const query=periodos();document.getElementById('exportar').href=`${apiBase}/exportar.xlsx?${query}`;
+  const [resumenResponse,detalleResponse]=await Promise.all([fetch(`${apiBase}/resumen/?${query}`),fetch(`${apiBase}/detalle/?${query}`)]);
+  if(!resumenResponse.ok||!detalleResponse.ok){document.getElementById('estados-lista').textContent='No se pudo cargar el período.';return}
+  const resumen=await resumenResponse.json(),detalle=await detalleResponse.json();
+  for(const campo of ['ingresos','egresos','balance'])document.getElementById(campo).textContent=clp(resumen.totales[`${campo}_clp`]);
+  const conversion=document.getElementById('conversion-pendiente');conversion.classList.toggle('hidden',resumen.totales_completos);conversion.textContent=`Subtotal CLP parcial: ${resumen.sin_conversion} importes con conversión pendiente. Se conserva el monto original.`;
+  document.getElementById('estados-lista').innerHTML=resumen.estados_cuenta.length?resumen.estados_cuenta.map(e=>`<div class="p-4 rounded-xl bg-slate-900/60 border border-slate-700/50"><p class="font-semibold">${esc(e.banco)} · ${esc(e.producto)}</p><p class="text-xs text-slate-500">${e.es_cuenta?'Cartola':'Vence'} ${esc(e.es_cuenta?e.fecha_estado:e.fecha_vencimiento)}</p><p class="text-lg mt-2 font-bold text-rose-300">${e.es_cuenta?'Cuenta corriente':clp(e.monto_clp)}</p><p class="text-xs text-slate-500">${e.es_cuenta?'Los cargos y abonos confirmados se muestran por separado.':e.pago_real_registrado?'Pago real registrado':'Monto facturado'}${e.estimado?' · estimado':''}</p></div>`).join(''):'<p class="text-sm text-slate-500">No hay cartolas con vencimiento en este período.</p>';
+  const entradas=detalle.movimientos.filter(m=>m.direccion==='INGRESO');
+  document.getElementById('entradas-lista').innerHTML=entradas.length?entradas.map(m=>`<div class="flex justify-between gap-3 border-b border-slate-800 py-2 text-sm"><span>${esc(m.descripcion)}<small class="block text-slate-500">${esc(m.fecha)} · ${esc(m.producto||m.fuente)}</small></span><b>${clp(m.monto_calculo_clp)}</b></div>`).join(''):'<p class="text-sm text-slate-500">Sin entradas confirmadas.</p>';
+  const productos=new Map();for(const m of detalle.movimientos.filter(m=>m.direccion==='EGRESO')){const key=[m.banco,m.producto||m.fuente].filter(Boolean).join(' · '),grupo=productos.get(key)||{monto:0,pendientes:0};grupo.monto+=Number(m.monto_calculo_clp||0);grupo.pendientes+=Number(m.conversion_desconocida);productos.set(key,grupo)}
+  document.getElementById('salidas-lista').innerHTML=productos.size?[...productos].sort((a,b)=>b[1].monto-a[1].monto).map(([nombre,grupo])=>`<div class="flex justify-between gap-3 border-b border-slate-800 py-2 text-sm"><span>${esc(nombre)}${grupo.pendientes?`<small class="block text-amber-300">${grupo.pendientes} con conversión pendiente</small>`:''}</span><b>${grupo.pendientes&&!grupo.monto?'CLP pendiente':clp(grupo.monto)}</b></div>`).join(''):'<p class="text-sm text-slate-500">Sin salidas facturadas ni confirmadas.</p>';
+}
+async function cargarConciliaciones(){
+  const responses=await Promise.all(['SUGERIDA','CONFIRMADA'].map(estado=>fetch(`${apiBase}/manuales/conciliaciones-pendientes/?estado=${estado}`)));
+  if(responses.some(response=>!response.ok))return;
+  const items=(await Promise.all(responses.map(response=>response.json()))).flat();
+  document.getElementById('conciliaciones-manuales').classList.toggle('hidden',!items.length);
+  document.getElementById('conciliaciones-lista').innerHTML=items.map(m=>`<div class="flex flex-wrap justify-between gap-3 p-3 rounded-lg bg-slate-900/60 text-sm"><span>${esc(m.descripcion_manual)} · ${clp(m.monto_manual_clp)}<small class="block text-slate-500">${esc(m.banco)} · ${esc(m.descripcion_bancaria)} · ${esc(m.fecha_bancaria)} · ${m.estado==='CONFIRMADA'?'Vinculado':'Por revisar'}</small></span><span class="flex gap-2">${m.estado==='SUGERIDA'?`<button data-id="${m.id}" data-manual="${m.manual_id}" data-action="confirmar" class="px-2 py-1 rounded bg-emerald-500/20">Mismo pago</button>`:''}<button data-id="${m.id}" data-manual="${m.manual_id}" data-action="descartar" class="px-2 py-1 rounded bg-slate-700">${m.estado==='CONFIRMADA'?'Deshacer vínculo':'No coincide'}</button></span></div>`).join('');
+}
+document.getElementById('conciliaciones-lista').addEventListener('click',async event=>{const button=event.target.closest('button[data-id]');if(!button)return;button.disabled=true;const response=await fetch(`${apiBase}/manuales/${button.dataset.manual}/resolver-conciliacion/`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':csrf},body:JSON.stringify({conciliacion_id:button.dataset.id,accion:button.dataset.action})});if(response.ok){await cargarConciliaciones();await cargar()}else button.disabled=false});
+document.getElementById('aplicar').addEventListener('click',cargar);for(const id of ['desde','hasta'])document.getElementById(id).addEventListener('change',cargar);
+document.getElementById('nuevo-manual').addEventListener('click',()=>{const form=document.getElementById('form-manual');form.fecha.value=new Date().toISOString().slice(0,10);document.getElementById('modal-manual').classList.remove('hidden')});
+document.getElementById('cerrar-manual').addEventListener('click',()=>document.getElementById('modal-manual').classList.add('hidden'));
+document.getElementById('carga-mensual').addEventListener('click',()=>document.getElementById('modal-bulk').classList.remove('hidden'));
+document.getElementById('form-manual').addEventListener('submit',async event=>{event.preventDefault();const data=Object.fromEntries(new FormData(event.target));data.periodo=data.fecha.slice(0,7)+'-01';const response=await fetch(`${apiBase}/manuales/`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':csrf},body:JSON.stringify(data)});if(response.ok){document.getElementById('modal-manual').classList.add('hidden');event.target.reset();await cargar();await cargarConciliaciones()}else document.getElementById('manual-error').textContent=JSON.stringify(await response.json())});
+cargar();cargarConciliaciones();
+</script>
+{% endblock %}

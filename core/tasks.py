@@ -15,7 +15,7 @@ except Exception:  # Celery opcional en dev
 
 @shared_task
 def recordatorios_pagos_diario(dias: int = 3):
-    """Avisa por Telegram los vencimientos próximos (próximos `dias` días) de cada usuario."""
+    """Avisa por Telegram los vencimientos próximos y obligaciones pendientes."""
     from django.contrib.auth.models import User
 
     from core.services.recordatorios import enviar_recordatorios

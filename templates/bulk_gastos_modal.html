@@ -1,1 +1,21 @@
-<div class="glass p-6 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto"><div class="flex justify-between mb-5"><h3 class="font-bold text-lg">Carga rápida mensual</h3><button onclick="document.getElementById('modal-bulk').classList.add('hidden')">×</button></div><form method="POST" action="{% url 'bulk_gastos' %}" class="space-y-4">{% csrf_token %}<div class="grid grid-cols-2 gap-3"><select name="year" class="bg-slate-900 rounded-lg">{% for y in years %}<option value="{{ y }}" {% if y == default_year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select><select name="month" class="bg-slate-900 rounded-lg"><option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option><option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option><option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option><option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option></select></div><p class="text-xs text-slate-400">Sólo crea resúmenes manuales. Tarjetas y propiedades provienen de sus importaciones.</p><div class="space-y-2">{% for cat in categorias %}<label class="grid grid-cols-[1fr_8rem] gap-3 items-center"><span>{{ cat.nombre }} <small class="text-slate-500">{{ cat.aplica_a }}</small></span><input name="cat_{{ cat.id }}" type="number" min="0" step="0.01" placeholder="0" class="bg-slate-900 rounded-lg text-right"></label>{% endfor %}</div><button class="w-full py-2 bg-emerald-600 rounded-lg text-white">Guardar resumen</button></form></div>
+<div class="glass p-6 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+  <div class="flex justify-between mb-5"><h3 class="font-bold text-lg">Carga rápida mensual</h3><button onclick="document.getElementById('modal-bulk').classList.add('hidden')">×</button></div>
+  <form method="POST" action="{% url 'bulk_gastos' %}" class="space-y-4">
+    {% csrf_token %}
+    <div class="grid grid-cols-2 gap-3">
+      <select name="year" aria-label="Año" class="bg-slate-900 rounded-lg">{% for y in years %}<option value="{{ y }}" {% if y == default_year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select>
+      <select name="month" aria-label="Mes" class="bg-slate-900 rounded-lg">
+        <option value="1" {% if default_month == 1 %}selected{% endif %}>Enero</option><option value="2" {% if default_month == 2 %}selected{% endif %}>Febrero</option><option value="3" {% if default_month == 3 %}selected{% endif %}>Marzo</option><option value="4" {% if default_month == 4 %}selected{% endif %}>Abril</option><option value="5" {% if default_month == 5 %}selected{% endif %}>Mayo</option><option value="6" {% if default_month == 6 %}selected{% endif %}>Junio</option><option value="7" {% if default_month == 7 %}selected{% endif %}>Julio</option><option value="8" {% if default_month == 8 %}selected{% endif %}>Agosto</option><option value="9" {% if default_month == 9 %}selected{% endif %}>Septiembre</option><option value="10" {% if default_month == 10 %}selected{% endif %}>Octubre</option><option value="11" {% if default_month == 11 %}selected{% endif %}>Noviembre</option><option value="12" {% if default_month == 12 %}selected{% endif %}>Diciembre</option>
+      </select>
+    </div>
+    <label class="block text-sm">Qué representan los importes
+      <select name="modo_resumen" class="block w-full mt-1 bg-slate-900 rounded-lg">
+        <option value="TOTAL">Total del mes: incluye los movimientos ya registrados</option>
+        <option value="ADICIONAL">Importe adicional: se suma a los movimientos existentes</option>
+      </select>
+    </label>
+    <p class="text-xs text-slate-400">Un total mensual aporta sólo lo que falta en su categoría. Si el detalle ya supera ese total, se conserva el detalle completo.</p>
+    <div class="space-y-2">{% for cat in categorias %}<label class="grid grid-cols-[1fr_8rem] gap-3 items-center"><span>{{ cat.nombre }} <small class="text-slate-500">{{ cat.aplica_a }}</small></span><input name="cat_{{ cat.id }}" type="number" min="0" step="0.01" placeholder="0" class="bg-slate-900 rounded-lg text-right"></label>{% endfor %}</div>
+    <button class="w-full py-2 bg-emerald-600 rounded-lg text-white">Guardar resumen</button>
+  </form>
+</div>

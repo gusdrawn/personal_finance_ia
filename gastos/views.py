@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from django.db import transaction
+from django.core.exceptions import ValidationError
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_date
@@ -13,9 +14,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from banca.models import CategoriaTematica, ImportacionEstadoCuenta, LimiteCategoria, MapeoComercio, MovimientoBancario
-from gastos.models import GastoProgramado, MovimientoManual
+from gastos.models import ConciliacionMovimientoManual, GastoProgramado, MovimientoManual
 from gastos.serializers import CategoriaTematicaSerializer, GastoProgramadoSerializer, MovimientoManualSerializer
 from gastos.services import primer_dia, resumen_gastos
+from gastos.conciliaciones import conciliar_movimientos_manuales
 
 
 def _periodos(request):
@@ -73,7 +75,23 @@ class CategoriaTematicaViewSet(viewsets.ModelViewSet):
         destino = get_object_or_404(CategoriaTematica, pk=request.data.get("destino"), user=request.user)
         if origen.pk == destino.pk:
             return Response({"detail": "Elige una categoría diferente."}, status=400)
+        if destino.aplica_a != "AMBOS" and origen.aplica_a != destino.aplica_a:
+            return Response({"detail": "Las categorías deben admitir las mismas direcciones."}, status=400)
         with transaction.atomic():
+            resumenes = list(MovimientoManual.objects.select_for_update().filter(
+                user=request.user, categoria__in=[origen, destino], es_resumen_mensual=True
+            ).order_by("pk"))
+            por_periodo = {
+                (item.periodo, item.direccion): item
+                for item in resumenes if item.categoria_id == destino.pk
+            }
+            for manual in resumenes:
+                conflicto = por_periodo.get((manual.periodo, manual.direccion))
+                if manual.categoria_id == origen.pk and conflicto and (
+                    manual.moneda != conflicto.moneda or manual.naturaleza != conflicto.naturaleza
+                    or manual.modo_resumen != conflicto.modo_resumen
+                ):
+                    return Response({"detail": "No se pueden fusionar resúmenes del mismo mes con distinta moneda, naturaleza o modo de total."}, status=400)
             MovimientoBancario.objects.filter(user=request.user, categoria=origen).update(categoria=destino)
             for manual in MovimientoManual.objects.filter(user=request.user, categoria=origen):
                 conflicto = None
@@ -85,8 +103,13 @@ class CategoriaTematicaViewSet(viewsets.ModelViewSet):
                 if conflicto:
                     conflicto.monto += manual.monto
                     conflicto.monto_clp += manual.monto_clp
+                    conflicto.tipo_cambio = (
+                        (conflicto.monto_clp / conflicto.monto).quantize(Decimal("0.0001"))
+                        if conflicto.moneda != "CLP" and conflicto.monto > 0 else None
+                    )
+                    conflicto.monto_clp_estimado = conflicto.monto_clp_estimado or manual.monto_clp_estimado
                     conflicto.notas = "\n".join(filter(None, [conflicto.notas, manual.notas]))
-                    conflicto.save(update_fields=["monto", "monto_clp", "notas", "updated_at"])
+                    conflicto.save(update_fields=["monto", "monto_clp", "tipo_cambio", "monto_clp_estimado", "notas", "updated_at"])
                     manual.delete()
                 else:
                     manual.categoria = destino
@@ -121,6 +144,71 @@ class MovimientoManualViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+        conciliar_movimientos_manuales(self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save(user=self.request.user)
+        conciliar_movimientos_manuales(self.request.user)
+
+    @action(detail=False, methods=["get"], url_path="conciliaciones-pendientes")
+    def conciliaciones_pendientes(self, request):
+        estado = request.query_params.get("estado", "SUGERIDA")
+        if estado not in {"SUGERIDA", "CONFIRMADA"}:
+            return Response({"estado": "Usa SUGERIDA o CONFIRMADA."}, status=400)
+        propuestas = (
+            ConciliacionMovimientoManual.objects.filter(
+                movimiento_manual__user=request.user, movimiento_bancario__user=request.user, estado=estado
+            )
+            .select_related("movimiento_manual", "movimiento_bancario", "movimiento_bancario__producto", "movimiento_bancario__producto__banco")
+            .order_by("movimiento_manual__fecha", "movimiento_manual_id", "id")
+        )
+        return Response([
+            {
+                "id": item.pk,
+                "estado": item.estado,
+                "manual_id": item.movimiento_manual_id,
+                "descripcion_manual": item.movimiento_manual.descripcion,
+                "fecha_manual": item.movimiento_manual.fecha.isoformat(),
+                "monto_manual_clp": str(item.movimiento_manual.monto_clp),
+                "movimiento_bancario_id": item.movimiento_bancario_id,
+                "descripcion_bancaria": item.movimiento_bancario.descripcion,
+                "fecha_bancaria": item.movimiento_bancario.fecha.isoformat(),
+                "monto_bancario_clp": str(item.movimiento_bancario.monto_clp),
+                "producto": item.movimiento_bancario.producto.nombre,
+                "banco": item.movimiento_bancario.producto.banco.nombre,
+            }
+            for item in propuestas
+        ])
+
+    @action(detail=True, methods=["post"], url_path="resolver-conciliacion")
+    def resolver_conciliacion(self, request, pk=None):
+        manual = self.get_object()
+        accion = request.data.get("accion")
+        if accion not in {"confirmar", "descartar"}:
+            return Response({"accion": "Usa confirmar o descartar."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            with transaction.atomic():
+                conciliacion = get_object_or_404(
+                    ConciliacionMovimientoManual.objects.select_for_update(),
+                    movimiento_manual=manual,
+                    pk=request.data.get("conciliacion_id"),
+                    estado__in=["SUGERIDA", "CONFIRMADA"] if accion == "descartar" else ["SUGERIDA"],
+                )
+                if accion == "confirmar":
+                    from gastos.conciliaciones import _coincide
+
+                    if not _coincide(manual, conciliacion.movimiento_bancario):
+                        return Response({"conciliacion": "La coincidencia cambió. Actualiza las propuestas."}, status=409)
+                conciliacion.estado = "CONFIRMADA" if accion == "confirmar" else "DESCARTADA"
+                conciliacion.confirmada_manual = accion == "confirmar"
+                conciliacion.save(update_fields=["estado", "confirmada_manual", "actualizada_at"])
+                if accion == "confirmar":
+                    ConciliacionMovimientoManual.objects.filter(
+                        movimiento_manual=manual, estado="SUGERIDA"
+                    ).exclude(pk=conciliacion.pk).update(estado="DESCARTADA")
+        except ValidationError as error:
+            return Response({"conciliacion": error.messages}, status=status.HTTP_409_CONFLICT)
+        return Response({"id": conciliacion.pk, "estado": conciliacion.estado})
 
     @action(detail=False, methods=["post"])
     def carga_mensual(self, request):
@@ -140,6 +228,7 @@ class MovimientoManualViewSet(viewsets.ModelViewSet):
                     "naturaleza": item.get("naturaleza", "OPERACIONAL"),
                     "descripcion": item.get("descripcion") or categoria.nombre,
                     "notas": item.get("notas", ""), "es_resumen_mensual": True,
+                    "modo_resumen": item.get("modo_resumen", request.data.get("modo_resumen", "TOTAL")),
                 }
                 existente = MovimientoManual.objects.filter(
                     user=request.user, periodo=periodo, categoria=categoria,
@@ -174,7 +263,7 @@ def gastos_resumen(request):
         desde, hasta = _periodos(request)
     except ValueError as exc:
         return Response({"periodo": str(exc)}, status=400)
-    perspectiva = request.query_params.get("perspectiva", "consumo")
+    perspectiva = request.query_params.get("perspectiva", "caja")
     if perspectiva not in {"caja", "consumo"}:
         return Response({"perspectiva": "Usa caja o consumo."}, status=400)
     return Response(_json_value(resumen_gastos(request.user, desde, hasta, perspectiva, _filtros(request))))
@@ -187,7 +276,10 @@ def gastos_detalle(request):
         desde, hasta = _periodos(request)
     except ValueError as exc:
         return Response({"periodo": str(exc)}, status=400)
-    resultado = resumen_gastos(request.user, desde, hasta, request.query_params.get("perspectiva", "consumo"), _filtros(request))
+    perspectiva = request.query_params.get("perspectiva", "caja")
+    if perspectiva not in {"caja", "consumo"}:
+        return Response({"perspectiva": "Usa caja o consumo."}, status=400)
+    resultado = resumen_gastos(request.user, desde, hasta, perspectiva, _filtros(request))
     lineas = [linea for grupo in resultado["categorias"] for linea in grupo["movimientos"]]
     return Response(_json_value({"cantidad": len(lineas), "movimientos": lineas}))
 
@@ -216,14 +308,17 @@ def exportar_gastos(request):
         desde, hasta = _periodos(request)
     except ValueError as exc:
         return HttpResponse(str(exc), status=400, content_type="text/plain")
-    resultado = resumen_gastos(request.user, desde, hasta, request.query_params.get("perspectiva", "consumo"), _filtros(request))
+    perspectiva = request.query_params.get("perspectiva", "caja")
+    if perspectiva not in {"caja", "consumo"}:
+        return HttpResponse("Perspectiva inválida.", status=400, content_type="text/plain")
+    resultado = resumen_gastos(request.user, desde, hasta, perspectiva, _filtros(request))
     wb = Workbook()
     ws = wb.active
     ws.title = "Gastos"
-    ws.append(["Fecha", "Dirección", "Categoría", "Descripción", "Fuente", "Banco", "Producto", "Monto CLP", "Estado"])
+    ws.append(["Fecha", "Dirección", "Categoría", "Descripción", "Fuente", "Banco", "Producto", "Monto movimiento CLP", "Aporte al cálculo CLP", "Cálculo", "Estado", "Monto original", "Moneda original", "Conversión CLP"])
     for grupo in resultado["categorias"]:
         for item in grupo["movimientos"]:
-            ws.append([item["fecha"], item["direccion"], item["categoria"], item["descripcion"], item["fuente"], item["banco"], item["producto"], item["monto_clp"], item["estado"]])
+            ws.append([item["fecha"], item["direccion"], item["categoria"], item["descripcion"], item["fuente"], item["banco"], item["producto"], item["monto_clp"], item["monto_calculo_clp"], item["calculo"], item["estado"], item['metadata'].get('monto_original'), item['metadata'].get('moneda_original'), 'Pendiente' if item['conversion_desconocida'] else 'Disponible'])
     output = BytesIO()
     wb.save(output)
     response = HttpResponse(output.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

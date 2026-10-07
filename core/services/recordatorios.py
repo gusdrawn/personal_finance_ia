@@ -74,12 +74,39 @@ def vencimientos_proximos(
     limite = hoy + timedelta(days=dias)
     items: list[dict] = []
 
-    for g in GastoProgramado.objects.filter(user=user, activo=True):
+    for g in GastoProgramado.objects.filter(user=user, activo=True, regla_pendiente__isnull=True):
         f = proxima_ocurrencia_gasto(g, hoy)
         if f and hoy <= f <= limite:
             items.append(
                 {"fecha": f, "nombre": g.nombre, "monto": g.monto, "tipo": "programado"}
             )
+
+    # Las obligaciones nuevas viven en `pendientes`; los estados de silencio no
+    # vuelven a entrar al aviso hasta que el generador cree el siguiente ciclo.
+    try:
+        from pendientes.models import OcurrenciaPendiente
+        from pendientes.services.calendario import materializar_usuario
+
+        materializar_usuario(user, hoy=hoy)
+        ocurrencias = OcurrenciaPendiente.objects.filter(
+            regla__user=user,
+            regla__activa=True,
+            estado="PENDIENTE",
+            fecha_vencimiento__gte=hoy - timedelta(days=30),
+            fecha_vencimiento__lte=limite,
+        ).select_related("regla")
+        for ocurrencia in ocurrencias:
+            items.append({
+                "fecha": ocurrencia.fecha_vencimiento,
+                "nombre": ocurrencia.regla.nombre,
+                "monto": ocurrencia.monto_esperado,
+                "tipo": "pendiente",
+                "ocurrencia_id": ocurrencia.id,
+            })
+    except Exception:
+        # El recordatorio legado sigue funcionando durante migraciones o en
+        # instalaciones que todavía no tengan creada la app nueva.
+        pass
 
     items.sort(key=lambda x: (x["fecha"], x["nombre"]))
     return items
@@ -113,7 +140,7 @@ def enviar_recordatorios(user, *, dias: int = 3, hoy: date | None = None) -> boo
             f"📅 <b>Pago próximo ({dias} días)</b>\n"
             f"• {it['fecha']:%d/%m} {it['nombre']}{monto}"
         )
-        identidad = f"{it['tipo']}:{it['nombre']}:{it['fecha'].isoformat()}"
+        identidad = f"{it['tipo']}:{it.get('ocurrencia_id', '')}:{it['nombre']}:{it['fecha'].isoformat()}"
         clave = f"vencimiento:{hashlib.sha256(identidad.encode()).hexdigest()}"
         enviado = enviar_telegram(
             texto,
