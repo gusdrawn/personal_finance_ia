@@ -594,6 +594,7 @@ class SantanderConnector(BankConnector):
                     cuota_total=ct,
                     periodo_factura=periodo,
                     tipo_banco=tipo,
+                    external_id=str(_first(row, "idTransaccion", "idMovimiento", default="") or ""),
                 )
             )
         return movs

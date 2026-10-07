@@ -101,7 +101,15 @@
 
 <!-- Parámetros de presupuesto -->
 <div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
-    <h4 class="font-bold text-white mb-4"><i class="fas fa-sliders-h text-sky-400 mr-2"></i>Presupuesto e IA</h4>
+    <h4 class="font-bold text-white mb-1"><i class="fas fa-sliders-h text-sky-400 mr-2"></i>Presupuesto e IA</h4>
+    <p class="text-xs text-slate-400 mb-4">El promedio de ingresos toma los últimos {{ cfg.ventana_meses_ingreso }} meses con abonos reales. El gasto fijo se resta para calcular cuánto queda disponible para ocio.</p>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5 text-sm">
+        <div class="rounded-xl bg-slate-900/50 p-3"><p class="text-slate-500 text-xs">Ingreso promedio</p><strong class="text-white">${{ resumen_ocio.promedio_ingresos|floatformat:0|intcomma }} CLP</strong></div>
+        <div class="rounded-xl bg-slate-900/50 p-3"><p class="text-slate-500 text-xs">Menos compromisos</p><strong class="text-white">${{ resumen_ocio.comprometido|floatformat:0|intcomma }} CLP</strong></div>
+        <div class="rounded-xl bg-slate-900/50 p-3"><p class="text-slate-500 text-xs">Aviso de ocio al llegar a</p><strong class="text-amber-300">${{ alerta_ocio_clp|floatformat:0|intcomma }} CLP</strong></div>
+    </div>
+    <div class="h-3 rounded-full bg-slate-700 overflow-hidden mb-2"><div class="h-full {% if resumen_ocio.alerta %}bg-amber-400{% else %}bg-emerald-400{% endif %}" style="width: {{ resumen_ocio.porcentaje_usado|floatformat:0 }}%; max-width: 100%"></div></div>
+    <p class="text-xs text-slate-500 mb-4">Ocio usado este mes: ${{ resumen_ocio.ocio_gastado|floatformat:0|intcomma }} CLP · {{ resumen_ocio.porcentaje_usado }}% del disponible. La alerta se envía cuando se alcanza el umbral configurado.</p>
     <form method="post" action="{% url 'banca_guardar_parametros' %}" class="space-y-4">
         {% csrf_token %}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -110,8 +118,14 @@
                 {{ param_form.ventana_meses_ingreso }}
             </div>
             <div>
-                <label class="block text-xs text-slate-500 mb-1">{{ param_form.umbral_alerta_ocio.label }}</label>
-                {{ param_form.umbral_alerta_ocio }}
+                <label class="block text-xs text-slate-500 mb-1">{{ param_form.umbral_alerta_ocio_pct.label }}</label>
+                {{ param_form.umbral_alerta_ocio_pct }}
+                <p class="text-[11px] text-slate-500 mt-1">Porcentaje de dinero disponible para ocio; el monto CLP se muestra arriba.</p>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 mb-1">{{ param_form.presupuesto_mensual_clp.label }}</label>
+                {{ param_form.presupuesto_mensual_clp }}
+                <p class="text-[11px] text-slate-500 mt-1">Las compras no facturadas se proyectan al mes siguiente. Cero desactiva este límite.</p>
             </div>
             <div>
                 <label class="block text-xs text-slate-500 mb-1">{{ param_form.tolerancia_comision_bicicleta.label }}</label>
@@ -166,7 +180,7 @@
 <!-- Contrapartes (bicicleta) -->
 <div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
     <h4 class="font-bold text-white mb-1"><i class="fas fa-bicycle text-emerald-400 mr-2"></i>Contrapartes conocidas</h4>
-    <p class="text-xs text-slate-500 mb-4">Personas con las que haces bicicleta financiera. Sus transferencias no se cuentan como ingreso.</p>
+    <p class="text-xs text-slate-500 mb-4">Agrega aquí los nombres que aparecen como destinatarios en NeatPagos (por ejemplo, Jonathan, Fabiana o Stephany). Si luego te transfieren ese principal, el cargo Neat y el abono bancario se reconocen como transferencia, no como gasto ni ingreso.</p>
 
     {% if contrapartes %}
     <div class="space-y-2 mb-6">

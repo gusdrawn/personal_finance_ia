@@ -5,8 +5,8 @@ A diferencia de `ingesta.py` (bancos -> MovimientoBancario/SaldoSnapshot), las f
 activos (cripto, inversiones, AFP) reportan tenencias (`PosicionNormalizada`) que alimentan
 `patrimonio.Activo` + `patrimonio.HistorialActivo`.
 
-Idempotente: el upsert del Activo es por (user, tipo, nombre); el histórico por (activo,
-fecha), respetando el unique_together que ya existe en HistorialActivo.
+Idempotente: el Activo se identifica por usuario, fuente, cuenta y símbolo; el histórico
+por (activo, fecha). Cada lote se guarda completo o se revierte si una posición falla.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
 from typing import Optional
 
+from django.db import transaction
 from django.utils import timezone
 
 from bank_sync.models import PosicionNormalizada
@@ -36,12 +37,20 @@ _TIPOS_ACTIVO_VALIDOS = {
 _HORIZONTES_VALIDOS = {"EFECTIVO", "CORTO_PLAZO", "MEDIANO_PLAZO", "LARGO_PLAZO"}
 
 
-def _valor_dolar() -> Optional[Decimal]:
-    """Último valor del USD en CLP desde configuracion.TipoCambio."""
+def _valor_dolar(fecha: date | None = None) -> Optional[Decimal]:
+    """Latest USD rate on or before the position valuation date."""
     try:
         from configuracion.models import TipoCambio
 
-        tc = TipoCambio.objects.order_by("-fecha").first()
+        fecha_valoracion = fecha or timezone.localdate()
+        tc = (
+            TipoCambio.objects.filter(fuente="mindicador.cl", fecha__lte=fecha_valoracion)
+            .order_by("-fecha", "-id")
+            .first()
+            or TipoCambio.objects.filter(fecha__lte=fecha_valoracion)
+            .order_by("-fecha", "-id")
+            .first()
+        )
         return tc.dolar if tc and tc.dolar else None
     except Exception:
         return None
@@ -87,11 +96,42 @@ def _normalizar_tipo(tipo: str) -> str:
     return t if t in _TIPOS_ACTIVO_VALIDOS else "OTRO"
 
 
+def _resolver_instrumento(pos: PosicionNormalizada):
+    from trading.models import Instrument, InstrumentExternalId
+
+    external = InstrumentExternalId.objects.filter(
+        provider=pos.fuente, external_id=pos.simbolo
+    ).select_related("instrument").first()
+    if external:
+        return external.instrument
+    matches = list(Instrument.objects.filter(symbol__iexact=pos.simbolo)[:2])
+    return matches[0] if len(matches) == 1 else None
+
+
+def _saldo_original(pos: PosicionNormalizada) -> tuple[Decimal, str]:
+    if pos.moneda == "USD" and pos.valor_usd is not None:
+        monto, moneda = pos.valor_usd, "USD"
+    elif pos.moneda == "CLP" and pos.valor_clp is not None:
+        monto, moneda = pos.valor_clp, "CLP"
+    elif pos.cantidad is not None and pos.precio_unitario is not None:
+        monto, moneda = pos.cantidad * pos.precio_unitario, pos.moneda
+    elif pos.valor_usd is not None:
+        monto, moneda = pos.valor_usd, "USD"
+    elif pos.valor_clp is not None:
+        monto, moneda = pos.valor_clp, "CLP"
+    else:
+        monto, moneda = Decimal("0"), pos.moneda
+    # Quantities/prices retain source precision; only the persisted money is rounded.
+    return monto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), moneda
+
+
+@transaction.atomic
 def ingestar_posiciones(
     user,
     posiciones: list[PosicionNormalizada],
     *,
     fecha: Optional[date] = None,
+    cuenta_fuente_id: str = "",
 ) -> dict:
     """
     Inserta/actualiza Activos y su snapshot histórico del día.
@@ -101,8 +141,18 @@ def ingestar_posiciones(
     from patrimonio.models import Activo, HistorialActivo
 
     fecha = fecha or timezone.localdate()
-    dolar = _valor_dolar()
-    uf = _valor_uf()
+    dolar = _valor_dolar(fecha)
+    try:
+        from configuracion.models import TipoCambio
+
+        tipo_cambio_fecha = TipoCambio.objects.filter(
+            fuente="mindicador.cl", fecha__lte=fecha
+        ).order_by("-fecha", "-id").first() or TipoCambio.objects.filter(
+            fecha__lte=fecha
+        ).order_by("-fecha", "-id").first()
+        uf = tipo_cambio_fecha.uf if tipo_cambio_fecha else None
+    except Exception:
+        uf = _valor_uf()
 
     nuevos, actualizados, ids = 0, 0, []
     for pos in posiciones:
@@ -110,29 +160,68 @@ def ingestar_posiciones(
         nombre = pos.nombre or pos.simbolo
         monto_clp, monto_usd = _valorizar(pos, dolar)
 
+        cuenta_fuente = cuenta_fuente_id or pos.cuenta_fuente_id
+        simbolo_fuente = (pos.simbolo or nombre).strip().casefold()
+        instrumento = _resolver_instrumento(pos)
         defaults = dict(
             tipo=tipo,
             monto_clp=monto_clp,
             monto_usd=monto_usd,
             es_liquido=pos.es_liquido,
+            fuente_externa=pos.fuente[:40],
+            cuenta_fuente=cuenta_fuente[:120],
+            id_fuente=simbolo_fuente[:180],
+            instrumento=instrumento,
+            requiere_revision_fuente=instrumento is None,
         )
-        if pos.horizonte in _HORIZONTES_VALIDOS:
-            defaults["horizonte_temporal"] = pos.horizonte
+        saldo_original, moneda_original = _saldo_original(pos)
+        activo = Activo.objects.filter(
+            user=user,
+            fuente_externa=defaults["fuente_externa"],
+            cuenta_fuente=defaults["cuenta_fuente"],
+            id_fuente=defaults["id_fuente"],
+        ).first()
 
-        activo, creado = Activo.objects.get_or_create(
-            user=user, tipo=tipo, nombre=nombre, defaults=defaults
-        )
-        if creado:
-            nuevos += 1
+        # Upgrade a single legacy row created by the old (user, type, name) key.
+        # Its source remains flagged because the previous schema did not retain
+        # enough information to prove that the name was a unique source identity.
+        if activo is None:
+            legacy = list(
+                Activo.objects.filter(
+                    user=user, tipo=tipo, nombre=nombre, fuente_externa="", id_fuente=""
+                )[:2]
+            )
+            if len(legacy) == 1:
+                activo = legacy[0]
+                activo.fuente_externa = defaults["fuente_externa"]
+                activo.cuenta_fuente = defaults["cuenta_fuente"]
+                activo.id_fuente = defaults["id_fuente"]
+                activo.requiere_revision_fuente = True
+                for field, value in defaults.items():
+                    setattr(activo, field, value)
+                activo.requiere_revision_fuente = True
+                activo.asignar_saldo_original(saldo_original, moneda_original)
+                activo.save()
+                actualizados += 1
+            else:
+                activo = Activo.objects.create(
+                    user=user,
+                    nombre=nombre,
+                    monto_original=saldo_original,
+                    moneda_original=moneda_original,
+                    **defaults,
+                )
+                nuevos += 1
         else:
-            activo.monto_clp = monto_clp
-            activo.monto_usd = monto_usd
-            campos = ["monto_clp", "monto_usd", "updated_at"]
-            if pos.horizonte in _HORIZONTES_VALIDOS:
-                activo.horizonte_temporal = pos.horizonte
-                campos.append("horizonte_temporal")
-            activo.save(update_fields=campos)
+            for field, value in defaults.items():
+                setattr(activo, field, value)
+            activo.asignar_saldo_original(saldo_original, moneda_original)
+            activo.save()
             actualizados += 1
+        if pos.horizonte in _HORIZONTES_VALIDOS:
+            activo.horizonte_temporal = pos.horizonte
+            activo.save(update_fields=["horizonte_temporal", "updated_at"])
+            defaults["horizonte_temporal"] = pos.horizonte
         ids.append(activo.id)
 
         # snapshot histórico del día (idempotente por unique (activo, fecha))

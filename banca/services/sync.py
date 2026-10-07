@@ -92,7 +92,9 @@ def _run_sync_activos(credencial: CredencialBanco, modo: str = "full") -> SyncLo
 
     # FASE 2: persistencia
     try:
-        res = ingesta_posiciones.ingestar_posiciones(user, posiciones or [])
+        res = ingesta_posiciones.ingestar_posiciones(
+            user, posiciones or [], cuenta_fuente_id=str(credencial.pk)
+        )
         log.exito = True
         log.nuevos = res["nuevos"]
         log.actualizados = res["actualizados"]

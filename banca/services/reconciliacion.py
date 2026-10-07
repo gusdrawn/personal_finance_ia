@@ -8,7 +8,8 @@ Reglas:
   2. Contraparte conocida (alias/RUT en la glosa) -> TRANSFERENCIA + vínculo a su préstamo.
   3. Cargo NeatPagos cuyo monto ≈ (principal + comisión) de un préstamo activo
      -> TRANSFERENCIA + vínculo al préstamo (tolerancia configurable).
-  4. Abono no reconocido -> `por_revisar=True` (NUNCA se cuenta como ingreso por defecto).
+  4. Abono desconocido o traspaso saliente de cuenta corriente sin titular reconocido
+     -> `por_revisar=True` hasta que el usuario defina ingreso, gasto o transferencia.
 """
 
 from __future__ import annotations
@@ -107,7 +108,7 @@ def _nombre_aparece(nombre: str, descripcion: str) -> bool:
 
 
 def _nombre_bancario_compatible(nombre: str, descripcion: str) -> bool:
-    """Tolera nombres bancarios truncados, pero nunca sin una segunda señal de monto."""
+    """Tolera nombres bancarios truncados y nombres de una sola palabra."""
     nombre_tokens = _tokens_persona(nombre)
     descripcion_tokens = _tokens_persona(descripcion)
     if len(nombre_tokens & descripcion_tokens) >= 2:
@@ -156,7 +157,49 @@ def _es_movimiento_de_producto_propio(movimiento, firmas_propias) -> bool:
     if _RE_PRODUCTO_PROPIO.search(descripcion):
         return True
     tokens = _tokens_persona(descripcion)
-    return any(len(tokens & firma) >= 2 for firma in firmas_propias)
+    if any(len(tokens & firma) >= 2 for firma in firmas_propias):
+        return True
+    titular = f"{movimiento.user.first_name} {movimiento.user.last_name}".strip()
+    return bool(_RE_TRANSFER.search(descripcion) and _nombre_aparece(titular, descripcion))
+
+
+def _contraparte_en_neat(movimiento, contrapartes):
+    """Busca si el destinatario de un cargo Neat es una contraparte del usuario."""
+    estados_validos = {"CONFIRMADO", "EN_PROCESO", "REQUIERE_REVISION"}
+    for conciliacion in movimiento.conciliaciones_externas.all():
+        evento = conciliacion.evento
+        if (
+            conciliacion.rol != "CARGO"
+            or evento.user_id != movimiento.user_id
+            or evento.fuente != "neat"
+            or evento.estado not in estados_validos
+        ):
+            continue
+        pago = getattr(evento, "pago_neat", None)
+        destinatario = (pago.destinatario if pago else "").strip()
+        if not destinatario:
+            continue
+        for contraparte in contrapartes:
+            if (
+                (contraparte.rut and contraparte.rut in destinatario)
+                or (
+                    contraparte.alias
+                    and _nombre_bancario_compatible(contraparte.alias, destinatario)
+                )
+            ):
+                return contraparte
+    return None
+
+
+def _monto_neat_transferido(evento) -> Decimal:
+    """Principal pagado al destinatario, excluyendo la comisión cargada a la TDC."""
+    pago = getattr(evento, "pago_neat", None)
+    return Decimal(
+        (pago.monto_pagado if pago else None)
+        or evento.monto_bruto
+        or evento.monto_neto
+        or 0
+    )
 
 
 def _subset_neat_para_abono(user, movimiento, tolerancia):
@@ -190,7 +233,10 @@ def _subset_neat_para_abono(user, movimiento, tolerancia):
     for grupo in por_destinatario.values():
         for cantidad in range(1, min(len(grupo), 6) + 1):
             for subconjunto in combinations(grupo, cantidad):
-                total = sum((evento.monto_neto for evento in subconjunto), Decimal("0"))
+                total = sum(
+                    (_monto_neat_transferido(evento) for evento in subconjunto),
+                    Decimal("0"),
+                )
                 diferencia = abs(total - objetivo)
                 if objetivo and diferencia <= objetivo * tolerancia:
                     clave = (diferencia, cantidad, tuple(evento.pk for evento in subconjunto))
@@ -213,6 +259,9 @@ def _prestamo_por_destinatario(prestamos, eventos):
 def reconciliar(user, ids: list[int] | None = None) -> dict:
     """Aplica las reglas de naturaleza/bicicleta. Devuelve conteos."""
     qs = MovimientoBancario.objects.filter(user=user).exclude(estado="DESCARTADO_CIERRE")
+    qs = qs.select_related("user", "producto").prefetch_related(
+        "conciliaciones_externas__evento__pago_neat"
+    )
     if ids is not None:
         qs = qs.filter(id__in=ids)
     # no tocar la naturaleza/préstamo que el usuario fijó a mano
@@ -222,7 +271,7 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
     mapeos_ingreso = list(
         MapeoComercio.objects.filter(
             user=user,
-            categoria__aplica_a="INGRESO",
+            categoria__aplica_a__in=("INGRESO", "AMBOS"),
             categoria__activa=True,
         ).select_related("categoria")
     )
@@ -231,6 +280,7 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
     firmas_propias = _firmas_cuentas_propias(user)
 
     transferencias, por_revisar = 0, 0
+    pagos_neat_devuelto = set()
     for mov in qs:
         desc = mov.descripcion or ""
         nat, prestamo, revisar = "OPERACIONAL", None, False
@@ -251,6 +301,11 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
         ).exists():
             nat = "TRANSFERENCIA"
 
+        # El movimiento bancario sólo muestra "NEAT PAGOS"; el destinatario
+        # conciliado permite reconocer una bicicleta configurada por el usuario.
+        elif mov.es_cargo and (contraparte_neat := _contraparte_en_neat(mov, contrapartes)):
+            nat, prestamo = "TRANSFERENCIA", contraparte_neat.prestamo
+
         # Los pagos de productos financieros y los traspasos cuyo titular fue
         # confirmado por un movimiento espejo no son consumo ni ingreso.
         elif _es_movimiento_de_producto_propio(mov, firmas_propias):
@@ -263,7 +318,10 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
         # 2. Contraparte conocida
         if nat == "OPERACIONAL":
             for cp in contrapartes:
-                if (cp.alias and cp.alias.lower() in desc.lower()) or (cp.rut and cp.rut in desc):
+                if (
+                    (cp.alias and _nombre_bancario_compatible(cp.alias, desc))
+                    or (cp.rut and cp.rut in desc)
+                ):
                     nat, prestamo = "TRANSFERENCIA", cp.prestamo
                     break
 
@@ -289,12 +347,14 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
             elif len(candidatos) > 1:
                 revisar = True
 
-        # 4. Abono ambiguo -> por revisar (jamás ingreso silencioso)
+        # 4. Abono ambiguo o traspaso saliente de cuenta corriente -> revisión manual.
         if (
             nat == "OPERACIONAL"
-            and not mov.es_cargo
-            and not ingreso_reconocido
             and _RE_TRANSFER.search(desc)
+            and (
+                (not mov.es_cargo and not ingreso_reconocido)
+                or (mov.es_cargo and mov.producto.tipo == "CUENTA")
+            )
         ):
             revisar = True
 
@@ -308,6 +368,14 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
         if mov.por_revisar != revisar:
             mov.por_revisar = revisar
             cambios.append("por_revisar")
+        if nat == "TRANSFERENCIA" and not mov.categoria_es_manual and mov.categoria_id:
+            mov.categoria = None
+            mov.confianza_ia = None
+            mov.clasificado_at = None
+            mov.fuente_clasificacion = "PENDIENTE"
+            cambios.extend(
+                ["categoria", "confianza_ia", "clasificado_at", "fuente_clasificacion"]
+            )
         if cambios:
             mov.save(update_fields=cambios + ["updated_at"])
             if nat == "TRANSFERENCIA":
@@ -315,16 +383,50 @@ def reconciliar(user, ids: list[int] | None = None) -> dict:
             if revisar:
                 por_revisar += 1
         if eventos_devolucion:
+            pagos_neat_devuelto.update(evento.pk for evento in eventos_devolucion)
             for evento in eventos_devolucion:
                 ConciliacionEventoExterno.objects.get_or_create(
                     evento=evento,
                     movimiento=mov,
                     rol="DEPOSITO",
                     defaults={
-                        "monto_asignado": evento.monto_neto,
+                        "monto_asignado": _monto_neat_transferido(evento),
                         "confianza": Decimal("0.900"),
                         "metodo": "MONTO_FECHA",
                     },
                 )
+
+    # Si una persona devolvió el principal, el cargo Neat de origen tampoco fue
+    # gasto operacional.
+    if pagos_neat_devuelto:
+        cargos_neat = (
+            MovimientoBancario.objects.filter(
+                user=user,
+                naturaleza_es_manual=False,
+                conciliaciones_externas__evento__user=user,
+                conciliaciones_externas__evento_id__in=pagos_neat_devuelto,
+                conciliaciones_externas__rol="CARGO",
+            )
+            .distinct()
+        )
+        for cargo in cargos_neat:
+            cambios = []
+            if cargo.naturaleza != "TRANSFERENCIA":
+                cargo.naturaleza = "TRANSFERENCIA"
+                cambios.append("naturaleza")
+            if cargo.por_revisar:
+                cargo.por_revisar = False
+                cambios.append("por_revisar")
+            if not cargo.categoria_es_manual and cargo.categoria_id:
+                cargo.categoria = None
+                cargo.confianza_ia = None
+                cargo.clasificado_at = None
+                cargo.fuente_clasificacion = "PENDIENTE"
+                cambios.extend(
+                    ["categoria", "confianza_ia", "clasificado_at", "fuente_clasificacion"]
+                )
+            if cambios:
+                cargo.save(update_fields=cambios + ["updated_at"])
+                transferencias += 1
 
     return {"transferencias": transferencias, "por_revisar": por_revisar}

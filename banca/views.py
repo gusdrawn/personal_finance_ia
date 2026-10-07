@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import timedelta
 from decimal import Decimal
 import json
 
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Q, Sum
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
@@ -55,6 +57,25 @@ from banca.services.clasificacion_ia import (
 )
 from configuracion.models import Banco, Producto
 from patrimonio.models import CuentaPorCobrar
+from banca.services.transferencias import (
+    CATEGORIA_TRANSFERENCIA_PROPIA, categoria_transferencia_propia,
+)
+
+
+def _movimientos_pendientes_de_revision(user):
+    return (
+        MovimientoBancario.objects.filter(user=user)
+        .exclude(estado="DESCARTADO_CIERRE")
+        .filter(
+            Q(por_revisar=True)
+            | Q(categoria__isnull=True, naturaleza="OPERACIONAL")
+        )
+    )
+
+
+def _descripcion_pago_neat(evento):
+    pago = getattr(evento, "pago_neat", None)
+    return (pago.destinatario or pago.cuenta or "NeatPagos") if pago else "NeatPagos"
 
 
 @login_required
@@ -190,18 +211,33 @@ def banca_apple_pay_key_revoke(request, pk):
 @login_required
 def banca_movimientos(request):
     user = request.user
+    categoria_transferencia_propia(user)
+    pagina_gastos = request.resolver_match.url_name == "gastos_movimientos"
     base_qs = MovimientoBancario.objects.filter(user=user)
 
+    mes_anterior = timezone.localdate().replace(day=1) - timedelta(days=1)
+    fecha_desde_texto = request.GET.get("fecha_desde", mes_anterior.replace(day=1).isoformat() if pagina_gastos else "")
+    fecha_hasta_texto = request.GET.get("fecha_hasta", mes_anterior.isoformat() if pagina_gastos else "")
+
     texto = request.GET.get("q", "").strip()
-    fecha_desde = parse_date(request.GET.get("fecha_desde", ""))
-    fecha_hasta = parse_date(request.GET.get("fecha_hasta", ""))
-    estado = request.GET.get("estado")
+    fecha_desde = parse_date(fecha_desde_texto)
+    fecha_hasta = parse_date(fecha_hasta_texto)
+    estado = request.GET.get("estado", "CONFIRMADO" if pagina_gastos else "")
     naturaleza = request.GET.get("naturaleza")
     origen = request.GET.get("origen")
     categoria = request.GET.get("categoria")
     banco = request.GET.get("banco")
     producto = request.GET.get("producto")
     revisar = request.GET.get("revisar")
+    pendientes = request.GET.get("pendientes")
+    direccion = request.GET.get("direccion", "")
+
+    # La tabla permite corregir también ingresos y transferencias ya confirmados.
+    # La dirección se filtra sólo cuando el usuario la elige explícitamente.
+    if direccion == "EGRESO":
+        base_qs = base_qs.filter(monto__gt=0)
+    elif direccion == "INGRESO":
+        base_qs = base_qs.filter(monto__lt=0)
 
     if texto:
         base_qs = base_qs.filter(
@@ -216,7 +252,16 @@ def banca_movimientos(request):
     if fecha_hasta:
         base_qs = base_qs.filter(fecha__lte=fecha_hasta)
     if estado:
-        base_qs = base_qs.filter(estado=estado)
+        if estado == "CONFIRMADO":
+            base_qs = base_qs.filter(estado__in=("FACTURADO", "PAGADO"))
+        elif estado == "FACTURADO":
+            base_qs = base_qs.filter(producto__tipo="TDC", estado__in=("FACTURADO", "PAGADO"))
+        elif estado == "REGISTRADO_CUENTA":
+            base_qs = base_qs.exclude(producto__tipo="TDC").filter(estado__in=("FACTURADO", "PAGADO"))
+        elif estado == "PENDIENTE_CARTOLA":
+            base_qs = base_qs.filter(producto__tipo="TDC", estado__in=("PROVISIONAL", "NO_FACTURADO"))
+        else:
+            base_qs = base_qs.filter(estado=estado)
     if naturaleza:
         base_qs = base_qs.filter(naturaleza=naturaleza)
     if origen:
@@ -227,26 +272,65 @@ def banca_movimientos(request):
         base_qs = base_qs.filter(producto_id=producto)
     if revisar == "1":
         base_qs = base_qs.filter(por_revisar=True)
+    if pendientes == "1":
+        base_qs = base_qs.filter(
+            Q(por_revisar=True)
+            | Q(categoria__isnull=True, naturaleza="OPERACIONAL")
+        ).exclude(estado="DESCARTADO_CIERRE")
+        base_qs = base_qs.order_by("fecha", "id")
 
     # La gráfica conserva todas las categorías del conjunto buscado para que,
     # después de hacer clic en un segmento, el usuario pueda elegir otro sin
     # perder el contexto. La categoría sólo restringe la tabla.
     chart_qs = base_qs
     if categoria:
-        base_qs = base_qs.filter(categoria_id=categoria)
+        if pagina_gastos:
+            base_qs = base_qs.filter(
+                Q(categoria_id=categoria)
+                | Q(conciliaciones_externas__evento__categoria_id=categoria)
+            ).distinct()
+        else:
+            base_qs = base_qs.filter(categoria_id=categoria)
 
-    categorias_chart_todas = [
-        {"id": row["categoria_id"], "nombre": row["categoria__nombre"], "total": str(row["total"])}
-        for row in chart_qs.filter(categoria__isnull=False)
-        .values("categoria_id", "categoria__nombre")
-        .annotate(total=Sum("monto_clp"))
-        .filter(total__gt=0)
-        .order_by("-total")
-    ]
-    categoria_chart = categorias_chart_todas[:8]
-    if len(categorias_chart_todas) > 8:
-        resto = sum((Decimal(row["total"]) for row in categorias_chart_todas[8:]), Decimal("0"))
-        categoria_chart.append({"id": None, "nombre": "Otros", "total": str(resto)})
+    if pagina_gastos and fecha_desde and fecha_hasta and pendientes != "1":
+        from gastos.services import resumen_gastos
+
+        resumen_categorias = resumen_gastos(
+            user, fecha_desde, fecha_hasta, "consumo",
+            {"direccion": "EGRESO", "estado": "" if estado in {"CONFIRMADO", "REGISTRADO_CUENTA", "PENDIENTE_CARTOLA", "FACTURADO"} else estado,
+             "banco": banco, "producto": producto},
+        )
+        ids_visibles = set(chart_qs.values_list("id", flat=True))
+        importes = defaultdict(lambda: Decimal("0"))
+        nombres = {}
+        for grupo in resumen_categorias["categorias"]:
+            for linea in grupo["movimientos"]:
+                if linea["metadata"].get("movimiento_id") not in ids_visibles:
+                    continue
+                if not fecha_desde <= linea["fecha"] <= fecha_hasta:
+                    continue
+                clave = linea["categoria_id"] or linea["categoria"]
+                importes[clave] += linea["monto_calculo_clp"] or Decimal('0')
+                nombres[clave] = linea["categoria"]
+        categoria_chart = [
+            {"id": clave if isinstance(clave, int) else None,
+             "nombre": nombres[clave], "total": str(total)}
+            for clave, total in sorted(importes.items(), key=lambda row: -row[1])
+            if total > 0
+        ]
+
+    if pendientes == "1":
+        categoria_chart = []
+    elif not (pagina_gastos and fecha_desde and fecha_hasta):
+        categorias_chart_todas = [
+            {"id": row["categoria_id"], "nombre": row["categoria__nombre"], "total": str(row["total"])}
+            for row in chart_qs.filter(categoria__isnull=False)
+            .values("categoria_id", "categoria__nombre")
+            .annotate(total=Sum("monto_clp"))
+            .filter(total__gt=0)
+            .order_by("-total")
+        ]
+        categoria_chart = categorias_chart_todas
 
     qs = base_qs.select_related(
         "categoria", "producto", "producto__banco", "prestamo"
@@ -258,7 +342,7 @@ def banca_movimientos(request):
     )
 
     total_movimientos = qs.count()
-    movimientos = list(qs[:300])
+    movimientos = list(qs[:1] if pendientes == "1" else qs[:300])
     for movimiento in movimientos:
         movimiento.cuenta_cobro_id = next(
             (
@@ -269,11 +353,7 @@ def banca_movimientos(request):
         )
         movimiento.detalles_neat = [
             {
-                "descripcion": (
-                    conciliacion.evento.pago_neat.destinatario
-                    or conciliacion.evento.pago_neat.cuenta
-                    or "NeatPagos"
-                ),
+                "descripcion": _descripcion_pago_neat(conciliacion.evento),
                 "categoria": conciliacion.evento.categoria,
                 "monto": conciliacion.monto_asignado,
                 "estado": conciliacion.evento.estado,
@@ -294,18 +374,25 @@ def banca_movimientos(request):
     context = {
         "movimientos": movimientos,
         "categorias": CategoriaTematica.objects.filter(user=user, activa=True),
+        "categorias_ingreso": CategoriaTematica.objects.filter(
+            user=user, activa=True, aplica_a__in=("INGRESO", "AMBOS")
+        ),
+        "categorias_egreso": CategoriaTematica.objects.filter(
+            user=user, activa=True, aplica_a__in=("EGRESO", "AMBOS")
+        ),
         "bancos": Banco.objects.filter(productos__user=user).distinct(),
         "productos": Producto.objects.filter(user=user, activo=True, reemplazado_por__isnull=True).select_related("banco"),
         "prestamos": _prestamos_activos(user),
         "cuentas_por_cobrar": CuentaPorCobrar.objects.filter(
             user=user, activo=True
         ).order_by("nombre"),
-        "bicicletas": _avance_bicicletas(user),
+        "bicicletas": _avance_bicicletas(user, fecha_hasta or timezone.localdate()),
+        "bicicletas_fecha": fecha_hasta or timezone.localdate(),
         "categoria_chart": categoria_chart,
         "total_movimientos": total_movimientos,
         "f_q": texto,
-        "f_fecha_desde": request.GET.get("fecha_desde", ""),
-        "f_fecha_hasta": request.GET.get("fecha_hasta", ""),
+        "f_fecha_desde": fecha_desde_texto,
+        "f_fecha_hasta": fecha_hasta_texto,
         "f_estado": estado or "",
         "f_naturaleza": naturaleza or "",
         "f_origen": origen or "",
@@ -313,21 +400,36 @@ def banca_movimientos(request):
         "f_banco": banco or "",
         "f_producto": producto or "",
         "f_revisar": revisar or "",
-        "ESTADOS": MovimientoBancario._meta.get_field("estado").choices,
+        "f_pendientes": pendientes or "",
+        "f_direccion": direccion,
+        "pendientes_count": _movimientos_pendientes_de_revision(user).count(),
+        "ESTADOS": [
+            ("CONFIRMADO", "Confirmados (todos los productos)"),
+            ("FACTURADO", "Facturado / pagado · tarjeta"),
+            ("REGISTRADO_CUENTA", "Registrado · cuenta corriente"),
+            ("PENDIENTE_CARTOLA", "Tarjeta pendiente de cartola (incluye Apple Pay)"),
+            *MovimientoBancario._meta.get_field("estado").choices[:2],
+            *MovimientoBancario._meta.get_field("estado").choices[4:],
+        ],
         "NATURALEZAS": MovimientoBancario._meta.get_field("naturaleza").choices,
         "ORIGENES": MovimientoBancario._meta.get_field("origen").choices,
+        "pagina_gastos": pagina_gastos,
+        "proyeccion": presupuesto.proyeccion_no_facturados(user) if pagina_gastos else None,
     }
     return render(request, "banca/movimientos.html", context)
 
 
 @login_required
 def banca_importar(request):
-    """Carga masiva de PDFs y resumen auditable de lo que fue detectado."""
+    """Carga exclusivamente estados de cuenta bancarios en PDF."""
     user = request.user
     if request.method == "POST":
         archivos = request.FILES.getlist("archivos")
         if not archivos:
-            messages.error(request, "Selecciona al menos un estado de cuenta PDF.")
+            messages.error(
+                request,
+                "Selecciona al menos un estado de cuenta PDF.",
+            )
             return redirect("banca_importar")
 
         procesados = []
@@ -382,7 +484,7 @@ def banca_importar(request):
             nuevos = sum(i.operaciones_nuevas for i in importaciones_ok)
             messages.success(
                 request,
-                f"{len(importaciones_ok)} estado(s) procesado(s): {nuevos} movimiento(s) nuevo(s). "
+                f"{len(importaciones_ok)} archivo(s) procesado(s): {nuevos} movimiento(s) nuevo(s). "
                 f"Clasificación automática: {clasificacion['ia']} por IA, "
                 f"{clasificacion['regla']} por reglas aprendidas y "
                 f"{clasificacion['sin_resolver']} pendiente(s).",
@@ -406,9 +508,9 @@ def banca_importar(request):
             )
         return redirect("banca_importar")
 
+    importaciones_qs = ImportacionEstadoCuenta.objects.filter(user=user)
     importaciones = list(
-        ImportacionEstadoCuenta.objects.filter(user=user)
-        .select_related("banco", "producto")[:20]
+        importaciones_qs.select_related("banco", "producto", "movimiento_pago").distinct()[:20]
     )
     cfg = ConfiguracionBanca.objects.filter(user=user).first()
     seleccion = request.GET.get("importacion")
@@ -417,6 +519,17 @@ def banca_importar(request):
         seleccionada = next(
             (item for item in importaciones if str(item.pk) == str(seleccion)), None
         )
+    pagos_aseo_candidatos = []
+    if seleccionada and seleccionada.tipo_documento == "PAGO_ASEO":
+        from gastos.services import monto_facturado_clp
+
+        total_aseo, _ = monto_facturado_clp(seleccionada)
+        pagos_aseo_candidatos = MovimientoBancario.objects.filter(
+            user=user, producto__user=user, moneda="CLP", monto=total_aseo,
+            naturaleza="OPERACIONAL", por_revisar=False,
+        ).exclude(estado="DESCARTADO_CIERRE").select_related("producto")
+        if seleccionada.fecha_pago_real:
+            pagos_aseo_candidatos = pagos_aseo_candidatos.filter(fecha__range=(seleccionada.fecha_pago_real - timedelta(days=7), seleccionada.fecha_pago_real + timedelta(days=7)))
     scope = (
         MovimientoBancario.objects.filter(user=user, importaciones=seleccionada)
         if seleccionada
@@ -453,6 +566,7 @@ def banca_importar(request):
     contexto = {
         "importaciones": importaciones,
         "seleccionada": seleccionada,
+        "pagos_aseo_candidatos": pagos_aseo_candidatos,
         "movimientos": movimientos,
         "categorias": categorias,
         "categoria_chart": [
@@ -473,8 +587,28 @@ def banca_importar(request):
         )[:24],
         "ia_configurada": bool(cfg and cfg.ia_api_key_cifrada),
         "modelo_ia": cfg.modelo_ia if cfg else "",
+        "es_propiedades": False,
+        "url_importacion": "banca_importar",
+        "importaciones_procesadas": sum(1 for item in importaciones if item.estado == "PROCESADO"),
+        "propiedades_vinculadas": len({item.departamento_id for item in importaciones if item.departamento_id}),
     }
     return render(request, "banca/importar.html", contexto)
+
+
+@login_required
+@require_POST
+def banca_vincular_pago_aseo(request, pk):
+    from pendientes.services.pagos import vincular_pago_aseo
+
+    documento = get_object_or_404(ImportacionEstadoCuenta, pk=pk, user=request.user)
+    valor = request.POST.get("movimiento")
+    movimiento = get_object_or_404(MovimientoBancario, pk=valor, user=request.user) if valor else None
+    try:
+        vincular_pago_aseo(documento, movimiento)
+        messages.success(request, "Comprobante actualizado. El pago se contabiliza una sola vez cuando está vinculado.")
+    except ValueError as error:
+        messages.error(request, str(error))
+    return redirect(f"{reverse('banca_importar')}?importacion={pk}")
 
 
 @login_required
@@ -490,7 +624,18 @@ def banca_recalcular_clasificaciones(request):
             user=request.user,
         )
         ids = list(importacion.movimientos.values_list("id", flat=True))
-    resultado = recalcular_clasificaciones(request.user, ids=ids)
+    elif scope == "movimiento":
+        movimiento = get_object_or_404(
+            MovimientoBancario, pk=request.POST.get("movimiento_id"), user=request.user
+        )
+        ids = [movimiento.pk]
+    elif scope not in {"todos", "pendientes"}:
+        return HttpResponse("Alcance inválido", status=400)
+    if scope == "pendientes":
+        resultado = clasificar_pendientes(request.user)
+        resultado["manuales_protegidos"] = 0
+    else:
+        resultado = recalcular_clasificaciones(request.user, ids=ids)
     from banca.services.notificador import avisar_limites_categoria, avisar_presupuesto
 
     avisar_limites_categoria(request.user)
@@ -503,6 +648,8 @@ def banca_recalcular_clasificaciones(request):
     )
     if resultado.get("error"):
         conservacion = (
+            " Las reglas aplicadas se conservaron; las categorías sin resolver siguen pendientes."
+            if scope == "pendientes" else
             f" No se aplicaron cambios y se conservaron {resultado.get('restaurados', 0)} "
             "clasificaciones anteriores."
         )
@@ -539,28 +686,39 @@ def _prestamos_activos(user):
         return []
 
 
-def _avance_bicicletas(user):
-    """Avance de cada préstamo: cuánto se ha vinculado (cargos) vs su monto total."""
+def _avance_bicicletas(user, fecha_corte=None):
+    """Avance con el monto vigente y movimientos conocidos al corte consultado."""
     from django.db.models import Sum
+    from prestamos.models import Prestamo
 
+    fecha_corte = fecha_corte or timezone.localdate()
     out = []
-    for p in _prestamos_activos(user):
-        total = p.monto_total or Decimal("0")
+    for p in Prestamo.objects.filter(user=user):
+        estado = p.estado_en(fecha_corte)
+        if estado is None and p.created_at.date() > fecha_corte:
+            continue
+        if estado and not estado.activo:
+            continue
+        if not estado and not p.activo and fecha_corte >= timezone.localdate():
+            continue
+        total = estado.monto_total if estado else (p.monto_total if fecha_corte >= timezone.localdate() else None)
         cargos = MovimientoBancario.objects.filter(
-            prestamo=p, monto_clp__gt=0
+            user=user, prestamo=p, monto_clp__gt=0, fecha__lte=fecha_corte,
         ).exclude(estado="DESCARTADO_CIERRE").aggregate(s=Sum("monto_clp"))["s"] or Decimal("0")
         abonos = MovimientoBancario.objects.filter(
-            prestamo=p, monto_clp__lt=0
+            user=user, prestamo=p, monto_clp__lt=0, fecha__lte=fecha_corte,
         ).exclude(estado="DESCARTADO_CIERRE").aggregate(s=Sum("monto_clp"))["s"] or Decimal("0")
-        pct = (cargos / total * 100) if total > 0 else Decimal("0")
+        saldo_vinculado = max(cargos + abonos, Decimal("0"))
+        pct = (saldo_vinculado / total * 100) if total and total > 0 else None
         out.append(
             {
                 "prestamo": p,
                 "total": total,
-                "vinculado": cargos,
+                "cargos": cargos,
+                "vinculado": saldo_vinculado,
                 "retornado": -abonos,
-                "pct": min(pct, Decimal("100")),
-                "restante": max(total - cargos, Decimal("0")),
+                "pct": min(pct, Decimal("100")) if pct is not None else None,
+                "restante": max(total - saldo_vinculado, Decimal("0")) if total is not None else None,
             }
         )
     return out
@@ -574,18 +732,63 @@ def banca_reclasificar(request, pk):
     cat_id = request.POST.get("categoria")
     esencialidad = request.POST.get("esencialidad")
     if cat_id:
-        cat = get_object_or_404(CategoriaTematica, pk=cat_id, user=request.user)
+        cat = get_object_or_404(CategoriaTematica, pk=cat_id, user=request.user, activa=True)
+        direccion = "EGRESO" if mov.es_cargo else "INGRESO"
+        if cat.aplica_a not in {direccion, "AMBOS"}:
+            messages.error(request, "La categoría seleccionada no corresponde a este cargo o abono.")
+            return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+        categorias_transferencia = {
+            "Bicicletas", CATEGORIA_TRANSFERENCIA_PROPIA, "Financiamiento / Pago de TDC",
+        }
         mov.categoria = cat
         mov.esencialidad = esencialidad or cat.esencialidad_defecto
         mov.fuente_clasificacion = "MANUAL"
         mov.categoria_es_manual = True
         mov.clasificado_at = timezone.now()
+        mov.por_revisar = False
+        if cat.nombre in categorias_transferencia:
+            mov.naturaleza = "TRANSFERENCIA"
+            mov.naturaleza_es_manual = True
+            mov.por_revisar = False
+            if cat.nombre == CATEGORIA_TRANSFERENCIA_PROPIA:
+                mov.prestamo = None
+        elif not mov.prestamo_id:
+            mov.naturaleza = "OPERACIONAL"
+            mov.naturaleza_es_manual = True
         mov.save()
         # aprender comercio -> categoría para el futuro
-        comercio = request.POST.get("comercio") or mov.descripcion
-        guardar_mapeo_comercio(request.user, comercio, cat, origen="MANUAL")
-        messages.success(request, "Movimiento reclasificado y regla aprendida.")
+        if cat.nombre == "Bicicletas":
+            messages.success(request, "Movimiento marcado como bicicleta: no suma como gasto o ingreso. Vincúlalo a una bicicleta para actualizar su saldo.")
+        elif cat.nombre == CATEGORIA_TRANSFERENCIA_PROPIA:
+            messages.success(request, "Transferencia entre tus cuentas: no suma como gasto ni ingreso.")
+        else:
+            comercio = request.POST.get("comercio") or mov.descripcion
+            guardar_mapeo_comercio(request.user, comercio, cat, origen="MANUAL")
+            messages.success(request, "Movimiento reclasificado y regla aprendida.")
     return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+
+
+@login_required
+@require_POST
+def banca_reclasificar_neat(request, pk):
+    """Clasifica el pago Neat que explica un cargo, sin alterar el cargo bancario."""
+    evento = get_object_or_404(
+        EventoFinancieroExterno, pk=pk, user=request.user, fuente="neat"
+    )
+    categoria = get_object_or_404(
+        CategoriaTematica, pk=request.POST.get("categoria"), user=request.user,
+        activa=True, aplica_a__in=("EGRESO", "AMBOS"),
+    )
+    evento.categoria = categoria
+    evento.categoria_es_manual = True
+    evento.fuente_clasificacion = "MANUAL"
+    evento.confianza_ia = None
+    evento.save(update_fields=[
+        "categoria", "categoria_es_manual", "fuente_clasificacion",
+        "confianza_ia", "updated_at",
+    ])
+    messages.success(request, "Detalle Neat clasificado.")
+    return redirect(request.META.get("HTTP_REFERER", "gastos_movimientos"))
 
 
 @login_required
@@ -611,11 +814,94 @@ def banca_confirmar_revision(request, pk):
 
 @login_required
 @require_POST
+def banca_resolver_movimiento(request, pk):
+    """Confirma un pendiente como ingreso, gasto o transferencia y aprende la regla."""
+    mov = get_object_or_404(MovimientoBancario, pk=pk, user=request.user)
+    decision = request.POST.get("decision")
+    destino = request.META.get("HTTP_REFERER") or f"{reverse('banca_movimientos')}?pendientes=1"
+
+    if decision == "transferencia":
+        mov.naturaleza = "TRANSFERENCIA"
+        mov.por_revisar = False
+        mov.naturaleza_es_manual = True
+        if not mov.categoria_es_manual:
+            mov.categoria = None
+            mov.fuente_clasificacion = "PENDIENTE"
+            mov.confianza_ia = None
+            mov.clasificado_at = None
+        mov.save(
+            update_fields=[
+                "naturaleza", "por_revisar", "naturaleza_es_manual", "categoria",
+                "fuente_clasificacion", "confianza_ia", "clasificado_at", "updated_at",
+            ]
+        )
+        messages.success(request, "Movimiento marcado como transferencia; no se contará como gasto ni ingreso.")
+        return redirect(destino)
+
+    if decision not in {"ingreso", "gasto"}:
+        messages.error(request, "Selecciona si el movimiento es ingreso, gasto o transferencia.")
+        return redirect(destino)
+    if (decision == "gasto") != mov.es_cargo:
+        messages.error(request, "La clasificación debe coincidir con el sentido del movimiento bancario.")
+        return redirect(destino)
+
+    categoria = get_object_or_404(
+        CategoriaTematica,
+        pk=request.POST.get("categoria"),
+        user=request.user,
+        activa=True,
+    )
+    direccion = "INGRESO" if decision == "ingreso" else "EGRESO"
+    if categoria.aplica_a not in {direccion, "AMBOS"}:
+        messages.error(request, "La categoría seleccionada no corresponde a este ingreso o gasto.")
+        return redirect(destino)
+
+    es_bicicleta = categoria.nombre == "Bicicletas"
+    es_transferencia_propia = categoria.nombre == CATEGORIA_TRANSFERENCIA_PROPIA
+    mov.naturaleza = "TRANSFERENCIA" if es_bicicleta or es_transferencia_propia else "OPERACIONAL"
+    if es_transferencia_propia:
+        mov.prestamo = None
+    mov.por_revisar = False
+    mov.naturaleza_es_manual = True
+    mov.categoria = categoria
+    mov.esencialidad = categoria.esencialidad_defecto
+    mov.fuente_clasificacion = "MANUAL"
+    mov.categoria_es_manual = True
+    mov.confianza_ia = None
+    mov.clasificado_at = timezone.now()
+    mov.save(
+        update_fields=[
+            "naturaleza", "por_revisar", "naturaleza_es_manual", "categoria",
+            "esencialidad", "fuente_clasificacion", "categoria_es_manual",
+            "confianza_ia", "clasificado_at", "updated_at",
+            "prestamo",
+        ]
+    )
+    if es_bicicleta:
+        messages.success(request, "Movimiento marcado como bicicleta: no suma como gasto o ingreso. Vincúlalo a una bicicleta para actualizar su saldo.")
+    elif es_transferencia_propia:
+        messages.success(request, "Transferencia entre tus cuentas: no suma como gasto ni ingreso.")
+    else:
+        guardar_mapeo_comercio(request.user, mov.descripcion, categoria, origen="MANUAL")
+        messages.success(request, f"Movimiento guardado como {decision}; se aprendió su glosa para futuras cargas.")
+    return redirect(destino)
+
+
+@login_required
+@require_POST
 def banca_asignar_prestamo(request, pk):
     """Clasifica financiamiento o asigna un préstamo; fija la decisión manual."""
     mov = get_object_or_404(MovimientoBancario, pk=pk, user=request.user)
     prestamo_id = request.POST.get("prestamo")
-    if prestamo_id == "transferencia":
+    if prestamo_id == "transferencia_propia":
+        mov.prestamo = None
+        mov.naturaleza = "TRANSFERENCIA"
+        mov.categoria = categoria_transferencia_propia(request.user)
+        mov.fuente_clasificacion = "MANUAL"
+        mov.categoria_es_manual = True
+        mov.clasificado_at = timezone.now()
+        messages.success(request, "Transferencia entre tus cuentas: no suma como gasto ni ingreso.")
+    elif prestamo_id == "transferencia":
         categoria, _ = CategoriaTematica.objects.get_or_create(
             user=request.user,
             nombre="Financiamiento / Pago de TDC",
@@ -644,11 +930,24 @@ def banca_asignar_prestamo(request, pk):
         prestamo = get_object_or_404(Prestamo, pk=prestamo_id, user=request.user)
         mov.prestamo = prestamo
         mov.naturaleza = "TRANSFERENCIA"
+        categoria, _ = CategoriaTematica.objects.get_or_create(
+            user=request.user, nombre="Bicicletas",
+            defaults={"aplica_a": "AMBOS", "origen": "SISTEMA", "esencialidad_defecto": "FIJO"},
+        )
+        mov.categoria = categoria
+        mov.fuente_clasificacion = "MANUAL"
+        mov.categoria_es_manual = True
+        mov.clasificado_at = timezone.now()
         messages.success(request, f"Vinculado a «{prestamo.nombre}» (transferencia).")
     else:
         # "— gasto real —": desvincula y vuelve operacional
         mov.prestamo = None
         mov.naturaleza = "OPERACIONAL"
+        if mov.categoria_id and mov.categoria.nombre in {"Bicicletas", CATEGORIA_TRANSFERENCIA_PROPIA}:
+            mov.categoria = None
+            mov.categoria_es_manual = False
+            mov.fuente_clasificacion = "PENDIENTE"
+            mov.clasificado_at = None
         messages.success(request, "Marcado como gasto/ingreso real (sin préstamo).")
     mov.por_revisar = False
     mov.naturaleza_es_manual = True
@@ -697,6 +996,64 @@ def _asignar_cuenta_por_cobrar(request, fuente):
 def banca_asignar_cuenta_cobrar_movimiento(request, pk):
     movimiento = get_object_or_404(MovimientoBancario, pk=pk, user=request.user)
     return _asignar_cuenta_por_cobrar(request, movimiento)
+
+
+@login_required
+@require_POST
+@transaction.atomic
+def banca_asignar_abono_cuenta_cobrar(request, pk):
+    """Registra un abono bancario entrante como recuperación de una cuenta por cobrar."""
+    movimiento = get_object_or_404(MovimientoBancario, pk=pk, user=request.user)
+    if movimiento.es_cargo:
+        messages.error(request, "Solo un abono entrante puede pagar una cuenta por cobrar.")
+        return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+
+    cuenta = get_object_or_404(
+        CuentaPorCobrar,
+        pk=request.POST.get("cuenta_cobro"),
+        user=request.user,
+        activo=True,
+    )
+    if movimiento.moneda != cuenta.moneda:
+        messages.error(request, "La moneda del movimiento no coincide con la cuenta por cobrar.")
+        return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+
+    monto_abono = abs(movimiento.monto) if cuenta.moneda == "USD" else abs(movimiento.monto_clp)
+    if monto_abono <= 0:
+        messages.error(request, "El movimiento no tiene un importe original válido para registrar el abono.")
+        return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+
+    from patrimonio.models import AbonoCuentaPorCobrar
+
+    abono, _ = AbonoCuentaPorCobrar.objects.update_or_create(
+        movimiento=movimiento,
+        defaults={
+            "cuenta": cuenta,
+            "fecha": movimiento.fecha,
+            "monto": monto_abono,
+            "descripcion": movimiento.descripcion,
+        },
+    )
+    movimiento.naturaleza = "TRANSFERENCIA"
+    movimiento.por_revisar = False
+    movimiento.naturaleza_es_manual = True
+    movimiento.categoria = None
+    movimiento.categoria_es_manual = False
+    movimiento.fuente_clasificacion = "PENDIENTE"
+    movimiento.confianza_ia = None
+    movimiento.clasificado_at = None
+    movimiento.save(
+        update_fields=[
+            "naturaleza", "por_revisar", "naturaleza_es_manual", "categoria",
+            "categoria_es_manual", "fuente_clasificacion", "confianza_ia",
+            "clasificado_at", "updated_at",
+        ]
+    )
+    messages.success(
+        request,
+        f"Abono de ${abono.monto:,.0f} vinculado a «{cuenta.nombre}»; no se contará como ingreso.",
+    )
+    return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
 
 
 @login_required
@@ -919,7 +1276,7 @@ def banca_deudas(request):
     """Último SaldoSnapshot por producto: tarjetas (cupo CLP/USD) y créditos/hipotecario."""
     user = request.user
     prod_ids = (
-        SaldoSnapshot.objects.filter(user=user)
+        SaldoSnapshot.objects.filter(user=user, producto__user=user, producto__contabilizar=True)
         .values_list("producto", flat=True)
         .distinct()
     )
@@ -983,6 +1340,7 @@ def banca_categorias(request):
         "ESENCIALIDAD": CategoriaTematica._meta.get_field(
             "esencialidad_defecto"
         ).choices,
+        "APLICA_A": CategoriaTematica._meta.get_field("aplica_a").choices,
     }
     return render(request, "banca/categorias.html", context)
 
@@ -1028,6 +1386,7 @@ def banca_config(request):
 
     user = request.user
     cfg, _ = ConfiguracionBanca.objects.get_or_create(user=user)
+    resumen_ocio = presupuesto.resumen_presupuesto(user)
     context = {
         "credenciales": CredencialBanco.objects.filter(user=user).select_related(
             "banco"
@@ -1036,6 +1395,8 @@ def banca_config(request):
         "conectores": listar_conectores(),
         "param_form": ConfiguracionBancaForm(instance=cfg),
         "cfg": cfg,
+        "resumen_ocio": resumen_ocio,
+        "alerta_ocio_clp": max(resumen_ocio["disponible_ocio"] * cfg.umbral_alerta_ocio, Decimal("0")),
         "tiene_ia_key": bool(cfg.ia_api_key_cifrada),
         "contrapartes": ContraparteConocida.objects.filter(user=user).select_related(
             "prestamo"

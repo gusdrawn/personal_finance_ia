@@ -12,11 +12,13 @@
         <p class="text-xs uppercase tracking-widest text-emerald-400 font-bold">Prueba de concepto</p>
         <h3 class="text-2xl font-bold text-white mt-1">Analiza varios estados de cuenta juntos</h3>
         <p class="text-slate-400 text-sm mt-2 max-w-3xl">
-            Sube PDFs de Itaú, Banco Falabella, Santander, Lider Bci o Tenpo. Detectamos tarjetas y cuentas
-            corrientes, sus períodos, saldos y movimientos; luego los deduplicamos y clasificamos.
+            Sube PDFs de estados de cuenta de Itaú, Banco Falabella, Santander, Lider Bci o Tenpo.
+            Aseo y contribuciones se registran manualmente desde Pendientes.
         </p>
     </div>
-    <a href="{% url 'banca_movimientos' %}" class="text-emerald-400 hover:text-emerald-300 text-sm whitespace-nowrap">Revisar todos los movimientos →</a>
+    <div class="flex flex-wrap gap-3 items-center">
+        <a href="{% url 'banca_movimientos' %}" class="text-emerald-400 hover:text-emerald-300 text-sm whitespace-nowrap">Revisar todos los movimientos →</a>
+    </div>
 </div>
 
 <form method="post" enctype="multipart/form-data" class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50" data-file-upload-form>
@@ -40,7 +42,7 @@
             <i class="fas fa-wand-magic-sparkles mr-2"></i>Analizar archivos
         </button>
     </div>
-    <p class="text-xs text-slate-600 mt-3">Los PDFs quedan vinculados a tu usuario para poder auditar el origen de cada movimiento. Si vuelves a subir uno existente, se aplica el lector actual sin duplicar movimientos. No se usan credenciales bancarias.</p>
+    <p class="text-xs text-slate-600 mt-3">Los PDFs quedan vinculados a tu usuario para poder auditar el origen de cada movimiento. Si vuelves a subir uno existente, se aplica el lector actual sin duplicar movimientos. Los documentos escaneados requieren Tesseract OCR instalado en el equipo.</p>
 </form>
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -86,7 +88,21 @@
         <div class="rounded-lg bg-slate-900/30 border border-slate-700/50 p-3 text-slate-300">{{ seleccionada.provisionales_descartados }} no aparecieron al cierre</div>
         <div class="rounded-lg bg-amber-500/5 border border-amber-500/20 p-3 text-amber-300">{{ seleccionada.provisionales_ambiguos }} calces ambiguos</div>
     </div>
+    {% if seleccionada.tipo_documento == 'PAGO_ASEO' %}
+    <form method="post" action="{% url 'banca_vincular_pago_aseo' seleccionada.pk %}" class="mt-4 space-y-2">
+        {% csrf_token %}
+        <label for="pago-aseo" class="block text-sm font-semibold text-emerald-300">Vincular pago bancario</label>
+        <p class="text-xs text-slate-400">Selecciona el cargo que pagó este certificado. El gasto y su desglose por propiedad se contarán una sola vez, con la fecha bancaria.</p>
+        <select id="pago-aseo" name="movimiento" class="w-full bg-slate-900 rounded-lg text-sm">
+            <option value="">Sin cargo asociado: contabilizar el certificado</option>
+            {% if seleccionada.movimiento_pago_id %}<option value="{{ seleccionada.movimiento_pago_id }}" selected>{{ seleccionada.movimiento_pago.fecha }} · {{ seleccionada.movimiento_pago.descripcion }} (vinculado)</option>{% endif %}
+            {% for pago in pagos_aseo_candidatos %}{% if pago.pk != seleccionada.movimiento_pago_id %}<option value="{{ pago.pk }}">{{ pago.fecha }} · {{ pago.producto }} · {{ pago.descripcion }} · ${{ pago.monto_clp|intcomma }}</option>{% endif %}{% endfor %}
+        </select>
+        <button class="px-3 py-2 rounded-lg bg-emerald-500/20 text-emerald-300 text-sm">Guardar vínculo</button>
+    </form>
+    {% elif seleccionada.tipo_documento == 'ESTADO_CUENTA' %}
     {% if not seleccionada.periodo_inicio or not seleccionada.periodo_fin %}<p class="mt-3 text-xs text-amber-300"><i class="fas fa-triangle-exclamation mr-1"></i>Este PDF no informa un período completo; no cerrará movimientos provisionales de Apple Pay.</p>{% endif %}
+    {% endif %}
     {% endif %}
 </div>
 
@@ -142,8 +158,9 @@
                     <span class="text-sm text-slate-200 truncate">{{ i.nombre_archivo }}</span>
                     <span class="text-[10px] px-2 py-0.5 rounded-full {% if i.estado == 'PROCESADO' %}bg-emerald-500/15 text-emerald-300{% elif i.estado == 'DUPLICADO' %}bg-sky-500/15 text-sky-300{% else %}bg-rose-500/15 text-rose-300{% endif %}">{{ i.get_estado_display }}</span>
                 </div>
-                <p class="text-xs text-slate-500 mt-1">{{ i.banco_detectado|default:'Banco no detectado' }}{% if i.tipo_producto == 'CUENTA' %} · Cuenta ••••{{ i.tarjeta_ultimos4 }}{% elif i.tarjeta_ultimos4 %} · Tarjeta ••••{{ i.tarjeta_ultimos4 }}{% endif %}{% if i.moneda == 'USD' %} · USD{% endif %}</p>
+                <p class="text-xs text-slate-500 mt-1">{{ i.banco_detectado|default:'Banco no detectado' }}{% if i.tipo_documento == 'ORDEN_ASEO' %} · Orden de Aseo{% elif i.tipo_documento == 'PAGO_ASEO' %} · Pago de Aseo{% elif i.tipo_producto == 'CUENTA' %} · Cuenta ••••{{ i.tarjeta_ultimos4 }}{% elif i.tarjeta_ultimos4 %} · Tarjeta ••••{{ i.tarjeta_ultimos4 }}{% endif %}{% if i.moneda == 'USD' %} · USD{% endif %}</p>
                 <p class="text-xs text-slate-500 mt-1">{{ i.operaciones_nuevas }} nuevos · {{ i.operaciones_detectadas }} detectados{% if i.fecha_estado %} · {{ i.fecha_estado|date:'d/m/Y' }}{% endif %}{% if i.fecha_vencimiento %} · paga hasta {{ i.fecha_vencimiento|date:'d/m/Y' }}{% endif %}</p>
+                {% if i.tipo_producto == 'ASEO' and i.departamento %}<p class="text-xs text-emerald-300 mt-1">Propiedad: {{ i.departamento.codigo }}{% if i.monto_pagado_clp %} · Pagado: ${{ i.monto_pagado_clp|floatformat:0|intcomma }}{% endif %}</p>{% endif %}
                 {% if i.cupo_disponible_clp is not None %}<p class="text-xs text-emerald-300 mt-1">Cupo disponible: ${{ i.cupo_disponible_clp|floatformat:0|intcomma }}{% if i.cupo_total_clp is not None %} de ${{ i.cupo_total_clp|floatformat:0|intcomma }}{% endif %}</p>{% endif %}
                 {% if i.cupo_disponible_usd is not None %}<p class="text-xs text-sky-300 mt-1">Cupo disponible USD: US${{ i.cupo_disponible_usd|floatformat:2|intcomma }}{% if i.cupo_total_usd is not None %} de US${{ i.cupo_total_usd|floatformat:2|intcomma }}{% endif %}</p>{% endif %}
                 {% if i.saldo_final_clp is not None %}<p class="text-xs text-emerald-300 mt-1">Saldo final: ${{ i.saldo_final_clp|floatformat:0|intcomma }}</p>{% endif %}

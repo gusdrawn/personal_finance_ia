@@ -14,6 +14,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 
 from banca.models import CategoriaTematica
+from banca.services.transferencias import CATEGORIA_TRANSFERENCIA_PROPIA
 
 # (nombre, esencialidad, es_interes_o_costo_financiero)
 CATEGORIAS_DEFECTO = [
@@ -21,6 +22,8 @@ CATEGORIAS_DEFECTO = [
     ("Financiamiento / Hipoteca", "FIJO", False),
     ("Financiamiento / Pago de TDC", "FIJO", False),
     ("Pagos por cuenta de terceros", "FIJO", False),
+    ("Bicicletas", "FIJO", False),
+    (CATEGORIA_TRANSFERENCIA_PROPIA, "FIJO", False),
     ("Servicios básicos", "FIJO", False),
     ("Telefonía / Internet", "FIJO", False),
     ("Seguros", "FIJO", False),
@@ -50,7 +53,7 @@ def sembrar(user) -> int:
             defaults={
                 "esencialidad_defecto": esencialidad,
                 "es_interes_o_costo_financiero": es_interes,
-                "aplica_a": "EGRESO",
+                "aplica_a": "AMBOS" if nombre in {"Bicicletas", CATEGORIA_TRANSFERENCIA_PROPIA} else "EGRESO",
                 "origen": "SISTEMA",
                 "orden": orden,
             },

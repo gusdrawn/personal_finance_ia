@@ -23,11 +23,15 @@
 <!-- Crear nueva -->
 <div class="p-6 rounded-2xl bg-slate-800/50 border border-slate-700/50">
     <h4 class="font-bold text-white mb-4">Nueva categoría</h4>
-    <form method="post" action="{% url 'banca_categorias' %}" class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+    <form method="post" action="{% url 'banca_categorias' %}" class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
         {% csrf_token %}
         <div>
             <label class="block text-xs text-slate-500 mb-1">Nombre</label>
             {{ form.nombre }}
+        </div>
+        <div>
+            <label class="block text-xs text-slate-500 mb-1">Aplica a</label>
+            {{ form.aplica_a }}
         </div>
         <div>
             <label class="block text-xs text-slate-500 mb-1">Esencialidad</label>
@@ -56,7 +60,7 @@
     <table class="w-full text-sm">
         <thead>
             <tr class="text-slate-500 text-left text-xs uppercase">
-                <th class="p-3">Nombre</th><th class="p-3">Esencialidad</th>
+                <th class="p-3">Nombre</th><th class="p-3">Aplica a</th><th class="p-3">Esencialidad</th>
                 <th class="p-3">Interés</th><th class="p-3">Activa</th><th class="p-3">Orden</th><th class="p-3 text-right">Acciones</th>
             </tr>
         </thead>
@@ -64,6 +68,11 @@
         {% for c in categorias %}
             <tr class="border-t border-slate-700/50">
                 <td class="p-3"><input form="cat-edit-{{ c.pk }}" name="nombre" value="{{ c.nombre }}" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200 w-full"></td>
+                <td class="p-3">
+                    <select form="cat-edit-{{ c.pk }}" name="aplica_a" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200">
+                        {% for val, lbl in APLICA_A %}<option value="{{ val }}" {% if c.aplica_a == val %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+                    </select>
+                </td>
                 <td class="p-3">
                     <select form="cat-edit-{{ c.pk }}" name="esencialidad_defecto" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200">
                         {% for val, lbl in ESENCIALIDAD %}<option value="{{ val }}" {% if c.esencialidad_defecto == val %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
@@ -78,7 +87,7 @@
                 </td>
             </tr>
         {% empty %}
-            <tr><td colspan="6" class="p-6 text-center text-slate-500">No tienes categorías. Usa «Sembrar por defecto» para empezar.</td></tr>
+            <tr><td colspan="7" class="p-6 text-center text-slate-500">No tienes categorías. Usa «Sembrar por defecto» para empezar.</td></tr>
         {% endfor %}
         </tbody>
     </table>

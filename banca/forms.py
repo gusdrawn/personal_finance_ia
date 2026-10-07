@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import time as datetime_time
+from decimal import Decimal
 from django import forms
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -281,6 +282,7 @@ class CategoriaTematicaForm(forms.ModelForm):
         model = CategoriaTematica
         fields = [
             "nombre",
+            "aplica_a",
             "esencialidad_defecto",
             "es_interes_o_costo_financiero",
             "activa",
@@ -290,6 +292,7 @@ class CategoriaTematicaForm(forms.ModelForm):
             "nombre": forms.TextInput(
                 attrs={"class": _INPUT, "placeholder": "Supermercado"}
             ),
+            "aplica_a": forms.Select(attrs={"class": _INPUT}),
             "esencialidad_defecto": forms.Select(attrs={"class": _INPUT}),
             "es_interes_o_costo_financiero": forms.CheckboxInput(
                 attrs={"class": _CHECK}
@@ -301,6 +304,12 @@ class CategoriaTematicaForm(forms.ModelForm):
 
 class ConfiguracionBancaForm(forms.ModelForm):
     """Parámetros de presupuesto + proveedor de IA (compatible OpenAI)."""
+
+    umbral_alerta_ocio_pct = forms.IntegerField(
+        required=False, min_value=1, max_value=100,
+        label="Avisar al usar este porcentaje del disponible para ocio",
+        widget=forms.NumberInput(attrs={"class": _INPUT, "min": "1", "max": "100", "step": "1"}),
+    )
 
     ia_api_key = forms.CharField(
         required=False,
@@ -315,6 +324,7 @@ class ConfiguracionBancaForm(forms.ModelForm):
         fields = [
             "ventana_meses_ingreso",
             "umbral_alerta_ocio",
+            "presupuesto_mensual_clp",
             "tolerancia_comision_bicicleta",
             "ia_base_url",
             "modelo_ia",
@@ -322,6 +332,7 @@ class ConfiguracionBancaForm(forms.ModelForm):
         labels = {
             "ventana_meses_ingreso": "Meses para promediar ingresos",
             "umbral_alerta_ocio": "Umbral de alerta Ocio (0.80 = 80%)",
+            "presupuesto_mensual_clp": "Presupuesto mensual para compras de tarjeta (CLP)",
             "tolerancia_comision_bicicleta": "Tolerancia comisión bicicleta (0.03 = 3%)",
             "ia_base_url": "Base URL del proveedor IA",
             "modelo_ia": "Modelo de IA",
@@ -330,6 +341,9 @@ class ConfiguracionBancaForm(forms.ModelForm):
             "ventana_meses_ingreso": forms.NumberInput(attrs={"class": _INPUT}),
             "umbral_alerta_ocio": forms.NumberInput(
                 attrs={"class": _INPUT, "step": "0.01"}
+            ),
+            "presupuesto_mensual_clp": forms.NumberInput(
+                attrs={"class": _INPUT, "min": "0", "step": "1"}
             ),
             "tolerancia_comision_bicicleta": forms.NumberInput(
                 attrs={"class": _INPUT, "step": "0.001"}
@@ -341,6 +355,21 @@ class ConfiguracionBancaForm(forms.ModelForm):
             "modelo_ia": forms.TextInput(attrs={"class": _INPUT}),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["umbral_alerta_ocio"].required = False
+        if self.instance and self.instance.pk:
+            self.fields["umbral_alerta_ocio_pct"].initial = int(self.instance.umbral_alerta_ocio * 100)
+
+    def clean(self):
+        cleaned = super().clean()
+        pct = cleaned.get("umbral_alerta_ocio_pct")
+        if pct is not None:
+            cleaned["umbral_alerta_ocio"] = Decimal(pct) / Decimal("100")
+        elif cleaned.get("umbral_alerta_ocio") is None:
+            cleaned["umbral_alerta_ocio"] = self.instance.umbral_alerta_ocio if self.instance and self.instance.pk else Decimal("0.80")
+        return cleaned
+
     def save(self, commit=True):
         instance = super().save(commit=False)
         clave = self.cleaned_data.get("ia_api_key")
@@ -349,6 +378,12 @@ class ConfiguracionBancaForm(forms.ModelForm):
         if commit:
             instance.save()
         return instance
+
+    def clean_presupuesto_mensual_clp(self):
+        monto = self.cleaned_data["presupuesto_mensual_clp"]
+        if monto < 0:
+            raise forms.ValidationError("El presupuesto mensual no puede ser negativo.")
+        return monto
 
 
 class ConfiguracionNotificacionesForm(forms.ModelForm):

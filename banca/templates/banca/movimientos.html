@@ -5,25 +5,51 @@
 {% block page_title %}Movimientos{% endblock %}
 
 {% block content %}
-{% include 'banca/_tabs.html' %}
+{% if pagina_gastos %}
+<div class="mb-5 flex flex-wrap items-center gap-2 text-sm">
+    <a href="{% url 'gastos-table' %}" class="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white">Consolidado mensual</a>
+    <span class="px-4 py-2 rounded-lg bg-emerald-500 text-white font-semibold">Movimientos y categorías</span>
+    <a href="{% url 'banca_config' %}" class="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white">Configurar presupuesto</a>
+</div>
+<div class="mb-5 p-5 rounded-2xl bg-sky-500/5 border border-sky-500/20">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+        <div><h2 class="font-bold text-white">Proyección de tarjeta · {{ proyeccion.periodo_estimado|date:"m/Y" }}</h2>
+            <p class="text-xs text-slate-400 mt-1">Ya facturado: ${{ proyeccion.facturado_clp|floatformat:0|intcomma }} · {{ proyeccion.cantidad }} cargos sin facturar de {{ proyeccion.periodo_compras|date:"m/Y" }}: ${{ proyeccion.total_clp|floatformat:0|intcomma }}. La cartola fijará el vencimiento real. Neat solo detalla cargos bancarios.</p></div>
+        <div class="text-right"><p class="text-2xl font-bold {% if proyeccion.alerta %}text-amber-300{% else %}text-sky-300{% endif %}">${{ proyeccion.total_proyectado_clp|floatformat:0|intcomma }}</p>
+            {% if proyeccion.presupuesto_clp %}<p class="text-xs text-slate-400">{{ proyeccion.porcentaje_usado }}% de ${{ proyeccion.presupuesto_clp|floatformat:0|intcomma }}</p>{% else %}<p class="text-xs text-amber-300">Presupuesto aún sin configurar</p>{% endif %}</div>
+    </div>
+    <div class="mt-3 flex flex-wrap items-center gap-3 text-xs">
+        <a href="{% url 'gastos_movimientos' %}?estado=PENDIENTE_CARTOLA&fecha_desde={{ proyeccion.periodo_compras|date:'Y-m-d' }}&fecha_hasta={{ proyeccion.fin_compras|date:'Y-m-d' }}" class="text-sky-300 hover:text-white">Ver compras pendientes de cartola</a>
+        <a href="{% url 'gastos_movimientos' %}?estado=PROVISIONAL&origen=APPLE_PAY&fecha_desde={{ proyeccion.periodo_compras|date:'Y-m-d' }}&fecha_hasta={{ proyeccion.fin_compras|date:'Y-m-d' }}" class="text-sky-300 hover:text-white">Solo Apple Pay provisional</a>
+        <span class="text-slate-400">{{ proyeccion.sin_categoria }} sin categoría</span>
+    </div>
+    {% if proyeccion.atrasados_cantidad %}<p class="text-xs text-amber-300 mt-3">{{ proyeccion.atrasados_cantidad }} cargos de meses anteriores pendientes de cartola ({{ proyeccion.atrasados_clp|floatformat:0|intcomma }} CLP) requieren revisión y no se suman a la proyección. <a href="{% url 'gastos_movimientos' %}?estado=PENDIENTE_CARTOLA&fecha_desde=&fecha_hasta={{ proyeccion.fin_anterior|date:'Y-m-d' }}" class="underline">Ver pendientes</a></p>{% endif %}
+</div>
+<form method="post" action="{% url 'banca_recalcular_clasificaciones' %}" class="mb-5 flex flex-wrap items-center gap-3 p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+    {% csrf_token %}<input type="hidden" name="scope" value="pendientes">
+    <button class="px-4 py-2 rounded-lg bg-violet-500/20 text-violet-200 font-semibold text-sm hover:bg-violet-500/30"><i class="fas fa-wand-magic-sparkles mr-1"></i>Clasificar pendientes con IA</button>
+    <p class="text-xs text-slate-400">Consulta la IA para glosas sin categoría; conserva tus clasificaciones manuales. También puedes cambiar cada categoría en la tabla.</p>
+</form>
+{% else %}{% include 'banca/_tabs.html' %}{% endif %}
 
-{% if bicicletas %}
+{% if bicicletas and not pagina_gastos %}
 <!-- Avance de bicicletas (préstamos NEAT) -->
 <div class="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
-    <h4 class="font-bold text-white mb-3 text-sm"><i class="fas fa-bicycle text-emerald-400 mr-2"></i>Avance de bicicletas (cargos vinculados vs total)</h4>
+    <h4 class="font-bold text-white mb-1 text-sm"><i class="fas fa-bicycle text-emerald-400 mr-2"></i>Bicicletas al {{ bicicletas_fecha|date:'d/m/Y' }}</h4>
+    <p class="text-xs text-slate-500 mb-3">Monto vigente y movimientos vinculados hasta la fecha indicada en «Hasta».</p>
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
     {% for b in bicicletas %}
         <div class="p-3 rounded-xl bg-slate-900/50 border border-slate-700/50">
             <div class="flex justify-between items-baseline">
                 <span class="text-slate-200 text-sm font-medium">{{ b.prestamo.nombre }}</span>
-                <span class="text-xs text-slate-500">{{ b.pct|floatformat:0 }}%</span>
+                <span class="text-xs text-slate-500">{% if b.total is None %}Sin historial{% elif b.pct is not None %}{{ b.pct|floatformat:0 }}%{% else %}Saldo cero{% endif %}</span>
             </div>
             <div class="w-full h-2 rounded-full bg-slate-700 overflow-hidden my-1.5">
-                <div class="h-full bg-emerald-500" style="width: {{ b.pct|floatformat:0 }}%"></div>
+                <div class="h-full bg-emerald-500" style="width: {{ b.pct|default:0|floatformat:0 }}%"></div>
             </div>
             <p class="text-[11px] text-slate-500">
-                Vinculado ${{ b.vinculado|intcomma }} / ${{ b.total|intcomma }}
-                · Restante ${{ b.restante|intcomma }} · Retornado ${{ b.retornado|intcomma }}
+                Saldo vinculado ${{ b.vinculado|intcomma }}{% if b.total is not None %} / registro ${{ b.total|intcomma }} · Sin vincular ${{ b.restante|intcomma }}{% else %} · Sin monto registrado para esta fecha{% endif %}
+                · Cargos ${{ b.cargos|intcomma }} · Abonos ${{ b.retornado|intcomma }}
             </p>
         </div>
     {% endfor %}
@@ -32,7 +58,7 @@
 {% endif %}
 
 <!-- Filtros -->
-<form id="filtros-movimientos" method="get" class="space-y-3 p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+<form id="filtros-movimientos" method="get" action="{% if pagina_gastos %}{% url 'gastos_movimientos' %}{% else %}{% url 'banca_movimientos' %}{% endif %}#clasificacion-movimientos" class="space-y-3 p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50">
     <div class="flex flex-wrap items-center gap-3">
     <label class="flex-1 min-w-[16rem] text-xs text-slate-500">Buscar movimiento<input type="search" name="q" value="{{ f_q }}" placeholder="Comercio, glosa, banco o tarjeta…" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"></label>
     <label class="text-xs text-slate-500">Desde<input type="date" name="fecha_desde" value="{{ f_fecha_desde }}" class="mt-1 block bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200"></label>
@@ -47,6 +73,11 @@
     </select>
     </div>
     <div class="flex flex-wrap items-center gap-3">
+    <select name="direccion" aria-label="Sentido del movimiento" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200">
+        <option value="">Cargos y abonos</option>
+        <option value="EGRESO" {% if f_direccion == 'EGRESO' %}selected{% endif %}>Solo cargos · sale dinero</option>
+        <option value="INGRESO" {% if f_direccion == 'INGRESO' %}selected{% endif %}>Solo abonos · entra dinero</option>
+    </select>
     <select name="categoria" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200">
         <option value="">Categoría: todas</option>
         {% for c in categorias %}<option value="{{ c.id }}" {% if f_categoria|stringformat:'s' == c.id|stringformat:'s' %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
@@ -66,21 +97,47 @@
     <label class="flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" name="revisar" value="1" {% if f_revisar == '1' %}checked{% endif %} class="rounded"> Solo por revisar
     </label>
+    {% if f_pendientes == '1' %}<input type="hidden" name="pendientes" value="1">{% endif %}
     <button class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm">Buscar y filtrar</button>
-    <a href="{% url 'banca_movimientos' %}" class="px-3 py-2 text-sm text-slate-400 hover:text-white">Limpiar</a>
+    <a href="{% if pagina_gastos %}{% url 'gastos_movimientos' %}{% else %}{% url 'banca_movimientos' %}{% endif %}" class="px-3 py-2 text-sm text-slate-400 hover:text-white">Limpiar</a>
     </div>
 </form>
+<p class="text-xs text-slate-500 mt-2">Apple Pay indica de dónde llegó el movimiento; «provisional» indica que aún espera confirmación. Una compra confirmada conserva su origen Apple Pay y aparece una sola vez.</p>
 
-{% if categoria_chart %}
-<section class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
+<div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 p-3 rounded-xl bg-slate-800/40 border border-slate-700/50 text-xs text-slate-400">
+    <span class="font-semibold text-slate-300">Cargo = sale dinero · Abono = entra dinero.</span>
+    <span class="text-slate-500">Una transferencia o bicicleta vinculada no suma como gasto ni ingreso.</span>
+</div>
+
+{% if f_pendientes != '1' %}
+<div class="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20">
+    <div>
+        <h3 class="font-semibold text-white">{{ pendientes_count }} movimiento{{ pendientes_count|pluralize }} pendiente{{ pendientes_count|pluralize }} de revisar</h3>
+        <p class="text-xs text-slate-400">Revisa cada caso y define si es ingreso, gasto o transferencia. Las categorías se administran desde <a href="{% url 'banca_categorias' %}" class="text-sky-300 hover:text-white underline">Categorías</a>.</p>
+    </div>
+    <a href="{% if pagina_gastos %}{% url 'gastos_movimientos' %}{% else %}{% url 'banca_movimientos' %}{% endif %}?pendientes=1" class="px-4 py-2 rounded-lg bg-amber-500/15 text-amber-200 text-sm font-semibold hover:bg-amber-500/25">Revisar uno por uno</a>
+</div>
+{% else %}
+<div class="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20">
+    <div>
+        <h3 class="font-semibold text-white">Revisión uno por uno</h3>
+        <p class="text-xs text-slate-400">Quedan {{ pendientes_count }} movimiento{{ pendientes_count|pluralize }}. Se muestra primero el más antiguo; guardar una decisión abre el siguiente.</p>
+    </div>
+    <a href="{% if pagina_gastos %}{% url 'gastos_movimientos' %}{% else %}{% url 'banca_movimientos' %}{% endif %}" class="px-3 py-2 text-sm text-slate-300 hover:text-white">Volver a todos los movimientos</a>
+</div>
+{% endif %}
+
+{% if categoria_chart and f_pendientes != '1' %}
+<section id="clasificacion-movimientos" class="p-5 rounded-2xl bg-slate-800/50 border border-slate-700/50">
     <div class="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div><h3 class="font-bold text-white">Clasificación de movimientos</h3><p class="text-xs text-slate-500">Haz clic en una categoría para filtrar la tabla automáticamente.</p></div>
         <span class="text-xs text-slate-500">{{ total_movimientos }} resultado{{ total_movimientos|pluralize }} en la tabla</span>
     </div>
     <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.7fr)] gap-6 items-center">
         <div class="h-72"><canvas id="movimientos-categorias-chart" aria-label="Distribución de movimientos por categoría"></canvas></div>
-        <div class="space-y-2">
-        {% for row in categoria_chart %}<div class="flex justify-between gap-3 text-sm"><span class="truncate text-slate-300">{{ row.nombre }}</span><span class="text-slate-400">${{ row.total|floatformat:0|intcomma }}</span></div>{% endfor %}
+        <div class="space-y-2 max-h-72 overflow-y-auto">
+        {% if f_categoria %}<button type="button" data-categoria="" class="text-xs text-sky-300 underline">Mostrar todas las categorías</button>{% endif %}
+        {% for row in categoria_chart %}{% if row.id %}<button type="button" data-categoria="{{ row.id }}" class="w-full flex justify-between gap-3 text-sm text-left rounded px-2 py-1 hover:bg-slate-700/50 {% if f_categoria|stringformat:'s' == row.id|stringformat:'s' %}bg-sky-500/20 text-sky-200{% endif %}" title="Filtrar {{ row.nombre }}"><span class="truncate">{{ row.nombre }}</span><span class="shrink-0 text-slate-400">${{ row.total|floatformat:0|intcomma }}</span></button>{% else %}<div class="flex justify-between gap-3 px-2 py-1 text-sm text-slate-500"><span class="truncate">{{ row.nombre }}</span><span>${{ row.total|floatformat:0|intcomma }}</span></div>{% endif %}{% endfor %}
         </div>
     </div>
 </section>
@@ -89,13 +146,16 @@
 (() => {
     const rows = JSON.parse(document.getElementById('movimientos-categorias-data').textContent);
     const canvas = document.getElementById('movimientos-categorias-chart');
+    const select = document.querySelector('#filtros-movimientos select[name="categoria"]');
+    const filterCategory = categoria => { if (select) { select.value = categoria; document.getElementById('filtros-movimientos').submit(); } };
+    document.querySelectorAll('[data-categoria]').forEach(button => button.addEventListener('click', () => filterCategory(button.dataset.categoria)));
     if (!canvas || typeof Chart === 'undefined' || !rows.length) return;
     const colors = ['#38bdf8','#34d399','#f472b6','#fbbf24','#a78bfa','#fb7185','#2dd4bf','#60a5fa','#94a3b8','#c084fc'];
     const chart = new Chart(canvas, {
         type: 'doughnut',
-        data: { labels: rows.map(row => row.nombre), datasets: [{ data: rows.map(row => Number(row.total)), backgroundColor: colors.slice(0, rows.length), borderColor: '#1e293b', borderWidth: 3, hoverOffset: 8 }] },
+        data: { labels: rows.map(row => row.nombre), datasets: [{ data: rows.map(row => Number(row.total)), backgroundColor: rows.map((_, index) => colors[index % colors.length]), borderColor: '#1e293b', borderWidth: 3, hoverOffset: 8 }] },
         options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: context => `${context.label}: $${Number(context.raw).toLocaleString('es-CL')}` } } },
-            onClick: (event, elements) => { if (!elements.length) return; const categoria = rows[elements[0].index].id; if (!categoria) return; const select = document.querySelector('#filtros-movimientos select[name="categoria"]'); if (select) { select.value = categoria; document.getElementById('filtros-movimientos').submit(); } }
+            onClick: (event, elements) => { if (!elements.length) return; const categoria = rows[elements[0].index].id; if (categoria) filterCategory(categoria); }
         }
     });
 })();
@@ -107,7 +167,7 @@
         <thead>
             <tr class="text-slate-500 text-left text-xs uppercase">
                 <th class="p-3">Fecha</th><th class="p-3">Detalle / cuenta</th><th class="p-3">Categoría</th>
-                <th class="p-3">Estado</th><th class="p-3 text-right">Monto CLP</th><th class="p-3">Acción</th>
+                <th class="p-3">Estado</th><th class="p-3">Movimiento</th><th class="p-3 text-right">Monto CLP</th><th class="p-3">Acción</th>
             </tr>
         </thead>
         <tbody>
@@ -125,7 +185,9 @@
                     {% if m.naturaleza == 'TRANSFERENCIA' %}<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400">transferencia</span>{% endif %}
                 </td>
                 <td class="p-3">
-                    {% if m.por_revisar %}
+                    {% if f_pendientes == '1' %}
+                        <span class="text-[11px] text-amber-300">{{ m.categoria.nombre|default:'Sin clasificar' }} · confirma el tipo abajo</span>
+                    {% elif m.por_revisar %}
                         <form method="post" action="{% url 'banca_confirmar_revision' m.pk %}" class="flex gap-1 mb-1">
                             {% csrf_token %}
                             <button name="decision" value="operacional" class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300">Es real</button>
@@ -135,6 +197,14 @@
                         {% for detalle in m.detalles_neat %}
                             <span class="block text-slate-300">{{ detalle.categoria.nombre|default:"Sin categoría" }}</span>
                             <span class="block text-[10px] text-sky-500">NeatPagos · {{ detalle.estado|lower }}</span>
+                            <form method="post" action="{% url 'banca_reclasificar_neat' detalle.evento_id %}" class="flex gap-1 mt-1 mb-2">
+                                {% csrf_token %}
+                                <select name="categoria" required aria-label="Categoría del pago Neat" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 max-w-40">
+                                    <option value="">Clasificar pago…</option>
+                                    {% for c in categorias_egreso %}<option value="{{ c.id }}" {% if detalle.categoria.id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+                                </select>
+                                <button class="text-[11px] px-2 py-1 rounded bg-sky-500/20 text-sky-300" title="Guardar categoría del pago Neat"><i class="fas fa-check"></i></button>
+                            </form>
                         {% endfor %}
                     {% else %}
                         <span class="text-slate-300">{{ m.categoria.nombre|default:"—" }}</span>
@@ -142,17 +212,89 @@
                     {% endif %}
                     {% if m.prestamo_id %}<span class="block text-[10px] px-1.5 py-0.5 mt-1 rounded bg-emerald-500/15 text-emerald-300 w-fit"><i class="fas fa-bicycle mr-1"></i>{{ m.prestamo.nombre|truncatechars:18 }}</span>{% endif %}
                 </td>
-                <td class="p-3"><span class="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300">{{ m.get_estado_display }}</span></td>
-                <td class="p-3 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">${{ m.monto_clp|intcomma }}</td>
+                <td class="p-3"><span class="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300">{{ m.estado_visible }}</span></td>
+                <td class="p-3 whitespace-nowrap">
+                    {% if m.es_cargo %}
+                        <span class="block text-xs font-semibold text-rose-300">↓ Cargo</span>
+                    {% else %}
+                        <span class="block text-xs font-semibold text-emerald-300">↑ Abono</span>
+                    {% endif %}
+                    {% if m.naturaleza == 'TRANSFERENCIA' %}
+                        <span class="block text-[10px] text-slate-400">Transferencia</span>
+                    {% elif m.es_cargo %}
+                        <span class="block text-[10px] text-slate-400">Gasto</span>
+                    {% else %}
+                        <span class="block text-[10px] text-slate-400">Ingreso</span>
+                    {% endif %}
+                    {% if m.por_revisar %}<span class="block text-[10px] text-amber-300">Por confirmar</span>{% endif %}
+                </td>
+                <td class="p-3 text-right font-semibold {% if m.es_cargo %}text-rose-200{% else %}text-emerald-400{% endif %}">{% if m.conversion_clp_desconocida %}{{ m.monto|intcomma }} {{ m.moneda }}<small class="block text-amber-300">Conversión CLP pendiente</small>{% else %}${{ m.monto_abs_clp|intcomma }}{% endif %}</td>
                 <td class="p-3">
+                    {% if f_pendientes == '1' %}
+                    <div class="space-y-2 min-w-44">
+                        <form method="post" action="{% url 'banca_resolver_movimiento' m.pk %}" class="flex items-center gap-1">
+                            {% csrf_token %}
+                            <select name="categoria" required class="min-w-0 flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200">
+                                <option value="">{% if m.es_cargo %}Clasificar cargo…{% else %}Clasificar abono…{% endif %}</option>
+                                {% if m.es_cargo %}
+                                    {% for c in categorias_egreso %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}
+                                {% else %}
+                                    {% for c in categorias_ingreso %}<option value="{{ c.id }}">{{ c.nombre }}</option>{% endfor %}
+                                {% endif %}
+                            </select>
+                            <button name="decision" value="{% if m.es_cargo %}gasto{% else %}ingreso{% endif %}" class="shrink-0 text-[11px] px-2 py-1.5 rounded bg-emerald-500/20 text-emerald-300" title="Guardar clasificación"><i class="fas fa-check"></i></button>
+                        </form>
+                        {% if m.es_cargo and not categorias_egreso %}<a class="block text-[10px] text-sky-300" href="{% url 'banca_categorias' %}">Crea una categoría de gasto para continuar.</a>{% endif %}
+                        {% if not m.es_cargo and not categorias_ingreso %}<a class="block text-[10px] text-sky-300" href="{% url 'banca_categorias' %}">Crea una categoría de ingreso para continuar.</a>{% endif %}
+                        <details class="text-xs">
+                            <summary class="cursor-pointer text-slate-400 hover:text-slate-200 py-1">Más opciones</summary>
+                            <div class="space-y-2 pt-2">
+                        <p class="text-[10px] text-slate-500">Vincular bicicleta, registrar un cobro o pagar una tarjeta.</p>
+                        {% if not m.es_cargo and cuentas_por_cobrar %}
+                        <form method="post" action="{% url 'banca_asignar_abono_cuenta_cobrar' m.pk %}" class="flex items-center gap-1 border-t border-slate-700/60 pt-2">
+                            {% csrf_token %}
+                            <select name="cuenta_cobro" required class="min-w-0 flex-1 bg-slate-900 border border-violet-700/60 rounded px-2 py-1.5 text-xs text-slate-200">
+                                <option value="">Pago de cuenta por cobrar…</option>
+                                {% for cuenta in cuentas_por_cobrar %}<option value="{{ cuenta.id }}">🤝 {{ cuenta.nombre }}</option>{% endfor %}
+                            </select>
+                            <button class="shrink-0 text-[11px] px-2 py-1.5 rounded bg-violet-500/20 text-violet-300" title="Registrar pago de cuenta por cobrar"><i class="fas fa-hand-holding-dollar"></i></button>
+                        </form>
+                        {% elif not m.es_cargo %}
+                        <a href="{% url 'cuentas_por_cobrar' %}" class="block text-[10px] text-violet-300 border-t border-slate-700/60 pt-2">Crea una cuenta por cobrar para registrar este pago.</a>
+                        {% endif %}
+                        <form method="post" action="{% url 'banca_resolver_movimiento' m.pk %}">
+                            {% csrf_token %}
+                            <button name="decision" value="transferencia" class="text-[11px] px-2 py-1 rounded bg-slate-700 text-slate-300 hover:text-white">Otra transferencia (sin categoría)</button>
+                        </form>
+                        <form method="post" action="{% url 'banca_asignar_prestamo' m.pk %}" class="flex items-center gap-1 border-t border-slate-700/60 pt-2">
+                            {% csrf_token %}
+                            <select name="prestamo" class="min-w-0 flex-1 bg-slate-900 border border-emerald-700/60 rounded px-2 py-1.5 text-xs text-slate-200">
+                                <option value="">Bicicleta o pago de tarjeta…</option>
+                                <option value="transferencia">💳 Pago de tarjeta de crédito</option>
+                                {% for p in prestamos %}<option value="{{ p.id }}">🚲 {{ p.nombre }}</option>{% endfor %}
+                            </select>
+                            <button class="shrink-0 text-[11px] px-2 py-1.5 rounded bg-emerald-500/20 text-emerald-300" title="Guardar bicicleta o pago de tarjeta"><i class="fas fa-link"></i></button>
+                        </form>
+                            </div>
+                        </details>
+                    </div>
+                    {% else %}
                     <form method="post" action="{% url 'banca_reclasificar' m.pk %}" class="flex items-center gap-1">
                         {% csrf_token %}
                         <select name="categoria" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
                             <option value="">Reclasificar…</option>
-                            {% for c in categorias %}<option value="{{ c.id }}" {% if m.categoria_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+                            {% if m.es_cargo %}
+                                {% for c in categorias_egreso %}<option value="{{ c.id }}" {% if m.categoria_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+                            {% else %}
+                                {% for c in categorias_ingreso %}<option value="{{ c.id }}" {% if m.categoria_id == c.id %}selected{% endif %}>{{ c.nombre }}</option>{% endfor %}
+                            {% endif %}
                         </select>
                         <button class="text-[11px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300" title="Reclasificar"><i class="fas fa-check"></i></button>
                     </form>
+                    <details class="text-xs mt-1">
+                        <summary class="cursor-pointer text-slate-400 hover:text-slate-200 py-1">Más opciones</summary>
+                        <div class="space-y-2 pt-2">
+                    <p class="text-[10px] text-slate-500">Vincular bicicleta, registrar un cobro o pagar una tarjeta.</p>
                     {% if cuentas_por_cobrar %}
                         {% if m.detalles_neat %}
                             {% for detalle in m.detalles_neat %}
@@ -180,18 +322,22 @@
                         {% csrf_token %}
                         <select name="prestamo" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
                             <option value="">— gasto/ingreso real —</option>
-                            <option value="transferencia" {% if m.naturaleza == 'TRANSFERENCIA' and not m.prestamo_id %}selected{% endif %}>🔄 Pago de otra TDC</option>
+                            <option value="transferencia" {% if m.categoria.nombre == 'Financiamiento / Pago de TDC' %}selected{% endif %}>💳 Pago de tarjeta de crédito</option>
                             {% for p in prestamos %}<option value="{{ p.id }}" {% if m.prestamo_id == p.id %}selected{% endif %}>🚲 {{ p.nombre }}</option>{% endfor %}
                         </select>
                         <button class="text-[11px] px-2 py-1 rounded bg-sky-500/20 text-sky-300" title="Definir financiamiento o préstamo"><i class="fas fa-link"></i></button>
                     </form>
+                        </div>
+                    </details>
+                    {% endif %}
                 </td>
             </tr>
         {% empty %}
-            <tr><td colspan="6" class="p-6 text-center text-slate-500">No hay movimientos con esos filtros.</td></tr>
+            <tr><td colspan="7" class="p-6 text-center text-slate-500">{% if f_pendientes == '1' %}No quedan movimientos pendientes de revisión.{% else %}No hay movimientos con esos filtros.{% endif %}</td></tr>
         {% endfor %}
         </tbody>
     </table>
 </div>
-<p class="text-xs text-slate-600">Mostrando hasta 300 movimientos. Reclasificar fija tu criterio (manual) y enseña la regla para el futuro.</p>
+<p class="text-xs text-slate-500">Elige una categoría y pulsa ✓ para guardar. Para traspasos propios usa «Transferencias entre mis cuentas». Bicicletas, cobros y pagos de tarjeta están en «Más opciones».</p>
+{% if f_pendientes == '1' %}<p class="text-xs text-slate-600">Las decisiones de ingreso o gasto enseñan una regla privada. Las transferencias quedan excluidas del consumo y se reconocen automáticamente cuando hay evidencia suficiente.</p>{% else %}<p class="text-xs text-slate-600">Mostrando hasta 300 movimientos. Reclasificar fija tu criterio (manual) y enseña la regla para el futuro.</p>{% endif %}
 {% endblock %}

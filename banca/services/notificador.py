@@ -125,8 +125,11 @@ def _texto_movimiento(mov: MovimientoBancario) -> str:
 
 def avisar_nuevos_no_facturados(user, ids: list[int]) -> bool:
     cfg = _config(user)
-    if not cfg or not cfg.avisar_gasto_inmediato:
+    if not cfg:
         return False
+    if not cfg.avisar_gasto_inmediato:
+        avisar_limites_categoria(user)
+        return avisar_presupuesto(user)
     movimientos = (
         MovimientoBancario.objects.filter(
             id__in=ids, user=user, naturaleza="OPERACIONAL", monto_clp__gt=0
@@ -155,27 +158,39 @@ def avisar_nuevos_no_facturados(user, ids: list[int]) -> bool:
 
 
 def avisar_presupuesto(user, *, forzar: bool = False) -> bool:
-    from banca.services.presupuesto import resumen_presupuesto
+    from banca.services.presupuesto import proyeccion_no_facturados, resumen_presupuesto
 
     cfg = _config(user)
     if not forzar and (not cfg or not cfg.avisar_ocio):
         return False
     resumen = resumen_presupuesto(user)
-    if not resumen["alerta"] and not forzar:
-        return False
-    emoji = "🔴" if resumen["alerta"] else "🟢"
-    texto = (
-        f"{emoji} <b>Presupuesto Ocio {resumen['month']:02d}/{resumen['year']}</b>\n"
-        f"Disponible: {_miles(resumen['disponible_ocio'])}\n"
-        f"Gastado: {_miles(resumen['ocio_gastado'])} ({resumen['porcentaje_usado']}%)\n"
-        f"Restante: {_miles(resumen['ocio_restante'])}"
-    )
-    return enviar_telegram(
-        texto,
-        user=user,
-        tipo="UMBRAL_OCIO",
-        clave_idempotencia=f"ocio:{resumen['year']}-{resumen['month']:02d}:{resumen['umbral']}",
-    )
+    enviado = False
+    if resumen["alerta"] or forzar:
+        emoji = "🔴" if resumen["alerta"] else "🟢"
+        texto = (
+            f"{emoji} <b>Presupuesto Ocio {resumen['month']:02d}/{resumen['year']}</b>\n"
+            f"Disponible: {_miles(resumen['disponible_ocio'])}\n"
+            f"Gastado: {_miles(resumen['ocio_gastado'])} ({resumen['porcentaje_usado']}%)\n"
+            f"Restante: {_miles(resumen['ocio_restante'])}"
+        )
+        enviado = enviar_telegram(
+            texto, user=user, tipo="UMBRAL_OCIO",
+            clave_idempotencia=f"ocio:{resumen['year']}-{resumen['month']:02d}:{resumen['umbral']}",
+        )
+    proyeccion = proyeccion_no_facturados(user)
+    if proyeccion["alerta"]:
+        periodo = proyeccion["periodo_estimado"]
+        enviado = enviar_telegram(
+            f"⚠️ <b>Proyección no facturada {periodo.month:02d}/{periodo.year}</b>\n"
+            f"Ya facturado: {_miles(proyeccion['facturado_clp'])}\n"
+            f"Compras aún sin cartola: {_miles(proyeccion['total_clp'])}\n"
+            f"Total previsto: {_miles(proyeccion['total_proyectado_clp'])}\n"
+            f"Presupuesto mensual: {_miles(proyeccion['presupuesto_clp'])}\n"
+            f"Uso estimado: {proyeccion['porcentaje_usado']}%",
+            user=user, tipo="PRESUPUESTO_PROYECCION",
+            clave_idempotencia=f"proyeccion:{periodo.year}-{periodo.month:02d}:{proyeccion['umbral']}:{proyeccion['presupuesto_clp']}",
+        ) or enviado
+    return enviado
 
 
 def avisar_limites_categoria(user, *, hoy=None) -> bool:
@@ -195,6 +210,7 @@ def avisar_limites_categoria(user, *, hoy=None) -> bool:
                 monto_clp__gt=0,
                 fecha__year=hoy.year,
                 fecha__month=hoy.month,
+                fecha__lte=hoy,
             )
             .exclude(estado="DESCARTADO_CIERRE")
             .aggregate(total=Sum("monto_clp"))["total"]
@@ -220,8 +236,9 @@ def avisar_resumen_importacion(user, importacion) -> bool:
     cfg = _config(user)
     if not cfg or not cfg.resumen_importacion_pdf:
         return False
+    etiqueta = importacion.get_tipo_documento_display()
     texto = (
-        f"📄 <b>Estado de cuenta analizado</b>\n"
+        f"📄 <b>{html.escape(etiqueta)} analizado</b>\n"
         f"{html.escape(importacion.nombre_archivo)} · {html.escape(importacion.banco_detectado)}\n"
         f"Movimientos nuevos: {importacion.operaciones_nuevas}\n"
         f"Apple Pay confirmados: {importacion.provisionales_confirmados} · "

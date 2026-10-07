@@ -361,7 +361,7 @@ class MovimientoBancario(models.Model):
     )
     por_revisar = models.BooleanField(
         default=False,
-        help_text="Abono ambiguo: confirmar si es ingreso o transferencia",
+        help_text="Movimiento ambiguo: confirmar si es ingreso, gasto o transferencia",
     )
     naturaleza_es_manual = models.BooleanField(
         default=False,
@@ -369,6 +369,7 @@ class MovimientoBancario(models.Model):
     )
 
     hash_externo = models.CharField(max_length=64)
+    referencia_externa = models.CharField(max_length=255, blank=True, default="")
     importaciones = models.ManyToManyField(
         "ImportacionEstadoCuenta",
         blank=True,
@@ -406,10 +407,27 @@ class MovimientoBancario(models.Model):
         return self.monto_clp >= 0
 
     @property
+    def monto_abs_clp(self):
+        return None if self.conversion_clp_desconocida else abs(self.monto_clp)
+
+    @property
+    def conversion_clp_desconocida(self):
+        """A nonzero foreign amount with no CLP evidence is not a zero expense."""
+        return bool(self.moneda != 'CLP' and self.monto and not self.tipo_cambio_banco and not self.monto_clp)
+
+    @property
+    def estado_visible(self):
+        if self.producto.tipo != "TDC" and self.estado in {"FACTURADO", "PAGADO"}:
+            return "Registrado en cuenta"
+        return self.get_estado_display()
+
+    @property
     def contabiliza(self) -> bool:
         """Solo lo OPERACIONAL entra a gasto/ingreso/presupuesto."""
         return (
             self.naturaleza == "OPERACIONAL"
+            and self.producto.contabilizar
+            and self.producto.user_id == self.user_id
             and not self.por_revisar
             and self.estado != "DESCARTADO_CIERRE"
         )
@@ -430,6 +448,12 @@ class MovimientoBancario(models.Model):
 class ImportacionEstadoCuenta(models.Model):
     """Archivo de estado de cuenta analizado y su resultado auditable."""
 
+    TIPO_DOCUMENTO_CHOICES = [
+        ("ESTADO_CUENTA", "Estado de cuenta"),
+        ("ORDEN_ASEO", "Orden de ingreso de Aseo"),
+        ("PAGO_ASEO", "Certificado de pago de Aseo"),
+    ]
+
     ESTADO_CHOICES = [
         ("PROCESADO", "Procesado"),
         ("DUPLICADO", "Duplicado"),
@@ -443,6 +467,19 @@ class ImportacionEstadoCuenta(models.Model):
     nombre_archivo = models.CharField(max_length=255)
     hash_archivo = models.CharField(max_length=64)
     estado = models.CharField(max_length=12, choices=ESTADO_CHOICES, default="PROCESADO")
+    tipo_documento = models.CharField(max_length=20, choices=TIPO_DOCUMENTO_CHOICES, default="ESTADO_CUENTA")
+    departamento = models.ForeignKey(
+        "departamentos.Departamento",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="importaciones_aseo",
+    )
+    documento_referencia = models.CharField(max_length=120, blank=True)
+    movimiento_pago = models.ForeignKey(
+        "MovimientoBancario", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="comprobantes_pago", help_text="Cargo que respalda el comprobante de pago municipal.",
+    )
     banco_detectado = models.CharField(max_length=100, blank=True)
     banco = models.ForeignKey(
         "configuracion.Banco",
@@ -624,6 +661,16 @@ class SaldoSnapshot(models.Model):
         verbose_name_plural = "Snapshots de Saldo"
         ordering = ["-fecha"]
         unique_together = (("user", "producto", "fecha"),)
+
+    def clean(self):
+        if self.producto_id and self.producto.user_id != self.user_id:
+            from django.core.exceptions import ValidationError
+
+            raise ValidationError({"producto": "El producto debe pertenecer al usuario."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.producto} @ {self.fecha}"
@@ -900,6 +947,10 @@ class ConfiguracionBanca(models.Model):
         decimal_places=2,
         default=Decimal("0.80"),
         help_text="Fracción del disponible Ocio que dispara el aviso (0.80 = 80%)",
+    )
+    presupuesto_mensual_clp = models.DecimalField(
+        max_digits=15, decimal_places=2, default=Decimal("0"),
+        help_text="Límite mensual CLP para avisar sobre compras aún no facturadas; 0 desactiva el aviso.",
     )
     tolerancia_comision_bicicleta = models.DecimalField(
         max_digits=4,

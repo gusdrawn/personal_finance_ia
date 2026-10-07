@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.core.files.base import ContentFile
 from django.db import transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from bank_sync.models import MovimientoNormalizado
@@ -54,6 +56,22 @@ class EstadoCuentaParseado:
     saldo_final_clp: Decimal | None = None
 
 
+@dataclass
+class DocumentoAseoParseado:
+    tipo_documento: str
+    municipalidad: str
+    comuna: str
+    roles: list[str]
+    fecha_emision: date | None = None
+    fecha_vencimiento: date | None = None
+    fecha_pago: date | None = None
+    monto_base: Decimal | None = None
+    monto_total: Decimal | None = None
+    cuota_numero: int | None = None
+    cuotas_totales: int | None = None
+    referencia: str = ""
+
+
 _NUMERO = r"-?[\d.]+(?:,\d+)?"
 _FECHA_LARGA = r"\d{2}/\d{2}/\d{4}"
 
@@ -82,7 +100,26 @@ def _fecha(valor: str, *, corta: bool = False) -> date:
     return datetime.strptime(valor, "%d/%m/%y" if corta else "%d/%m/%Y").date()
 
 
-def _extraer_texto_pdf(contenido: bytes) -> str:
+def _extraer_texto_ocr(contenido: bytes) -> str:
+    """Extrae texto de PDFs escaneados cuando OCR está disponible."""
+    import pytesseract
+    import pypdfium2 as pdfium
+
+    comando = os.environ.get("TESSERACT_CMD")
+    if comando:
+        pytesseract.pytesseract.tesseract_cmd = comando
+    documento = pdfium.PdfDocument(contenido)
+    paginas = []
+    for pagina in documento:
+        imagen = pagina.render(scale=2.5).to_pil()
+        try:
+            paginas.append(pytesseract.image_to_string(imagen, lang="spa+eng"))
+        except Exception:
+            paginas.append(pytesseract.image_to_string(imagen, lang="eng"))
+    return "\n".join(paginas)
+
+
+def _extraer_texto_pdf(contenido: bytes, *, intentar_ocr: bool = False) -> str:
     try:
         import pdfplumber
 
@@ -90,10 +127,27 @@ def _extraer_texto_pdf(contenido: bytes) -> str:
             texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
     except Exception as exc:  # pragma: no cover - el detalle depende de la librería PDF
         raise EstadoCuentaParseError("No se pudo leer el PDF.") from exc
-    if not texto.strip():
+    if texto.strip() and not intentar_ocr:
+        return texto
+    # Las órdenes municipales entregadas por algunos municipios son escaneos.
+    # OCR es opcional para no romper instalaciones que solo importan cartolas
+    # digitales; cuando está disponible se reutiliza para ambos tipos de PDF.
+    try:
+        texto_ocr = _extraer_texto_ocr(contenido)
+        if texto_ocr.strip():
+            return f"{texto}\n{texto_ocr}".strip() if texto.strip() else texto_ocr
+    except Exception as exc:  # pragma: no cover - depende del binario local
+        # Un PDF municipal puede conservar únicamente un encabezado o una firma
+        # digital. En ese caso el nombre del archivo todavía puede permitir
+        # identificarlo; no lo conviertas en un falso error de banco solo porque
+        # Tesseract no está instalado.
+        if texto.strip():
+            return texto
         raise EstadoCuentaParseError(
-            "El PDF no contiene texto extraíble; esta POC todavía no procesa escaneos."
-        )
+            "El PDF no contiene texto extraíble. Para importar órdenes municipales escaneadas instala Tesseract OCR y configura TESSERACT_CMD."
+        ) from exc
+    if not texto.strip():
+        raise EstadoCuentaParseError("No se pudo obtener texto del PDF, ni mediante OCR.")
     return texto
 
 
@@ -941,8 +995,298 @@ def parsear_estado_cuenta_texto(texto: str, nombre_archivo: str = "") -> EstadoC
     )
 
 
-def parsear_estado_cuenta_pdf(contenido: bytes, nombre_archivo: str = "") -> EstadoCuentaParseado:
-    return parsear_estado_cuenta_texto(_extraer_texto_pdf(contenido), nombre_archivo)
+_FECHA_DOCUMENTO = r"\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\b"
+_FECHA_DOCUMENTO_NOMBRE = r"(?:\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})"
+
+
+def _fecha_documento(valor: str) -> date | None:
+    valor = (valor or "").strip().replace(".", "/").replace("-", "/")
+    for formato in ("%d/%m/%Y", "%Y/%m/%d", "%d/%m/%y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(valor, formato).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _fecha_etiquetada(texto: str, etiquetas: tuple[str, ...]) -> date | None:
+    """Busca una fecha en la línea de una etiqueta o en sus líneas vecinas."""
+    lineas = texto.splitlines()
+    etiquetas_norm = tuple(normalizar_texto(e) for e in etiquetas)
+    for indice, linea in enumerate(lineas):
+        bloque = " ".join(lineas[indice : indice + 3])
+        if not any(etiqueta in normalizar_texto(linea) for etiqueta in etiquetas_norm):
+            continue
+        encontrada = re.search(_FECHA_DOCUMENTO, bloque)
+        if encontrada:
+            fecha = _fecha_documento(encontrada.group(0))
+            if fecha:
+                return fecha
+    return None
+
+
+def _monto_en_bloque(bloque: str) -> Decimal | None:
+    # Se exige un separador de miles o al menos cuatro dígitos para no confundir
+    # cuotas, roles y fechas con montos monetarios.
+    candidatos = re.findall(
+        r"\$?\s*-?(?:\d{1,3}(?:[. ]\d{3})+(?:,\d+)?|\d{4,}(?:,\d+)?)",
+        bloque,
+    )
+    for candidato in candidatos:
+        limpio = candidato.replace(" ", "")
+        if re.fullmatch(r"\d{1,2}[./-]\d{1,2}[./-]\d{4}", limpio):
+            continue
+        if "$" not in candidato and len(re.sub(r"\D", "", limpio)) >= 7:
+            # Los roles municipales suelen ser secuencias de 7 a 9 dígitos.
+            continue
+        try:
+            monto = normalizar_monto(limpio)
+        except ValueError:
+            continue
+        if monto >= 0:
+            return monto
+    return None
+
+
+def _monto_etiquetado(texto: str, etiquetas: tuple[str, ...]) -> Decimal | None:
+    lineas = texto.splitlines()
+    etiquetas_norm = tuple(normalizar_texto(e) for e in etiquetas)
+    for indice, linea in enumerate(lineas):
+        if any(etiqueta in normalizar_texto(linea) for etiqueta in etiquetas_norm):
+            for candidata in lineas[indice : indice + 2]:
+                if candidata != linea and "rol" in normalizar_texto(candidata):
+                    continue
+                monto = _monto_en_bloque(candidata)
+                if monto is not None:
+                    return monto
+    return None
+
+
+def _rol_documento(valor: str) -> str:
+    texto = str(valor or "").strip()
+    # En los documentos de Concepción el formato visible 681-236 equivale al
+    # rol numérico 6810236 que aparece en los nombres/PDF municipales.
+    if re.fullmatch(r"\d{3}[-. ]\d{3}", texto):
+        partes = re.split(r"[-. ]", texto)
+        digitos = f"{partes[0]}0{partes[1]}"
+    else:
+        digitos = "".join(re.findall(r"\d", texto))
+    return digitos.lstrip("0") or "0"
+
+
+def _roles_documento(texto: str) -> list[str]:
+    patrones = (
+        r"\bROL(?:\s+(?:DE\s+)?(?:AVAL[UÚ]O|PROPIEDAD))?[^\d\n]{0,24}([0-9][0-9.\-]{5,})",
+        r"\bROL[ \t]*[:#]?[ \t]*([0-9][0-9.\-]{5,})",
+    )
+    resultado = []
+    for patron in patrones:
+        for coincidencia in re.finditer(patron, texto, re.IGNORECASE):
+            rol = _rol_documento(coincidencia.group(1))
+            if len(rol) >= 6 and rol not in resultado:
+                resultado.append(rol)
+    return resultado
+
+
+def _municipalidad_documento(texto: str) -> tuple[str, str]:
+    for linea in texto.splitlines():
+        limpia = " ".join(linea.split()).strip()
+        normalizada = normalizar_texto(limpia)
+        if "municipalidad" not in normalizada:
+            continue
+        municipio = limpia
+        match = re.search(r"municipalidad\s+de\s+(.+)", normalizada, re.IGNORECASE)
+        comuna = match.group(1).strip().title() if match else ""
+        return municipio, comuna
+    return "Municipalidad no identificada", ""
+
+
+def _nombre_indica_documento_aseo(nombre_archivo: str) -> bool:
+    """Reconoce nombres municipales aun cuando el PDF sea solo una imagen."""
+    nombre = normalizar_texto(nombre_archivo)
+    return bool(
+        "aseo" in nombre
+        or "contribucion" in nombre
+        or "impuesto_territorial" in nombre
+        or "orden_de_ingreso" in nombre
+        or "orden_ingreso" in nombre
+        or re.search(r"rol[_ -]*0?\d{7,9}", nombre)
+        or re.search(r"\b\d{6,}_pago\b", nombre)
+    )
+
+
+def _parece_documento_aseo(texto: str, nombre_archivo: str = "") -> bool:
+    normalizado = normalizar_texto(texto)
+    if _nombre_indica_documento_aseo(nombre_archivo):
+        return True
+    return any(
+        termino in normalizado
+        for termino in (
+            "derechos de aseo",
+            "aseo domiciliario",
+            "aseo extraccion",
+            "contribuciones",
+            "impuesto territorial",
+            "orden de ingreso",
+            "certificado de pago",
+            "ccp2bpago.smc.cl",
+            "municipalidad",
+        )
+    )
+
+
+def parsear_documento_aseo_texto(
+    texto: str, nombre_archivo: str = ""
+) -> DocumentoAseoParseado | None:
+    """Reconoce órdenes y comprobantes municipales sin mezclarlos con cartolas."""
+    normalizado = normalizar_texto(texto)
+    nombre_normalizado = normalizar_texto(nombre_archivo)
+    menciona_aseo = any(
+        termino in normalizado
+        for termino in ("derechos de aseo", "aseo domiciliario", "aseo extraccion")
+    )
+    marcador_nombre = _nombre_indica_documento_aseo(nombre_archivo)
+    marcador_pago_municipal = (
+        "certificado de pago" in normalizado
+        and ("smc.cl" in normalizado or "bcoresultado" in normalizado)
+    )
+    if not menciona_aseo and (marcador_nombre or marcador_pago_municipal):
+        menciona_aseo = True
+    if not menciona_aseo:
+        return None
+    es_pago = (
+        "certificado de pago" in normalizado
+        or "comprobante de pago" in normalizado
+        or "certificado_pago" in nombre_normalizado
+        or ("pago" in nombre_normalizado and "orden de ingreso" not in normalizado)
+    ) and ("pago" in normalizado or "pago" in nombre_normalizado)
+    es_orden = (
+        "orden de ingreso" in normalizado
+        or "orden_de_ingreso" in nombre_normalizado
+        or "orden_ingreso" in nombre_normalizado
+    )
+    if not es_pago and not es_orden:
+        return None
+
+    municipalidad, comuna = _municipalidad_documento(texto)
+    roles = _roles_documento(texto)
+    if not roles:
+        # Una orden individual suele conservar el rol en el nombre aunque el OCR
+        # haya omitido esa línea. Solo aceptamos la secuencia larga del rol.
+        for candidato in re.findall(r"(?<!\d)0?\d{7,9}(?!\d)", nombre_archivo):
+            rol = _rol_documento(candidato)
+            if rol not in roles:
+                roles.append(rol)
+    if not roles and es_pago:
+        # Los certificados municipales antiguos usan un identificador de seis
+        # dígitos antes de ``_pago``; corresponde al rol 00-681-0-XXX de las
+        # órdenes del mismo lote. Es un respaldo solo para ese patrón explícito.
+        for candidato in re.findall(r"(?<!\d)(\d{6})[_ -]*pago", nombre_normalizado):
+            rol = _rol_documento(f"00{candidato[:3]}0{candidato[3:]}")
+            if rol not in roles:
+                roles.append(rol)
+
+    fechas = [_fecha_documento(valor) for valor in re.findall(_FECHA_DOCUMENTO, texto)]
+    fechas += [
+        _fecha_documento(valor)
+        for valor in re.findall(r"\b\d{1,2}/\d{1,2}/\d{2}\b", texto)
+    ]
+    fechas = [valor for valor in fechas if valor]
+    fechas_nombre = [
+        _fecha_documento(valor)
+        for valor in re.findall(_FECHA_DOCUMENTO_NOMBRE, nombre_archivo)
+    ]
+    fechas_nombre = [valor for valor in fechas_nombre if valor]
+    fecha_emision = _fecha_etiquetada(
+        texto, ("fecha de emision", "fecha emision", "emitido")
+    )
+    fecha_vencimiento = _fecha_etiquetada(
+        texto, ("fecha de vencimiento", "vencimiento", "pagar hasta")
+    )
+    # No usar la palabra inglesa ``Date`` sin contexto: las firmas digitales
+    # de una orden suelen incluirla y no representa la fecha de pago.
+    fecha_pago = _fecha_etiquetada(texto, ("fecha de pago", "pagado el"))
+    tiene_contexto_pago = any(
+        etiqueta in normalizado
+        for etiqueta in ("certificado de pago", "comprobante de pago", "fecha de pago", "pagado")
+    )
+    tiene_contexto_vencimiento = any(
+        etiqueta in normalizado
+        for etiqueta in ("fecha de vencimiento", "vencimiento", "pagar hasta")
+    )
+    tiene_contexto_emision = any(
+        etiqueta in normalizado
+        for etiqueta in ("fecha de emision", "fecha emision", "emitido")
+    )
+    if es_pago and not fecha_pago and fechas and tiene_contexto_pago:
+        fecha_pago = max(fechas)
+    if es_orden and not fecha_vencimiento and fechas and tiene_contexto_vencimiento:
+        fecha_vencimiento = max(fechas)
+    if not fecha_emision and fechas and tiene_contexto_emision:
+        fecha_emision = min(fechas)
+    if fechas_nombre:
+        if es_pago and not fecha_pago:
+            fecha_pago = max(fechas_nombre)
+        if es_orden and not fecha_vencimiento:
+            fecha_vencimiento = max(fechas_nombre)
+        if not fecha_emision:
+            fecha_emision = min(fechas_nombre)
+
+    monto_base = _monto_etiquetado(
+        texto, ("aseo extraccion domiciliaria", "derechos de aseo", "derecho de aseo")
+    )
+    monto_total = _monto_etiquetado(
+        texto, ("total a pagar", "total pagar", "monto pagado", "monto", "total")
+    )
+    if es_pago and monto_total is None:
+        monto_total = _monto_etiquetado(texto, ("webpay", "pago"))
+    cuotas = re.search(r"\bCUOTA\s*(\d+)\s*[/ de]+\s*(\d+)\b", texto, re.IGNORECASE)
+    if not cuotas:
+        cuotas = re.search(
+            r"CUOTA[_ -]*(\d+)\s*[-_/de]+\s*(\d+)",
+            nombre_archivo,
+            re.IGNORECASE,
+        )
+    referencia_match = re.search(
+        r"(?:orden(?:\s+de)?\s+ingreso|comprobante|transacci[oó]n)\s*(?:n[°º#:]?\s*)?([A-Z0-9-]{4,})",
+        texto,
+        re.IGNORECASE,
+    )
+    if municipalidad == "Municipalidad no identificada" and (
+        marcador_nombre or marcador_pago_municipal
+    ):
+        municipalidad = "Documento municipal"
+
+    return DocumentoAseoParseado(
+        tipo_documento="PAGO_ASEO" if es_pago else "ORDEN_ASEO",
+        municipalidad=municipalidad,
+        comuna=comuna,
+        roles=roles,
+        fecha_emision=fecha_emision,
+        fecha_vencimiento=fecha_vencimiento,
+        fecha_pago=fecha_pago,
+        monto_base=monto_base,
+        monto_total=monto_total,
+        cuota_numero=int(cuotas.group(1)) if cuotas else None,
+        cuotas_totales=int(cuotas.group(2)) if cuotas else None,
+        referencia=referencia_match.group(1) if referencia_match else "",
+    )
+
+
+def parsear_estado_cuenta_pdf(
+    contenido: bytes, nombre_archivo: str = ""
+) -> EstadoCuentaParseado | DocumentoAseoParseado:
+    texto = _extraer_texto_pdf(contenido)
+    # Los documentos municipales ya no se importan desde Banca: Aseo y
+    # contribuciones se registran manualmente en Pendientes. Conservamos el
+    # parser histórico para no romper datos antiguos, pero no lo ejecutamos
+    # durante una carga nueva.
+    if _parece_documento_aseo(texto, nombre_archivo):
+        raise EstadoCuentaParseError(
+            "Los documentos de Aseo y contribuciones se registran manualmente en Pendientes; "
+            "el importador de Banca solo acepta estados de cuenta bancarios."
+        )
+    return parsear_estado_cuenta_texto(texto, nombre_archivo)
 
 
 def _leer_archivo(archivo) -> bytes:
@@ -986,12 +1330,13 @@ def _banco_existente(user, nombre: str) -> Banco:
 def _producto_tarjeta(
     user, banco: Banco, ultimos4: str, *, banco_detectado: str = ""
 ) -> Producto:
+    from configuracion.services.productos import producto_canonico
     if ultimos4:
         existente = Producto.objects.filter(
             user=user, banco=banco, tipo="TDC", ultimos4=ultimos4
         ).first()
         if existente:
-            return existente
+            return producto_canonico(existente)
     if "lider bci" in normalizar_texto(banco_detectado):
         for producto in Producto.objects.filter(user=user, banco=banco, tipo="TDC", activo=True):
             if "lider bci" in normalizar_texto(producto.nombre):
@@ -1018,16 +1363,17 @@ def _producto_tarjeta(
         nombre=nombre,
         defaults={"tipo": "TDC", "activo": True, "ultimos4": ultimos4, "origen": "IMPORTACION"},
     )
-    return producto
+    return producto_canonico(producto)
 
 
 def _producto_cuenta(user, banco: Banco, numero: str) -> Producto:
+    from configuracion.services.productos import producto_canonico
     ultimos4 = "".join(re.findall(r"\d", numero))[-4:]
     existente = Producto.objects.filter(
         user=user, banco=banco, tipo="CUENTA", ultimos4=ultimos4
     ).first()
     if existente:
-        return existente
+        return producto_canonico(existente)
     nombre = f"Cuenta corriente {banco.nombre} {numero}"
     producto, _ = Producto.objects.get_or_create(
         user=user,
@@ -1040,7 +1386,7 @@ def _producto_cuenta(user, banco: Banco, numero: str) -> Producto:
             "origen": "IMPORTACION",
         },
     )
-    return producto
+    return producto_canonico(producto)
 
 
 def _producto_resultado(user, banco: Banco, resultado: EstadoCuentaParseado) -> Producto:
@@ -1134,6 +1480,252 @@ def _activar_estado_vigente(registro: ImportacionEstadoCuenta) -> None:
     registro.save(update_fields=campos)
 
 
+def _departamento_por_rol(user, rol: str):
+    from departamentos.models import Departamento
+
+    objetivo = _rol_documento(rol)
+    if objetivo == "0":
+        return None
+    for departamento in Departamento.objects.filter(user=user, activo=True):
+        if _rol_documento(departamento.rol_sii) == objetivo:
+            return departamento
+    return None
+
+
+def _regla_aseo_importada(user, departamento, documento: DocumentoAseoParseado, fecha_evento: date):
+    from pendientes.models import ReglaPendiente
+
+    clave = f"aseo:{departamento.pk}"
+    monto_documento = documento.monto_total or documento.monto_base
+    if documento.tipo_documento == "PAGO_ASEO" and len(documento.roles) > 1:
+        # El certificado puede ser un Webpay agrupado; el total no es el monto
+        # proyectable de cada propiedad.
+        monto_documento = None
+    regla, creada = ReglaPendiente.objects.get_or_create(
+        user=user,
+        clave_fuente=clave,
+        defaults={
+            "nombre": f"Aseo · {departamento.codigo}",
+            "tipo": "PAGO",
+            "departamento": departamento,
+            "periodicidad": "TRIMESTRAL",
+            "fecha_inicio": fecha_evento,
+            "dia_vencimiento": fecha_evento.day,
+            "monto_estimado": monto_documento,
+            "url_pago": departamento.url_pago_aseo or reverse("dashboard_pendientes"),
+            "canal_cobro": "DIRECTO",
+            "recordar_dias": 3,
+            "contabiliza_gasto": True,
+            "automatica": False,
+            "activa": True,
+        },
+    )
+    cambios = []
+    if regla.departamento_id != departamento.pk:
+        regla.departamento = departamento
+        cambios.append("departamento")
+    if regla.monto_estimado is None and monto_documento:
+        regla.monto_estimado = monto_documento
+        cambios.append("monto_estimado")
+    if not regla.url_pago:
+        regla.url_pago = departamento.url_pago_aseo or reverse("dashboard_pendientes")
+        cambios.append("url_pago")
+    if cambios:
+        cambios.append("actualizada_at")
+        regla.save(update_fields=cambios)
+    return regla
+
+
+def _marcar_completada_importada(
+    ocurrencia,
+    registro: ImportacionEstadoCuenta,
+    *,
+    fecha_pago: date,
+    monto: Decimal | None,
+    referencia: str,
+) -> None:
+    from pendientes.models import AsignacionPagoPendiente
+
+    valor = monto if monto and monto > 0 else None
+    ocurrencia.estado = "COMPLETADA"
+    ocurrencia.fecha_real = fecha_pago
+    ocurrencia.monto_real = valor
+    ocurrencia.completada_at = ocurrencia.completada_at or timezone.now()
+    ocurrencia.nota_resolucion = "Confirmado por certificado de pago municipal importado."
+    ocurrencia.importacion = registro
+    ocurrencia.save(
+        update_fields=[
+            "estado",
+            "fecha_real",
+            "monto_real",
+            "completada_at",
+            "nota_resolucion",
+            "importacion",
+            "actualizada_at",
+        ]
+    )
+    # Los certificados Webpay pueden agrupar varios roles. Solo se asigna un
+    # monto por propiedad cuando proviene de una orden individual o cuando el
+    # certificado contiene un único rol; así nunca se duplica el total global.
+    if valor:
+        asignacion, creada = AsignacionPagoPendiente.objects.get_or_create(
+            ocurrencia=ocurrencia,
+            importacion=registro,
+            defaults={
+                "monto_asignado": valor,
+                "referencia_pago": referencia,
+            },
+        )
+        if not creada and asignacion.monto_asignado != valor:
+            asignacion.monto_asignado = valor
+            asignacion.referencia_pago = referencia
+            asignacion.save(update_fields=["monto_asignado", "referencia_pago"])
+
+
+def _registrar_documento_aseo(
+    user, registro: ImportacionEstadoCuenta, documento: DocumentoAseoParseado
+) -> ImportacionEstadoCuenta:
+    """Guarda una orden/comprobante y cruza sus roles con Pendientes."""
+    from pendientes.models import OcurrenciaPendiente
+
+    registro.tipo_documento = documento.tipo_documento
+    registro.tipo_producto = "ASEO"
+    registro.banco_detectado = documento.municipalidad
+    registro.numero_producto = documento.roles[0] if documento.roles else ""
+    registro.documento_referencia = documento.referencia
+    registro.fecha_estado = documento.fecha_emision or documento.fecha_pago
+    registro.fecha_vencimiento = documento.fecha_vencimiento
+    registro.fecha_pago_real = documento.fecha_pago
+    registro.monto_facturado = documento.monto_total
+    registro.monto_pagado_clp = documento.monto_total if documento.tipo_documento == "PAGO_ASEO" else None
+    registro.moneda = "CLP"
+    registro.operaciones_detectadas = len(documento.roles)
+    registro.estado = "PROCESADO"
+    registro.procesado_at = timezone.now()
+    registro.save()
+
+    faltantes = []
+    actualizadas = 0
+    departamentos = []
+    for rol in documento.roles:
+        departamento = _departamento_por_rol(user, rol)
+        if not departamento:
+            faltantes.append(rol)
+            continue
+        departamentos.append(departamento)
+        cambios_departamento = []
+        if not departamento.comuna and documento.comuna:
+            departamento.comuna = documento.comuna
+            cambios_departamento.append("comuna")
+        if not departamento.rol_sii:
+            departamento.rol_sii = rol
+            cambios_departamento.append("rol_sii")
+        if cambios_departamento:
+            cambios_departamento.append("updated_at")
+            departamento.save(update_fields=cambios_departamento)
+
+        fecha_evento = (
+            documento.fecha_pago
+            if documento.tipo_documento == "PAGO_ASEO"
+            else documento.fecha_vencimiento
+        ) or documento.fecha_emision or date.today()
+        regla = _regla_aseo_importada(user, departamento, documento, fecha_evento)
+        monto_orden = documento.monto_total or documento.monto_base or regla.monto_estimado
+        if documento.tipo_documento == "PAGO_ASEO" and len(documento.roles) > 1:
+            monto_orden = regla.monto_estimado
+
+        if documento.tipo_documento == "ORDEN_ASEO":
+            ocurrencia, creada = OcurrenciaPendiente.objects.get_or_create(
+                regla=regla,
+                fecha_vencimiento=fecha_evento,
+                defaults={
+                    "monto_esperado": monto_orden,
+                    "importacion": registro,
+                },
+            )
+            if not creada:
+                if ocurrencia.estado == "PENDIENTE" and monto_orden is not None:
+                    ocurrencia.monto_esperado = monto_orden
+                if not ocurrencia.importacion_id:
+                    ocurrencia.importacion = registro
+                ocurrencia.save(update_fields=["monto_esperado", "importacion", "actualizada_at"])
+            # Si el comprobante se cargó antes que la orden, la orden histórica
+            # queda como evidencia informativa y no vuelve a abrir un pendiente.
+            pago_previo = (
+                regla.ocurrencias.filter(
+                    estado="COMPLETADA",
+                    importacion__tipo_documento="PAGO_ASEO",
+                )
+                .order_by("-fecha_real", "-id")
+                .first()
+            )
+            if pago_previo and pago_previo.pk != ocurrencia.pk and ocurrencia.estado == "PENDIENTE":
+                if pago_previo.monto_real is None and monto_orden and pago_previo.importacion_id:
+                    _marcar_completada_importada(
+                        pago_previo,
+                        pago_previo.importacion,
+                        fecha_pago=pago_previo.fecha_real or fecha_evento,
+                        monto=monto_orden,
+                        referencia=pago_previo.importacion.documento_referencia,
+                    )
+                ocurrencia.estado = "INCLUIDA_EN_OTRO_PAGO"
+                ocurrencia.nota_resolucion = "La orden fue importada después de su comprobante de pago."
+                ocurrencia.completada_at = ocurrencia.completada_at or timezone.now()
+                ocurrencia.save(update_fields=["estado", "nota_resolucion", "completada_at", "actualizada_at"])
+            actualizadas += 1
+            continue
+
+        # Primero intenta resolver la orden pendiente más cercana de ese rol.
+        ocurrencia = (
+            regla.ocurrencias.filter(estado="PENDIENTE", fecha_vencimiento__lte=fecha_evento)
+            .order_by("-fecha_vencimiento", "-id")
+            .first()
+        )
+        if ocurrencia is None:
+            ocurrencia, _ = OcurrenciaPendiente.objects.get_or_create(
+                regla=regla,
+                fecha_vencimiento=fecha_evento,
+                defaults={"monto_esperado": monto_orden},
+            )
+        if ocurrencia.monto_esperado is None and len(documento.roles) == 1:
+            ocurrencia.monto_esperado = documento.monto_total
+        monto = ocurrencia.monto_esperado
+        if monto is None and len(documento.roles) == 1:
+            monto = documento.monto_total
+        _marcar_completada_importada(
+            ocurrencia,
+            registro,
+            fecha_pago=documento.fecha_pago or fecha_evento,
+            monto=monto,
+            referencia=documento.referencia,
+        )
+        actualizadas += 1
+
+    if len(departamentos) == 1:
+        registro.departamento = departamentos[0]
+    registro.operaciones_actualizadas = actualizadas
+    registro.operaciones_nuevas = 0
+    if faltantes:
+        registro.mensaje = (
+            "Documento de Aseo importado. No se encontraron propiedades para los roles: "
+            + ", ".join(faltantes)
+        )
+    else:
+        registro.mensaje = (
+            "Documento de Aseo importado y cruzado con Pendientes. "
+            "El certificado de pago silencia la obligación sin crear un movimiento duplicado."
+        )
+    registro.save(
+        update_fields=[
+            "departamento",
+            "operaciones_actualizadas",
+            "operaciones_nuevas",
+            "mensaje",
+        ]
+    )
+    return registro
+
+
 @transaction.atomic
 def importar_estado_cuenta(user, archivo, *, nombre_archivo: str | None = None) -> ImportacionEstadoCuenta:
     """Procesa un archivo; los errores quedan registrados y no abortan el lote."""
@@ -1141,106 +1733,115 @@ def importar_estado_cuenta(user, archivo, *, nombre_archivo: str | None = None) 
     nombre = nombre_archivo or getattr(archivo, "name", "estado_cuenta.pdf")
     huella = hashlib.sha256(contenido).hexdigest()
     existente = ImportacionEstadoCuenta.objects.filter(user=user, hash_archivo=huella).first()
-    if existente:
+    if existente and existente.estado == 'PROCESADO':
         # Conservamos el registro original como PROCESADO; la huella evita crear
         # una segunda importación y la ingesta sigue siendo idempotente.
         existente.fue_duplicado = True
         return existente
 
-    registro = ImportacionEstadoCuenta(
+    registro = existente or ImportacionEstadoCuenta(
         user=user,
         nombre_archivo=nombre[:255],
         hash_archivo=huella,
         estado="ERROR",
     )
     registro.fue_duplicado = False
-    registro.archivo.save(nombre[:255], ContentFile(contenido), save=False)
+    if not existente:
+        registro.archivo.save(nombre[:255], ContentFile(contenido), save=False)
+    registro.save()
     try:
-        resultado = parsear_estado_cuenta_pdf(contenido, nombre)
-        banco = _banco_existente(user, resultado.banco)
-        producto = _producto_resultado(user, banco, resultado)
-        ingesta = ingestar_movimientos(
-            user,
-            banco,
-            resultado.movimientos,
-            origen="PDF",
-            tipo_producto=resultado.tipo_producto,
-            nombre_producto=producto.nombre,
-        )
-        registro.banco = banco
-        registro.producto = producto
-        registro.estado = "PROCESADO"
-        registro.banco_detectado = resultado.banco
-        registro.tarjeta_ultimos4 = resultado.tarjeta_ultimos4
-        registro.tipo_producto = resultado.tipo_producto
-        registro.numero_producto = resultado.numero_producto
-        registro.saldo_final_clp = resultado.saldo_final_clp
-        registro.fecha_estado = resultado.fecha_estado
-        registro.fecha_vencimiento = resultado.fecha_vencimiento
-        registro.periodo_inicio = resultado.periodo_inicio
-        registro.periodo_fin = resultado.periodo_fin
-        registro.monto_facturado = resultado.monto_facturado
-        registro.monto_minimo = resultado.monto_minimo
-        registro.moneda = resultado.moneda
-        registro.cupo_total_clp = resultado.cupo_total_clp
-        registro.cupo_utilizado_clp = resultado.cupo_utilizado_clp
-        registro.cupo_disponible_clp = resultado.cupo_disponible_clp
-        registro.cupo_avance_disponible_clp = resultado.cupo_avance_disponible_clp
-        registro.cupo_total_usd = resultado.cupo_total_usd
-        registro.cupo_utilizado_usd = resultado.cupo_utilizado_usd
-        registro.cupo_disponible_usd = resultado.cupo_disponible_usd
-        registro.operaciones_detectadas = len(resultado.movimientos)
-        registro.operaciones_nuevas = ingesta["nuevos"]
-        registro.operaciones_actualizadas = ingesta["actualizados"]
-        registro.mensaje = "Análisis completado."
-        registro.procesado_at = timezone.now()
-        registro.save()
-        _activar_estado_vigente(registro)
-        registro.movimientos.add(*ingesta["ids"])
-        from banca.services.provisionales import cerrar_periodo_apple_pay
-
-        cierre = cerrar_periodo_apple_pay(
-            user,
-            producto,
-            resultado.periodo_inicio,
-            resultado.periodo_fin,
-            list(
-                MovimientoBancario.objects.filter(
-                    user=user,
-                    id__in=ingesta["ids"],
-                    origen="PDF",
-                )
-            ),
-            registro,
-        )
-        registro.provisionales_confirmados = cierre["confirmados"]
-        registro.provisionales_descartados = cierre["descartados"]
-        registro.provisionales_ambiguos = cierre["ambiguos"]
-        registro.operaciones_nuevas = max(
-            0, registro.operaciones_nuevas - cierre["confirmados"]
-        )
-        registro.operaciones_actualizadas += cierre["confirmados"]
-        if cierre["sin_periodo"]:
-            registro.mensaje = (
-                "Análisis completado; el PDF no informó período y no cerró compras Apple Pay."
+        # A failed later stage must undo movements, aliases, document validity,
+        # provisional closure, and snapshots while retaining the error record.
+        with transaction.atomic():
+            resultado = parsear_estado_cuenta_pdf(contenido, nombre)
+            if isinstance(resultado, DocumentoAseoParseado):
+                return _registrar_documento_aseo(user, registro, resultado)
+            banco = _banco_existente(user, resultado.banco)
+            producto = _producto_resultado(user, banco, resultado)
+            ingesta = ingestar_movimientos(
+                user,
+                banco,
+                resultado.movimientos,
+                origen="PDF",
+                tipo_producto=resultado.tipo_producto,
+                nombre_producto=producto.nombre,
             )
-        registro.save(
-            update_fields=[
-                "provisionales_confirmados",
-                "provisionales_descartados",
-                "provisionales_ambiguos",
-                "operaciones_nuevas",
-                "operaciones_actualizadas",
-                "mensaje",
-            ]
-        )
-        _guardar_snapshot(user, producto, resultado)
-        # El orden de carga no debe importar: si NeatPagos fue importado antes,
-        # el estado recién procesado completa ahora el cruce por monto y fecha.
-        from banca.services.fuentes_externas import conciliar_eventos
+            registro.banco = banco
+            registro.producto = producto
+            registro.estado = "PROCESADO"
+            registro.banco_detectado = resultado.banco
+            registro.tarjeta_ultimos4 = resultado.tarjeta_ultimos4
+            registro.tipo_producto = resultado.tipo_producto
+            registro.numero_producto = resultado.numero_producto
+            registro.saldo_final_clp = resultado.saldo_final_clp
+            registro.fecha_estado = resultado.fecha_estado
+            registro.fecha_vencimiento = resultado.fecha_vencimiento
+            registro.periodo_inicio = resultado.periodo_inicio
+            registro.periodo_fin = resultado.periodo_fin
+            registro.monto_facturado = resultado.monto_facturado
+            registro.monto_minimo = resultado.monto_minimo
+            registro.moneda = resultado.moneda
+            registro.cupo_total_clp = resultado.cupo_total_clp
+            registro.cupo_utilizado_clp = resultado.cupo_utilizado_clp
+            registro.cupo_disponible_clp = resultado.cupo_disponible_clp
+            registro.cupo_avance_disponible_clp = resultado.cupo_avance_disponible_clp
+            registro.cupo_total_usd = resultado.cupo_total_usd
+            registro.cupo_utilizado_usd = resultado.cupo_utilizado_usd
+            registro.cupo_disponible_usd = resultado.cupo_disponible_usd
+            registro.operaciones_detectadas = len(resultado.movimientos)
+            registro.operaciones_nuevas = ingesta["nuevos"]
+            registro.operaciones_actualizadas = ingesta["actualizados"]
+            registro.mensaje = "Análisis completado."
+            registro.procesado_at = timezone.now()
+            registro.save()
+            _activar_estado_vigente(registro)
+            registro.movimientos.add(*ingesta["ids"])
+            from banca.services.provisionales import cerrar_periodo_apple_pay
 
-        conciliar_eventos(user)
+            cierre = cerrar_periodo_apple_pay(
+                user,
+                producto,
+                resultado.periodo_inicio,
+                resultado.periodo_fin,
+                list(
+                    MovimientoBancario.objects.filter(
+                        user=user,
+                        id__in=ingesta["ids"],
+                        origen="PDF",
+                    )
+                ),
+                registro,
+            )
+            registro.provisionales_confirmados = cierre["confirmados"]
+            registro.provisionales_descartados = cierre["descartados"]
+            registro.provisionales_ambiguos = cierre["ambiguos"]
+            registro.operaciones_nuevas = max(
+                0, registro.operaciones_nuevas - cierre["confirmados"]
+            )
+            registro.operaciones_actualizadas += cierre["confirmados"]
+            if cierre["sin_periodo"]:
+                registro.mensaje = (
+                    "Análisis completado; el PDF no informó período y no cerró compras Apple Pay."
+                )
+            registro.save(
+                update_fields=[
+                    "provisionales_confirmados",
+                    "provisionales_descartados",
+                    "provisionales_ambiguos",
+                    "operaciones_nuevas",
+                    "operaciones_actualizadas",
+                    "mensaje",
+                ]
+            )
+            _guardar_snapshot(user, producto, resultado)
+            # El orden de carga no debe importar: si NeatPagos fue importado antes,
+            # el estado recién procesado completa ahora el cruce por monto y fecha.
+            from banca.services.fuentes_externas import conciliar_eventos
+
+            conciliar_eventos(user)
     except Exception as exc:
+        registro.refresh_from_db()
+        registro.estado = 'ERROR'
         registro.mensaje = str(exc)[:1000]
         registro.save()
     return registro
@@ -1254,6 +1855,8 @@ def reanalizar_importacion(user, importacion: ImportacionEstadoCuenta) -> Import
     with importacion.archivo.open("rb") as archivo:
         contenido = archivo.read()
     resultado = parsear_estado_cuenta_pdf(contenido, importacion.nombre_archivo)
+    if isinstance(resultado, DocumentoAseoParseado):
+        return _registrar_documento_aseo(user, importacion, resultado)
     banco = _banco_existente(user, resultado.banco)
     producto = _producto_resultado(user, banco, resultado)
     ingesta = ingestar_movimientos(

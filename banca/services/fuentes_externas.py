@@ -709,6 +709,11 @@ def conciliar_eventos(user):
     )
     for movimiento in movimientos_neat:
         classified += int(_sincronizar_categoria_movimiento_neat(movimiento))
+    # El cruce puede aportar el destinatario que falta en la glosa bancaria.
+    # Reconciliar aquí también cubre el caso en que Neat se importa después del banco.
+    from banca.services.reconciliacion import reconciliar
+
+    reconciliar(user)
     return {"conciliados": matched, "revision": review, "clasificados": classified}
 
 

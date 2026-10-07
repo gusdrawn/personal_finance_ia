@@ -20,7 +20,7 @@ os.environ.setdefault(
     "BANK_SYNC_SESSION_DIR", tempfile.mkdtemp(prefix="bank_sync_test_")
 )
 
-from datetime import date  # noqa: E402
+from datetime import date, timedelta  # noqa: E402
 from decimal import Decimal  # noqa: E402
 
 from django.contrib.auth.models import User  # noqa: E402
@@ -277,6 +277,23 @@ class IngestaMovimientosTest(TestCase):
         self.assertEqual(mov.estado, "FACTURADO")
         self.assertEqual(mov.periodo_factura, date(2026, 7, 25))
 
+    def test_operaciones_iguales_de_bancos_distintos_no_colisionan(self):
+        from banca.models import MovimientoBancario
+        from banca.services import ingesta
+        from configuracion.models import Banco
+
+        otro_banco = Banco.objects.create(nombre="Otro Banco Ingesta")
+        primera = ingesta.ingestar_movimientos(
+            self.user, self.banco, [self._mov("FACTURADO")]
+        )
+        segunda = ingesta.ingestar_movimientos(
+            self.user, otro_banco, [self._mov("FACTURADO")]
+        )
+
+        self.assertEqual(primera["nuevos"], 1)
+        self.assertEqual(segunda["nuevos"], 1)
+        self.assertEqual(MovimientoBancario.objects.filter(user=self.user).count(), 2)
+
 
 class IngestaSaldosYSignalTest(TestCase):
     def setUp(self):
@@ -318,8 +335,74 @@ class IngestaSaldosYSignalTest(TestCase):
         self.assertEqual(snap_credito.saldo_insoluto, Decimal("39000000"))
 
         # la señal debe crear el Pasivo de la TDC con la deuda total (facturada + no facturada)
-        pasivo_tdc = Pasivo.objects.get(producto__tipo="TDC")
+        pasivo_tdc = Pasivo.objects.get(producto__tipo="TDC", moneda_original="CLP")
         self.assertEqual(pasivo_tdc.monto_clp, Decimal("150000"))
+
+    def test_pasivo_manual_es_respaldo_hasta_que_llega_un_snapshot(self):
+        from banca.models import SaldoSnapshot
+        from configuracion.models import Producto
+        from patrimonio.models import Pasivo
+        from patrimonio.services.valoracion import resumen_patrimonio
+
+        producto = Producto.objects.create(
+            user=self.user, banco=self.banco, nombre="Cuenta vinculada", tipo="TDC"
+        )
+        Pasivo.objects.create(
+            user=self.user, producto=producto, nombre="Saldo manual",
+            tipo="TDC", monto_clp=Decimal("200000"), monto_usd=Decimal("200"),
+            monto_original=Decimal("200000"), moneda_original="CLP",
+        )
+        sin_snapshot = resumen_patrimonio(self.user, date.today())
+        self.assertEqual(sin_snapshot["pasivos_total_clp"], Decimal("200000"))
+
+        SaldoSnapshot.objects.create(
+            user=self.user, producto=producto, fecha=date.today(),
+            deuda_facturada_clp=Decimal("120000"),
+            deuda_no_facturada_clp=Decimal("30000"),
+        )
+
+        con_snapshot = resumen_patrimonio(self.user, date.today())
+        self.assertEqual(con_snapshot["pasivos_total_clp"], Decimal("150000"))
+        self.assertEqual(len(con_snapshot["pasivos"]), 1)
+
+    def test_snapshot_hipotecario_sincroniza_pasivo_y_no_pisa_un_saldo_mas_nuevo(self):
+        from banca.models import SaldoSnapshot
+        from configuracion.models import Producto
+        from departamentos.models import CreditoHipotecario, Departamento
+        from patrimonio.models import Pasivo
+
+        producto = Producto.objects.create(
+            user=self.user, banco=self.banco, nombre="Hipotecario", tipo="CREDITO_HIPOTECARIO"
+        )
+        departamento = Departamento.objects.create(
+            user=self.user, codigo="H01", piso="1", metros_cuadrados=Decimal("50"),
+            valor_compra_uf=Decimal("1000"), valor_actual_uf=Decimal("1200"),
+        )
+        hipoteca = CreditoHipotecario.objects.create(
+            departamento=departamento, producto=producto, monto_original_uf=Decimal("2000"),
+            tasa_anual=Decimal("4"), plazo_anos=20, tipo_tasa="FIJA",
+            cuota_uf=Decimal("10"), saldo_actual_uf=Decimal("1100"), cuotas_totales=240,
+        )
+        hoy = date.today()
+        SaldoSnapshot.objects.create(
+            user=self.user, producto=producto, fecha=hoy,
+            saldo_insoluto=Decimal("39000000"), saldo_insoluto_uf=Decimal("1000"),
+        )
+        SaldoSnapshot.objects.create(
+            user=self.user, producto=producto, fecha=hoy + timedelta(days=1),
+            saldo_insoluto=Decimal("35100000"), saldo_insoluto_uf=Decimal("900"),
+        )
+        SaldoSnapshot.objects.create(
+            user=self.user, producto=producto, fecha=hoy - timedelta(days=1),
+            saldo_insoluto=Decimal("42900000"), saldo_insoluto_uf=Decimal("1100"),
+        )
+
+        hipoteca.refresh_from_db()
+        pasivo = Pasivo.objects.get(
+            producto=producto, moneda_original="CLP", sincronizado_banca=True
+        )
+        self.assertEqual(hipoteca.saldo_actual_uf, Decimal("900"))
+        self.assertEqual(pasivo.monto_clp, Decimal("35100000"))
 
 
 # --------------------------------------------------------------------------- ingesta de posiciones (Fase 0)
@@ -402,6 +485,37 @@ class IngestaPosicionesTest(TestCase):
         ]
         ingesta_posiciones.ingestar_posiciones(self.user, pos)
         self.assertTrue(Activo.objects.filter(user=self.user, tipo="OTRO").exists())
+
+    def test_identidad_de_posicion_separa_cuentas_y_vincula_instrumento(self):
+        from banca.services import ingesta_posiciones
+        from patrimonio.models import Activo
+        from trading.models import Instrument, InstrumentExternalId
+
+        instrument = Instrument.objects.create(
+            symbol="ACME", name="Acme Corp", asset_type="STOCK", exchange="NYSE"
+        )
+        InstrumentExternalId.objects.create(
+            instrument=instrument, provider="broker", external_id="ACME"
+        )
+        posiciones = [
+            PosicionNormalizada(
+                simbolo="ACME", nombre="Acme", tipo_activo="ACCIONES", fuente="broker",
+                valor_usd=Decimal("100"), cuenta_fuente_id="cuenta-1",
+            ),
+            PosicionNormalizada(
+                simbolo="ACME", nombre="Acme", tipo_activo="ACCIONES", fuente="broker",
+                valor_usd=Decimal("200"), cuenta_fuente_id="cuenta-2",
+            ),
+        ]
+
+        ingesta_posiciones.ingestar_posiciones(self.user, posiciones)
+        ingesta_posiciones.ingestar_posiciones(self.user, posiciones[:1])
+
+        activos = Activo.objects.filter(user=self.user).order_by("cuenta_fuente")
+        self.assertEqual(activos.count(), 2)
+        self.assertEqual(list(activos.values_list("cuenta_fuente", flat=True)), ["cuenta-1", "cuenta-2"])
+        self.assertEqual(list(activos.values_list("instrumento_id", flat=True)), [instrument.pk, instrument.pk])
+        self.assertFalse(any(activo.requiere_revision_fuente for activo in activos))
 
 
 # --------------------------------------------------------------------------- ruteo de run_sync

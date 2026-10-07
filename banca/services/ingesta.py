@@ -11,16 +11,19 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from typing import Optional
+from collections import defaultdict
 
+from django.db import transaction
 from django.utils import timezone
 
-from bank_sync.models import DeudaResumen, EstadoCuenta, MovimientoNormalizado
+from bank_sync.models import DeudaResumen, EstadoCuenta, MovimientoNormalizado, _norm
 from banca.models import MovimientoBancario, SaldoSnapshot
 
 
 def _resolver_producto(user, banco, tarjeta_id: Optional[str], tipo: str = "TDC", nombre_hint: str = ""):
     """Mapea un identificador de tarjeta/crédito a un configuracion.Producto (get_or_create)."""
     from configuracion.models import Producto
+    from configuracion.services.productos import producto_canonico
 
     tid = (tarjeta_id or "").strip()
     if tid:
@@ -29,19 +32,19 @@ def _resolver_producto(user, banco, tarjeta_id: Optional[str], tipo: str = "TDC"
             or Producto.objects.filter(user=user, banco=banco, tipo=tipo, nombre__icontains=tid).first()
         )
         if prod:
-            return prod
+            return producto_canonico(prod)
         nombre = nombre_hint or f"{'TDC' if tipo == 'TDC' else tipo} *{tid}"
         prod, _ = Producto.objects.get_or_create(
             user=user, banco=banco, nombre=nombre,
             defaults={"tipo": tipo, "tiene_cupo_usd": False, "ultimos4": tid[-4:], "origen": "CONECTOR"}
         )
-        return prod
+        return producto_canonico(prod)
     # sin identificador: producto genérico por tipo
     prod, _ = Producto.objects.get_or_create(
         user=user, banco=banco, nombre=nombre_hint or f"{tipo} (sin asignar)",
         defaults={"tipo": tipo, "origen": "CONECTOR"}
     )
-    return prod
+    return producto_canonico(prod)
 
 
 def _a_clp(mov: MovimientoNormalizado, tipo_cambio_usd: Optional[Decimal]) -> tuple[Decimal, Optional[Decimal]]:
@@ -53,6 +56,7 @@ def _a_clp(mov: MovimientoNormalizado, tipo_cambio_usd: Optional[Decimal]) -> tu
     return (mov.monto, None)
 
 
+@transaction.atomic
 def ingestar_movimientos(
     user,
     banco,
@@ -65,8 +69,10 @@ def ingestar_movimientos(
 ) -> dict:
     """Inserta o actualiza movimientos. Devuelve {'nuevos': n, 'actualizados': m, 'ids': [...]}."""
     nuevos, actualizados, ids = 0, 0, []
+    ocurrencias = defaultdict(int)
+    usados = set()
     for mov in movimientos:
-        h = mov.hash_externo()
+        huella_legacy = mov.hash_externo()
         producto = _resolver_producto(
             user,
             banco,
@@ -74,12 +80,49 @@ def ingestar_movimientos(
             tipo_producto,
             nombre_hint=nombre_producto,
         )
+        # Serializa importaciones concurrentes del mismo producto. Sin ID del
+        # proveedor, una corrida se trata como un multiconjunto de operaciones.
+        type(producto).objects.select_for_update().get(pk=producto.pk, user=user)
+        clave = (producto.pk, huella_legacy)
+        ocurrencias[clave] += 1
+        h = mov.hash_externo(f"banco:{banco.pk}:producto:{producto.pk}", ocurrencias[clave])
         monto_clp, tc = _a_clp(mov, tipo_cambio_usd)
 
         existente = MovimientoBancario.objects.filter(user=user, hash_externo=h).first()
+        if existente is None and mov.external_id:
+            existente = MovimientoBancario.objects.filter(
+                user=user, producto=producto, referencia_externa=mov.external_id,
+            ).first()
+        if existente is not None and existente.pk in usados and not mov.external_id:
+            existente = None
+        if existente is None:
+            # Upgrade the old user-wide hash only when it belongs to the same
+            # resolved product. Identical purchases on another product are distinct.
+            legado = MovimientoBancario.objects.filter(
+                user=user, hash_externo=huella_legacy, producto=producto
+            ).exclude(pk__in=usados).first()
+            existente = legado
+        if existente is None:
+            # Tras consolidar productos, la huella antigua puede contener el ID
+            # anterior. Reconoce el contenido dentro del producto ya resuelto;
+            # cada fila sólo se consume una vez por corrida.
+            candidatos = MovimientoBancario.objects.filter(
+                user=user, producto=producto, fecha=mov.fecha, monto=mov.monto,
+                moneda=mov.moneda, cuota_actual=mov.cuota_actual,
+                cuota_total=mov.cuota_total,
+            ).exclude(pk__in=usados).order_by("pk")
+            if mov.external_id:
+                candidatos = candidatos.filter(referencia_externa="")
+            existente = next((item for item in candidatos if _norm(item.descripcion) == _norm(mov.descripcion)), None)
         if existente:
             # solo avanzar el ciclo de vida / período; respetar lo manual
             cambios = []
+            if mov.external_id and existente.referencia_externa != mov.external_id:
+                existente.referencia_externa = mov.external_id
+                cambios.append("referencia_externa")
+            if (mov.external_id or not existente.referencia_externa) and existente.hash_externo != h and not MovimientoBancario.objects.filter(user=user, hash_externo=h).exclude(pk=existente.pk).exists():
+                existente.hash_externo = h
+                cambios.append("hash_externo")
             if mov.estado == "FACTURADO" and existente.estado == "NO_FACTURADO":
                 existente.estado = "FACTURADO"
                 cambios.append("estado")
@@ -97,6 +140,7 @@ def ingestar_movimientos(
                 existente.save(update_fields=cambios + ["updated_at"])
                 actualizados += 1
             ids.append(existente.id)
+            usados.add(existente.id)
             continue
 
         nuevo = MovimientoBancario.objects.create(
@@ -114,9 +158,14 @@ def ingestar_movimientos(
             origen=origen,
             periodo_factura=mov.periodo_factura,
             hash_externo=h,
+            referencia_externa=mov.external_id,
         )
         nuevos += 1
         ids.append(nuevo.id)
+        usados.add(nuevo.id)
+    from gastos.conciliaciones import conciliar_movimientos_manuales
+
+    conciliar_movimientos_manuales(user)
     return {"nuevos": nuevos, "actualizados": actualizados, "ids": ids}
 
 

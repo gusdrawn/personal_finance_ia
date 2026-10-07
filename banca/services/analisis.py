@@ -15,7 +15,7 @@ from banca.models import MovimientoBancario, SaldoSnapshot
 
 def _operacionales(user):
     return MovimientoBancario.objects.filter(
-        user=user, naturaleza="OPERACIONAL", por_revisar=False
+        user=user, producto__user=user, producto__contabilizar=True, naturaleza="OPERACIONAL", por_revisar=False
     ).exclude(estado="DESCARTADO_CIERRE")
 
 
@@ -78,7 +78,7 @@ def monto_a_pagar_tdc(user) -> list[dict]:
     """Último saldo facturado por tarjeta (lo que hay que pagar)."""
     out = []
     productos = (
-        SaldoSnapshot.objects.filter(user=user)
+        SaldoSnapshot.objects.filter(user=user, producto__user=user, producto__contabilizar=True)
         .filter(Q(deuda_facturada_clp__isnull=False) | Q(deuda_usd__isnull=False))
         .order_by()
         .values_list("producto", flat=True)
@@ -110,7 +110,7 @@ def cupos_tdc(user) -> dict:
     cupo leído desde un estado de cuenta posterior.
     """
     snapshots_con_cupo = (
-        SaldoSnapshot.objects.filter(user=user, producto__tipo="TDC")
+        SaldoSnapshot.objects.filter(user=user, producto__user=user, producto__contabilizar=True, producto__tipo="TDC")
         .exclude(cupo_total_clp__isnull=True, cupo_disponible_clp__isnull=True)
         .order_by()
     )
@@ -162,6 +162,7 @@ def vencimientos_tdc(user, year: int, month: int) -> list[dict]:
     snapshots = (
         SaldoSnapshot.objects.filter(
             user=user,
+            producto__user=user, producto__contabilizar=True,
             producto__tipo="TDC",
             fecha_vencimiento__year=year,
             fecha_vencimiento__month=month,

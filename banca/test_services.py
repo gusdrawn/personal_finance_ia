@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.urls import reverse
 
 from banca.models import (
     CategoriaTematica,
@@ -208,6 +209,133 @@ class ReconciliacionServiceTest(BancaServiceTestCase):
         self.assertEqual(movimiento.naturaleza, "TRANSFERENCIA")
         self.assertEqual(movimiento.prestamo_id, prestamo.id)
 
+    def test_cargo_neat_a_destinatario_conocido_no_es_gasto(self):
+        categoria = CategoriaTematica.objects.create(
+            user=self.user, nombre="Otros gastos", aplica_a="EGRESO"
+        )
+        ContraparteConocida.objects.create(user=self.user, alias="Fabiana")
+        evento = EventoFinancieroExterno.objects.create(
+            user=self.user,
+            fuente="neat",
+            tipo="PAGO",
+            external_id="neat-fabiana",
+            estado="CONFIRMADO",
+            fecha_evento=date(2026, 6, 15),
+            monto_bruto=Decimal("1000"),
+            monto_neto=Decimal("1030"),
+        )
+        PagoNeat.objects.create(
+            evento=evento,
+            destinatario="Fabiana Gonzalez",
+            monto_pagado=Decimal("1000"),
+            total_cargado=Decimal("1030"),
+        )
+        movimiento = self.crear_movimiento(
+            descripcion="NEAT PAGOS",
+            monto_clp=Decimal("1030"),
+            categoria=categoria,
+        )
+        ConciliacionEventoExterno.objects.create(
+            evento=evento,
+            movimiento=movimiento,
+            rol="CARGO",
+            monto_asignado=Decimal("1030"),
+        )
+
+        reconciliacion.reconciliar(self.user)
+
+        movimiento.refresh_from_db()
+        self.assertEqual(movimiento.naturaleza, "TRANSFERENCIA")
+        self.assertIsNone(movimiento.categoria)
+
+    def test_abono_neat_compara_el_principal_y_marca_cargo_original_transferencia(self):
+        cuenta = Producto.objects.create(
+            user=self.user, banco=self.banco, nombre="Cuenta Corriente", tipo="CUENTA"
+        )
+        evento = EventoFinancieroExterno.objects.create(
+            user=self.user,
+            fuente="neat",
+            tipo="PAGO",
+            external_id="neat-jonathan-retorno",
+            estado="CONFIRMADO",
+            fecha_evento=date(2026, 6, 15),
+            monto_bruto=Decimal("1000"),
+            monto_neto=Decimal("1030"),
+        )
+        PagoNeat.objects.create(
+            evento=evento,
+            destinatario="Jonathan Soto",
+            monto_pagado=Decimal("1000"),
+            total_cargado=Decimal("1030"),
+        )
+        cargo = self.crear_movimiento(
+            descripcion="NEAT PAGOS",
+            monto_clp=Decimal("1030"),
+        )
+        ConciliacionEventoExterno.objects.create(
+            evento=evento,
+            movimiento=cargo,
+            rol="CARGO",
+            monto_asignado=Decimal("1030"),
+        )
+        abono = self.crear_movimiento(
+            producto=cuenta,
+            descripcion="TRANSFERENCIA DE JONATHAN SOTO",
+            monto_clp=Decimal("-1000"),
+            fecha=date(2026, 6, 15),
+        )
+
+        reconciliacion.reconciliar(self.user)
+
+        abono.refresh_from_db()
+        cargo.refresh_from_db()
+        self.assertEqual(abono.naturaleza, "TRANSFERENCIA")
+        self.assertEqual(cargo.naturaleza, "TRANSFERENCIA")
+        self.assertEqual(
+            ConciliacionEventoExterno.objects.get(movimiento=abono, rol="DEPOSITO").monto_asignado,
+            Decimal("1000"),
+        )
+
+    def test_traspaso_a_nombre_del_titular_no_es_gasto(self):
+        self.user.first_name = "Ana Maria"
+        self.user.last_name = "Perez"
+        self.user.save(update_fields=["first_name", "last_name"])
+        cuenta = Producto.objects.create(
+            user=self.user, banco=self.banco, nombre="Cuenta Corriente", tipo="CUENTA"
+        )
+        movimiento = self.crear_movimiento(
+            producto=cuenta,
+            descripcion="TRASPASO A FALABELLA A NOMBRE DE ANA MARIA PEREZ",
+            monto_clp=Decimal("500000"),
+        )
+
+        reconciliacion.reconciliar(self.user)
+
+        movimiento.refresh_from_db()
+        self.assertEqual(movimiento.naturaleza, "TRANSFERENCIA")
+
+    def test_traspaso_saliente_de_cuenta_sin_titular_reconocido_queda_en_revision(self):
+        cuenta = Producto.objects.create(
+            user=self.user, banco=self.banco, nombre="Cuenta Corriente", tipo="CUENTA"
+        )
+        movimiento = self.crear_movimiento(
+            producto=cuenta,
+            descripcion="TRANSFERENCIA A CUENTA BCI",
+            monto_clp=Decimal("500000"),
+        )
+
+        reconciliacion.reconciliar(self.user)
+        clasificador = Mock()
+        resultado = clasificacion_ia.clasificar_pendientes(
+            self.user, ids=[movimiento.pk], clasificador=clasificador
+        )
+
+        movimiento.refresh_from_db()
+        self.assertTrue(movimiento.por_revisar)
+        self.assertEqual(movimiento.naturaleza, "OPERACIONAL")
+        self.assertEqual(resultado, {"regla": 0, "ia": 0, "sin_resolver": 0})
+        clasificador.clasificar.assert_not_called()
+
     def test_cargo_neat_cabe_en_un_prestamo_y_se_vincula(self):
         prestamo = self.crear_prestamo(monto="1000")
         movimiento = self.crear_movimiento(
@@ -276,13 +404,16 @@ class ReconciliacionServiceTest(BancaServiceTestCase):
 
 class PresupuestoServiceTest(BancaServiceTestCase):
     def ingreso(self, fecha, monto):
+        cuenta, _ = Producto.objects.get_or_create(user=self.user, banco=self.banco, nombre='Cuenta ingresos', defaults={'tipo': 'CUENTA'})
         return self.crear_movimiento(
+            producto=cuenta,
+            estado='FACTURADO',
             descripcion=f"Ingreso {fecha}",
             monto_clp=-Decimal(str(monto)),
             fecha=fecha,
         )
 
-    def test_promedio_usa_meses_con_ingresos_y_excluye_transferencias(self):
+    def test_promedio_usa_la_ventana_completa_y_excluye_transferencias(self):
         self.ingreso(date(2026, 4, 10), 3000)
         self.ingreso(date(2026, 5, 10), 3300)
         self.ingreso(date(2026, 6, 10), 3600)
@@ -488,6 +619,55 @@ class ClasificacionServiceTest(BancaServiceTestCase):
         self.assertEqual(movimiento.categoria_id, categoria.id)
         clasificador.clasificar.assert_not_called()
 
+    def test_abono_usa_categoria_de_ingreso_y_no_reutiliza_mapeo_de_gasto(self):
+        gasto = CategoriaTematica.objects.create(
+            user=self.user, nombre="Compras", aplica_a="EGRESO"
+        )
+        MapeoComercio.objects.create(
+            user=self.user, patron="transferencia recibida tienda", categoria=gasto
+        )
+        ingreso = self.crear_movimiento(
+            descripcion="TRANSFERENCIA RECIBIDA TIENDA", monto_clp=Decimal("-5000")
+        )
+
+        class FakeClassifier:
+            def __init__(self):
+                self.categories = []
+
+            def clasificar(self, glosas, categorias):
+                self.categories.extend(categorias)
+                return [{"glosa": glosas[0], "categoria": "Devoluciones", "confianza": 0.9}]
+
+        clasificador = FakeClassifier()
+        resultado = clasificacion_ia.clasificar_pendientes(
+            self.user, clasificador=clasificador
+        )
+
+        ingreso.refresh_from_db()
+        self.assertEqual(resultado, {"regla": 0, "ia": 1, "sin_resolver": 0})
+        self.assertEqual(ingreso.categoria.nombre, "Devoluciones")
+        self.assertEqual(ingreso.categoria.aplica_a, "INGRESO")
+        self.assertIn("DIRECCION: INGRESO", clasificador.categories)
+        self.assertNotIn("EGRESO: Compras", clasificador.categories)
+
+    def test_movimiento_ambiguo_se_reserva_para_revision_manual(self):
+        movimiento = self.crear_movimiento(
+            descripcion="TRANSFERENCIA SIN DESTINATARIO",
+            monto_clp=Decimal("-5000"),
+            por_revisar=True,
+        )
+        clasificador = Mock()
+
+        resultado = clasificacion_ia.clasificar_pendientes(
+            self.user, clasificador=clasificador
+        )
+
+        movimiento.refresh_from_db()
+        self.assertEqual(resultado, {"regla": 0, "ia": 0, "sin_resolver": 0})
+        self.assertIsNone(movimiento.categoria)
+        clasificador.clasificar.assert_not_called()
+
+
     def test_clasificacion_omite_transferencias_y_categorias_manuales(self):
         manual = self.crear_movimiento(
             descripcion="Manual", categoria_es_manual=True
@@ -572,7 +752,7 @@ class ClasificacionServiceTest(BancaServiceTestCase):
             return response
 
         clasificador = clasificacion_ia.OpenAICompatibleClasificador(
-            modelo="modelo-lotes", api_key="secret", base_url="https://ia.test/v1"
+            modelo="glm-modelo-lotes", api_key="secret", base_url="https://ia.test/v1"
         )
         with patch("requests.post", side_effect=responder) as post:
             resultado = clasificador.clasificar(glosas, ["Compras"])
@@ -580,6 +760,67 @@ class ClasificacionServiceTest(BancaServiceTestCase):
         self.assertEqual(post.call_count, 3)
         self.assertEqual([fila["glosa"] for fila in resultado], glosas)
         self.assertEqual(clasificador.ultimo_error, "")
+        self.assertTrue(
+            all(
+                "x-opencode-session" not in llamada.kwargs["headers"]
+                for llamada in post.call_args_list
+            )
+        )
+        self.assertTrue(
+            all(
+                llamada.kwargs["json"]["reasoning_effort"] == "low"
+                for llamada in post.call_args_list
+            )
+        )
+
+    def test_opencode_go_envia_sesion_estable_y_user_agent_en_todos_los_lotes(self):
+        def responder(*args, **kwargs):
+            payload_usuario = json.loads(kwargs["json"]["messages"][1]["content"])
+            filas = [
+                {"glosa": glosa, "categoria": "Compras", "confianza": 0.9}
+                for glosa in payload_usuario["glosas"]
+            ]
+            response = Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {
+                "choices": [
+                    {"message": {"content": json.dumps({"respuesta": filas})}}
+                ]
+            }
+            return response
+
+        clasificador = clasificacion_ia.OpenAICompatibleClasificador(
+            modelo="glm-5.3-flash",
+            api_key="secret",
+            base_url="https://opencode.ai/zen/go/v1/chat/completions",
+        )
+        with patch("requests.post", side_effect=responder) as post:
+            resultado = clasificador.clasificar(
+                [f"comercio {chr(97 + indice)}" for indice in range(21)], ["Compras"]
+            )
+
+        llamadas = post.call_args_list
+        sesiones = [llamada.kwargs["headers"]["x-opencode-session"] for llamada in llamadas]
+        self.assertEqual(len(resultado), 21)
+        self.assertEqual(post.call_count, 2)
+        self.assertTrue(
+            all(
+                "reasoning_effort" not in llamada.kwargs["json"]
+                for llamada in llamadas
+            )
+        )
+        self.assertTrue(sesiones[0])
+        self.assertEqual(sesiones, [sesiones[0], sesiones[0]])
+        self.assertTrue(
+            all(
+                llamada.kwargs["headers"]["User-Agent"] == "FinanzasPersonalesIA"
+                for llamada in llamadas
+            )
+        )
+        self.assertEqual(
+            llamadas[0].args[0],
+            "https://opencode.ai/zen/go/v1/chat/completions",
+        )
 
     def test_clasificador_reintenta_solo_glosas_omitidas(self):
         llamadas = []
@@ -614,6 +855,151 @@ class ClasificacionServiceTest(BancaServiceTestCase):
             ["comercio tres"],
         ])
         self.assertEqual(clasificador.ultimo_error, "")
+
+    def test_clasificador_reintenta_json_truncado_con_lotes_mas_pequenos(self):
+        llamadas = []
+
+        def responder(*args, **kwargs):
+            lote = json.loads(kwargs["json"]["messages"][1]["content"])["glosas"]
+            llamadas.append(lote)
+            response = Mock()
+            response.raise_for_status.return_value = None
+            if len(llamadas) == 1:
+                content = '{"respuesta": [{"glosa": "Compra'
+            else:
+                filas = [
+                    {"glosa": glosa, "categoria": "Compras", "confianza": 0.9}
+                    for glosa in lote
+                ]
+                content = json.dumps({"respuesta": filas})
+            response.json.return_value = {
+                "choices": [{"message": {"content": content}}]
+            }
+            return response
+
+        glosas = [
+            "comercio alfa",
+            "comercio bravo",
+            "comercio charlie",
+            "comercio delta",
+            "comercio eco",
+            "comercio foxtrot",
+        ]
+        clasificador = clasificacion_ia.OpenAICompatibleClasificador(
+            modelo="modelo-json", api_key="secret", base_url="https://ia.test/v1"
+        )
+        with patch("requests.post", side_effect=responder) as post:
+            resultado = clasificador.clasificar(glosas, ["Compras"])
+
+        self.assertEqual(resultado, [
+            {"glosa": glosa, "categoria": "Compras", "confianza": 0.9}
+            for glosa in glosas
+        ])
+        self.assertEqual(post.call_count, 3)
+        self.assertEqual(llamadas, [glosas, glosas[:5], glosas[5:]])
+        self.assertEqual(clasificador.ultimo_error, "")
+
+    def test_clasificador_informa_si_el_json_sigue_invalido_tras_reintentos(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "choices": [{"message": {"content": '{"respuesta": ['}}]
+        }
+        clasificador = clasificacion_ia.OpenAICompatibleClasificador(
+            modelo="modelo-json", api_key="secret", base_url="https://ia.test/v1"
+        )
+
+        with patch("requests.post", return_value=response) as post:
+            resultado = clasificador.clasificar(["comercio unico"], ["Compras"])
+
+        self.assertEqual(resultado, [])
+        self.assertEqual(post.call_count, 3)
+        self.assertIn("JSON inválido o truncado", clasificador.ultimo_error)
+
+
+class BancaReviewFlowTest(BancaServiceTestCase):
+    def test_bandeja_muestra_un_pendiente_a_la_vez_y_respeta_usuario(self):
+        primero = self.crear_movimiento(
+            descripcion="ABONO PERSONA",
+            monto_clp=Decimal("-5000"),
+            fecha=date(2026, 6, 10),
+        )
+        segundo = self.crear_movimiento(
+            descripcion="TRASPASO OTRO BANCO",
+            monto_clp=Decimal("5000"),
+            fecha=date(2026, 6, 11),
+            por_revisar=True,
+        )
+        otro = User.objects.create_user(username="otro-review", password="x")
+        MovimientoBancario.objects.create(
+            user=otro,
+            producto=self.producto,
+            fecha=date(2026, 6, 9),
+            descripcion="MOVIMIENTO DE OTRA PERSONA",
+            monto=Decimal("-100"),
+            monto_clp=Decimal("-100"),
+            hash_externo="movimiento-otro-review",
+        )
+        categoria = CategoriaTematica.objects.create(
+            user=self.user, nombre="Otros ingresos", aplica_a="INGRESO"
+        )
+        self.client.force_login(self.user)
+
+        pagina = self.client.get(reverse("banca_movimientos"), {"pendientes": "1"})
+
+        self.assertContains(pagina, primero.descripcion)
+        self.assertNotContains(pagina, segundo.descripcion)
+        self.assertNotContains(pagina, "MOVIMIENTO DE OTRA PERSONA")
+
+        self.client.post(
+            reverse("banca_resolver_movimiento", args=[primero.pk]),
+            {"decision": "ingreso", "categoria": categoria.pk},
+            HTTP_REFERER=f"{reverse('banca_movimientos')}?pendientes=1",
+        )
+        primero.refresh_from_db()
+        self.assertEqual(primero.categoria, categoria)
+        self.assertTrue(primero.categoria_es_manual)
+        self.assertTrue(primero.naturaleza_es_manual)
+        self.assertTrue(
+            MapeoComercio.objects.filter(
+                user=self.user, patron="abono persona", categoria=categoria
+            ).exists()
+        )
+        siguiente = self.client.get(reverse("banca_movimientos"), {"pendientes": "1"})
+        self.assertContains(siguiente, segundo.descripcion)
+
+        self.client.post(
+            reverse("banca_resolver_movimiento", args=[segundo.pk]),
+            {"decision": "transferencia"},
+            HTTP_REFERER=f"{reverse('banca_movimientos')}?pendientes=1",
+        )
+        segundo.refresh_from_db()
+        self.assertEqual(segundo.naturaleza, "TRANSFERENCIA")
+        self.assertFalse(segundo.por_revisar)
+        self.assertNotContains(
+            self.client.get(reverse("banca_movimientos"), {"pendientes": "1"}),
+            segundo.descripcion,
+        )
+
+    def test_no_puede_resolver_movimiento_de_otro_usuario(self):
+        otro = User.objects.create_user(username="otro-review-denegado", password="x")
+        movimiento = MovimientoBancario.objects.create(
+            user=otro,
+            producto=self.producto,
+            fecha=date(2026, 6, 9),
+            descripcion="MOVIMIENTO AJENO",
+            monto=Decimal("-100"),
+            monto_clp=Decimal("-100"),
+            hash_externo="movimiento-review-denegado",
+        )
+        self.client.force_login(self.user)
+
+        respuesta = self.client.post(
+            reverse("banca_resolver_movimiento", args=[movimiento.pk]),
+            {"decision": "transferencia"},
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
 
 
 class AnalisisServiceTest(BancaServiceTestCase):
@@ -704,9 +1090,12 @@ class AnalisisServiceTest(BancaServiceTestCase):
             cupo_disponible_clp=Decimal("900000"),
         )
         otro_usuario = User.objects.create_user(username="otro-servicio", password="x")
+        producto_ajeno = Producto.objects.create(
+            user=otro_usuario, banco=self.banco, nombre="TDC del otro usuario", tipo="TDC"
+        )
         SaldoSnapshot.objects.create(
             user=otro_usuario,
-            producto=self.producto,
+            producto=producto_ajeno,
             fecha=date(2026, 6, 1),
             cupo_total_clp=Decimal("9000000"),
             cupo_disponible_clp=Decimal("100000"),
@@ -729,9 +1118,12 @@ class AnalisisServiceTest(BancaServiceTestCase):
             deuda_facturada_clp=Decimal("300000"),
         )
         otro_usuario = User.objects.create_user(username="otro-vencimiento", password="x")
+        producto_ajeno = Producto.objects.create(
+            user=otro_usuario, banco=self.banco, nombre="TDC del otro usuario", tipo="TDC"
+        )
         SaldoSnapshot.objects.create(
             user=otro_usuario,
-            producto=self.producto,
+            producto=producto_ajeno,
             fecha=date(2026, 7, 27),
             fecha_vencimiento=date(2026, 8, 10),
             deuda_facturada_clp=Decimal("900000"),

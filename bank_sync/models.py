@@ -33,27 +33,34 @@ class MovimientoNormalizado:
     cuota_total: Optional[int] = None
     periodo_factura: Optional[date] = None  # a qué estado de cuenta pertenece
     tipo_banco: str = ""  # categoría/ícono que entrega el banco (informativo)
+    external_id: str = ""  # identificador estable cuando la fuente lo proporciona
 
     @property
     def es_cuota(self) -> bool:
         return bool(self.cuota_total and self.cuota_total > 1)
 
-    def hash_externo(self) -> str:
+    def hash_externo(self, identidad_producto: str = "", ocurrencia: int = 1) -> str:
         """
         Huella ESTABLE entre NO_FACTURADO y FACTURADO: no incluye el estado ni el
         período, solo lo que no cambia al facturarse. Permite reconciliar (upsert)
         en vez de duplicar.
         """
-        base = "|".join(
-            [
+        if self.external_id:
+            base = f"{identidad_producto}|id:{self.external_id}"
+            return hashlib.sha256(base.encode("utf-8")).hexdigest()
+        partes = [
                 self.tarjeta_id or "",
                 self.fecha.isoformat(),
                 f"{self.monto:.2f}",
                 self.moneda,
                 _norm(self.descripcion),
                 f"{self.cuota_actual or 0}/{self.cuota_total or 0}",
-            ]
-        )
+        ]
+        if identidad_producto:
+            partes.insert(0, identidad_producto)
+        if ocurrencia > 1:
+            partes.append(f"ocurrencia:{ocurrencia}")
+        base = "|".join(partes)
         return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 
@@ -145,9 +152,13 @@ class PosicionNormalizada:
     valor_usd: Optional[Decimal] = None  # valor de mercado total en USD
     horizonte: Optional[str] = None  # patrimonio.Activo.HORIZONTE_CHOICES (opcional)
     es_liquido: bool = True
+    cuenta_fuente_id: str = ""  # identidad de la cuenta dentro del conector
 
-    def clave(self) -> str:
+    def clave(self, cuenta_fuente_id: str | None = None) -> str:
         """Identidad estable de la posición para upsert (fuente + símbolo)."""
+        cuenta = cuenta_fuente_id or self.cuenta_fuente_id
+        if cuenta:
+            return f"{self.fuente}:{cuenta}:{_norm(self.simbolo)}"
         return f"{self.fuente}:{_norm(self.simbolo)}"
 
 

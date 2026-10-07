@@ -17,12 +17,15 @@ import json
 import logging
 import os
 import re
+import uuid
 from typing import Optional
+from urllib.parse import urlsplit
 
 from django.db import transaction
 from django.utils import timezone
 
 from banca.models import CategoriaTematica, MapeoComercio, MovimientoBancario
+from banca.services.transferencias import CATEGORIA_TRANSFERENCIA_PROPIA
 
 logger = logging.getLogger("banca.clasificacion")
 
@@ -102,7 +105,29 @@ class OpenAICompatibleClasificador(ClasificadorIA):
         self.modelo = modelo
         self.base_url = _normalizar_base_url(base_url)
         self.api_key = api_key or os.environ.get("IA_API_KEY") or os.environ.get("OPENROUTER_API_KEY", "")
+        # OpenCode Go usa este identificador para enrutar y cachear una conversación.
+        # Se crea una vez por clasificador para reutilizarlo entre lotes y reintentos.
+        self._opencode_session_id = uuid.uuid4().hex
         self.ultimo_error = ""
+
+    def _es_opencode_go(self) -> bool:
+        parsed_url = urlsplit(self.base_url)
+        ruta = parsed_url.path.rstrip("/").lower()
+        return bool(
+            parsed_url.hostname
+            and parsed_url.hostname.lower() == "opencode.ai"
+            and (ruta == "/zen/go" or ruta.startswith("/zen/go/"))
+        )
+
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        if self._es_opencode_go():
+            headers["x-opencode-session"] = self._opencode_session_id
+            headers["User-Agent"] = "FinanzasPersonalesIA"
+        return headers
 
     def disponible(self) -> bool:
         return bool(self.api_key)
@@ -115,9 +140,11 @@ class OpenAICompatibleClasificador(ClasificadorIA):
         self.ultimo_error = ""
 
         sistema = (
-            "Eres un clasificador de gastos bancarios chilenos. Para cada glosa, devuelve "
-            "la categoría más adecuada de la lista provista; si ninguna calza, propone una "
-            "categoría nueva corta. Responde SOLO JSON válido."
+            "Eres un clasificador de movimientos bancarios chilenos. La primera entrada "
+            "de categorías indica la dirección común de las glosas. Respétala y elige una "
+            "categoría marcada con esa dirección. Si ninguna calza, propone una categoría "
+            "nueva corta con el prefijo INGRESO: o EGRESO:. Devuelve la glosa de entrada exactamente. "
+            "Responde SOLO JSON válido."
         )
         resultados = []
         lotes = [
@@ -147,20 +174,33 @@ class OpenAICompatibleClasificador(ClasificadorIA):
                     "max_tokens": 4096,
                     "response_format": {"type": "json_object"},
                 }
-                if self.modelo.lower().startswith("glm-"):
+                if self.modelo.lower().startswith("glm-") and not self._es_opencode_go():
                     payload["reasoning_effort"] = "low"
                 resp = requests.post(
                     f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=self._headers(),
                     json=payload,
                     timeout=60,
                 )
                 resp.raise_for_status()
                 content = resp.json()["choices"][0]["message"]["content"]
-                data = json.loads(content)
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError:
+                    if intento >= 2:
+                        self.ultimo_error = (
+                            "Proveedor IA: devolvió JSON inválido o truncado para "
+                            f"{len(lote)} movimiento(s), incluso al reintentar con lotes pequeños."
+                        )
+                        logger.warning("Clasificador IA falló: %s", self.ultimo_error)
+                        return []
+
+                    siguiente_tamano = 5 if intento == 0 and len(lote) > 5 else 1
+                    lotes.extend(
+                        (lote[posicion : posicion + siguiente_tamano], intento + 1)
+                        for posicion in range(0, len(lote), siguiente_tamano)
+                    )
+                    continue
                 if isinstance(data, list):
                     filas = data
                 elif isinstance(data, dict):
@@ -253,6 +293,32 @@ def _categoria(user, nombre: str, *, aplica_a: str = "EGRESO") -> CategoriaTemat
     return cat
 
 
+def _categoria_para_direccion(user, nombre: str, direccion: str):
+    """Evita aplicar a un abono una categoría creada sólo para egresos, o viceversa."""
+    nombre = (nombre or "").strip()[:100]
+    if not nombre:
+        return None
+    categoria = CategoriaTematica.objects.filter(user=user, nombre=nombre).first()
+    if categoria:
+        if categoria.activa and categoria.aplica_a in {direccion, "AMBOS"}:
+            return categoria
+        return None
+    return _categoria(user, nombre, aplica_a=direccion)
+
+
+def _categoria_de_respuesta(valor: str, direccion: str):
+    """Lee el prefijo direccional pedido al clasificador; acepta respuestas antiguas."""
+    valor = (valor or "").strip()
+    prefijo = re.match(r"^(INGRESO|EGRESO|AMBOS)\s*:\s*(.+)$", valor, re.I)
+    if not prefijo:
+        return valor, direccion
+    aplica_a, nombre = prefijo.groups()
+    aplica_a = aplica_a.upper()
+    if aplica_a not in {direccion, "AMBOS"}:
+        return "", ""
+    return nombre.strip(), aplica_a
+
+
 def guardar_mapeo_comercio(
     user, patron: str, categoria: CategoriaTematica, *, origen: str = "MANUAL"
 ):
@@ -282,8 +348,12 @@ def _aplicar(mov: MovimientoBancario, categoria: CategoriaTematica, fuente: str,
     mov.fuente_clasificacion = fuente
     mov.confianza_ia = confianza
     mov.clasificado_at = timezone.now()
+    if categoria.nombre == CATEGORIA_TRANSFERENCIA_PROPIA or (
+        categoria.nombre == "Bicicletas" and not mov.prestamo_id
+    ):
+        mov.por_revisar = True
     mov.save(update_fields=[
-        "categoria", "esencialidad", "fuente_clasificacion", "confianza_ia", "clasificado_at", "updated_at",
+        "categoria", "esencialidad", "fuente_clasificacion", "confianza_ia", "clasificado_at", "por_revisar", "updated_at",
     ])
 
 
@@ -297,7 +367,7 @@ def clasificar_pendientes(
     """Clasifica movimientos sin categoría. Devuelve conteos por fuente."""
     qs = MovimientoBancario.objects.filter(
         user=user, categoria__isnull=True, categoria_es_manual=False, naturaleza="OPERACIONAL"
-    ).exclude(estado="DESCARTADO_CIERRE")
+    ).exclude(estado="DESCARTADO_CIERRE").filter(por_revisar=False)
     if ids is not None:
         qs = qs.filter(id__in=ids)
     pendientes = list(qs)
@@ -307,7 +377,7 @@ def clasificar_pendientes(
     mapeos_qs = MapeoComercio.objects.filter(user=user)
     if not usar_mapeos_ia:
         mapeos_qs = mapeos_qs.filter(origen="MANUAL")
-    mapeos = list(mapeos_qs)
+    mapeos = list(mapeos_qs.select_related("categoria"))
     por_regla, sin_resolver = 0, []
 
     # 0. Conceptos bancarios inequívocos: sueldo y costos de la cuenta no
@@ -325,46 +395,77 @@ def clasificar_pendientes(
         )
         if regla_bancaria:
             nombre, aplica_a = regla_bancaria
-            _aplicar(mov, _categoria(user, nombre, aplica_a=aplica_a), "REGLA")
-            por_regla += 1
-            continue
+            categoria = _categoria_para_direccion(user, nombre, aplica_a)
+            if categoria:
+                _aplicar(mov, categoria, "REGLA")
+                por_regla += 1
+                continue
 
-        # 1. resolver por MapeoComercio
-        match = next((m for m in mapeos if m.patron and m.patron in glosa), None)
+        direccion = "EGRESO" if mov.es_cargo else "INGRESO"
+
+        # 1. resolver por MapeoComercio sólo si la categoría coincide con el signo.
+        match = next(
+            (
+                m
+                for m in mapeos
+                if m.patron
+                and m.patron in glosa
+                and m.categoria.aplica_a in {direccion, "AMBOS"}
+            ),
+            None,
+        )
         if match:
             _aplicar(mov, match.categoria, "REGLA")
             match.hits += 1
             match.save(update_fields=["hits", "updated_at"])
             por_regla += 1
         else:
-            sin_resolver.append((mov, glosa))
+            sin_resolver.append((mov, glosa, direccion))
 
     # 2. IA solo para glosas nuevas (deduplicadas)
     por_ia = 0
     if sin_resolver:
         clasificador = clasificador or _clasificador_usuario(user)
-        glosas_unicas = sorted({g for _, g in sin_resolver if g})
-        categorias_existentes = list(
-            CategoriaTematica.objects.filter(user=user, activa=True).values_list("nombre", flat=True)
-        )
-        resultados = clasificador.clasificar(glosas_unicas, categorias_existentes) if glosas_unicas else []
-        error_proveedor = getattr(clasificador, "ultimo_error", "")
-        if not isinstance(error_proveedor, str):
-            error_proveedor = ""
-        # mapa glosa_norm -> (categoria, confianza)
         decision = {}
-        for fila in resultados or []:
-            if not isinstance(fila, dict):
+        errores_proveedor = []
+        categorias = list(CategoriaTematica.objects.filter(user=user, activa=True))
+        for direccion in ("INGRESO", "EGRESO"):
+            grupo = [
+                (mov, glosa)
+                for mov, glosa, aplica_a in sin_resolver
+                if aplica_a == direccion and glosa
+            ]
+            glosas_unicas = sorted({glosa for _, glosa in grupo})
+            if not glosas_unicas:
                 continue
-            g = normalizar_glosa(str(fila.get("glosa", "")))
-            cat_nombre = str(fila.get("categoria", "")).strip()
-            if g and cat_nombre:
-                decision[g] = (cat_nombre, fila.get("confianza"))
+            categorias_existentes = [f"DIRECCION: {direccion}"] + [
+                f"{categoria.aplica_a}: {categoria.nombre}"
+                for categoria in categorias
+                if categoria.aplica_a in {direccion, "AMBOS"}
+            ]
+            resultados = clasificador.clasificar(glosas_unicas, categorias_existentes)
+            error_lote = getattr(clasificador, "ultimo_error", "")
+            if isinstance(error_lote, str) and error_lote:
+                errores_proveedor.append(error_lote)
+            for fila in resultados or []:
+                if not isinstance(fila, dict):
+                    continue
+                g = normalizar_glosa(str(fila.get("glosa", "")))
+                cat_nombre = str(fila.get("categoria", "")).strip()
+                if g and cat_nombre:
+                    decision[(direccion, g)] = (cat_nombre, fila.get("confianza"))
+        error_proveedor = "; ".join(dict.fromkeys(errores_proveedor))
 
-        for mov, glosa in sin_resolver:
-            if glosa in decision:
-                cat_nombre, conf = decision[glosa]
-                categoria = _categoria(user, cat_nombre)
+        for mov, glosa, direccion in sin_resolver:
+            respuesta = decision.get((direccion, glosa))
+            if respuesta:
+                cat_nombre, conf = respuesta
+                cat_nombre, aplica_a = _categoria_de_respuesta(cat_nombre, direccion)
+                if not cat_nombre or aplica_a not in {direccion, "AMBOS"}:
+                    continue
+                categoria = _categoria_para_direccion(user, cat_nombre, direccion)
+                if not categoria:
+                    continue
                 _aplicar(mov, categoria, "IA", conf)
                 guardar_mapeo_comercio(user, glosa, categoria, origen="IA")
                 por_ia += 1
@@ -394,6 +495,7 @@ def recalcular_clasificaciones(
     elegibles = scope.filter(
         categoria_es_manual=False,
         naturaleza="OPERACIONAL",
+        por_revisar=False,
     ).exclude(fuente_clasificacion="MANUAL")
     elegibles_ids = list(elegibles.values_list("id", flat=True))
 
@@ -425,6 +527,7 @@ def recalcular_clasificaciones(
             categoria__isnull=True,
             categoria_es_manual=False,
             naturaleza="OPERACIONAL",
+            por_revisar=False,
         ).exclude(fuente_clasificacion="MANUAL").count()
         resultado["recalculados"] = 0
         resultado["restaurados"] = len(elegibles_ids)

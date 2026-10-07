@@ -114,7 +114,9 @@ class MovimientoBancarioAdmin(admin.ModelAdmin):
 class ImportacionEstadoCuentaAdmin(admin.ModelAdmin):
     list_display = [
         "nombre_archivo",
+        "tipo_documento",
         "banco_detectado",
+        "departamento",
         "tarjeta_ultimos4",
         "moneda",
         "estado",
@@ -124,8 +126,8 @@ class ImportacionEstadoCuentaAdmin(admin.ModelAdmin):
         "created_at",
         "user",
     ]
-    list_filter = ["estado", "banco_detectado", "created_at"]
-    search_fields = ["nombre_archivo", "hash_archivo", "tarjeta_ultimos4", "user__username"]
+    list_filter = ["estado", "tipo_documento", "banco_detectado", "created_at"]
+    search_fields = ["nombre_archivo", "hash_archivo", "tarjeta_ultimos4", "documento_referencia", "user__username"]
     readonly_fields = ["hash_archivo", "created_at", "procesado_at"]
 
 

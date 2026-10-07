@@ -5,6 +5,7 @@
 {% block page_title %}Banca{% endblock %}
 
 {% block content %}
+{% if presupuesto.sin_conversion %}<p class="mb-4 p-3 rounded-xl bg-amber-500/10 text-sm text-amber-200">Presupuesto CLP parcial: {{ presupuesto.sin_conversion }} importe{{ presupuesto.sin_conversion|pluralize }} con conversión pendiente.</p>{% endif %}
 {% include 'banca/_tabs.html' %}
 
 <div class="flex items-center justify-between">
@@ -190,7 +191,7 @@
                 <td class="py-2 text-xs">
                     {% if m.naturaleza == 'TRANSFERENCIA' %}<span class="text-slate-500">transf.</span>{% endif %}
                 </td>
-                <td class="py-2 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">${{ m.monto_clp|intcomma }}</td>
+                <td class="py-2 text-right font-semibold {% if m.es_cargo %}text-white{% else %}text-emerald-400{% endif %}">{% if m.conversion_clp_desconocida %}{{ m.monto|intcomma }} {{ m.moneda }}<small class="block text-amber-300">Conversión CLP pendiente</small>{% else %}${{ m.monto_clp|intcomma }}{% endif %}</td>
             </tr>
         {% empty %}
             <tr><td class="py-4 text-slate-500 text-center">Sin movimientos. Sincroniza para empezar.</td></tr>

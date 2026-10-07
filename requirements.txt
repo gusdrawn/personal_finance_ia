@@ -9,10 +9,15 @@ redis==5.0.1
 openpyxl==3.1.2
 reportlab==4.2.5
 pdfplumber==0.11.9
+pypdfium2==4.30.0
+pytesseract==0.3.13
 Pillow==11.1.0
 django-otp==1.4.0
 qrcode==7.4.2
 requests==2.31.0
+# Requests 2.31.0 emits compatibility warnings with the newest major releases.
+urllib3<2.1
+chardet<6
 django-extensions==3.2.3
 black==24.3.0
 flake8==7.0.0

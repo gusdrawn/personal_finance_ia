@@ -408,3 +408,33 @@ class TelegramPersonalTest(TestCase):
             self.assertTrue(avisar_presupuesto(self.user))
         self.assertEqual(post.call_count, 1)
         self.assertEqual(RegistroNotificacion.objects.filter(tipo="UMBRAL_OCIO").count(), 1)
+
+    def test_compras_no_facturadas_alertan_presupuesto_siguiente_mes(self):
+        self.config()
+        from banca.models import ConfiguracionBanca
+
+        ConfiguracionBanca.objects.update_or_create(
+            user=self.user, defaults={"presupuesto_mensual_clp": Decimal("1000")}
+        )
+        hoy = date.today()
+        self.movimiento(fecha=hoy, monto=Decimal("900"), monto_clp=Decimal("900"), estado="NO_FACTURADO")
+        with patch("banca.services.notificador.enviar_telegram", return_value=True) as enviar:
+            self.assertTrue(avisar_presupuesto(self.user))
+        self.assertIn("proyeccion:", enviar.call_args.kwargs["clave_idempotencia"])
+
+    def test_proyeccion_avisa_aunque_se_desactive_el_aviso_por_cada_compra(self):
+        config = self.config()
+        config.avisar_gasto_inmediato = False
+        config.save(update_fields=["avisar_gasto_inmediato"])
+        from banca.models import ConfiguracionBanca
+
+        ConfiguracionBanca.objects.create(
+            user=self.user, presupuesto_mensual_clp=Decimal("1000")
+        )
+        compra = self.movimiento(
+            fecha=date.today(), monto=Decimal("900"), monto_clp=Decimal("900"), estado="PROVISIONAL"
+        )
+        with patch("banca.services.notificador.enviar_telegram", return_value=True) as enviar:
+            self.assertTrue(avisar_nuevos_no_facturados(self.user, [compra.pk]))
+        self.assertEqual(enviar.call_count, 1)
+        self.assertEqual(enviar.call_args.kwargs["tipo"], "PRESUPUESTO_PROYECCION")

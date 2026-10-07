@@ -19,17 +19,94 @@ from banca.models import (
 )
 from banca.services import clasificacion_ia
 from banca.services.estados_cuenta import (
+    DocumentoAseoParseado,
     EstadoCuentaParseError,
     EstadoCuentaParseado,
     importar_estado_cuenta,
     normalizar_monto,
+    parsear_documento_aseo_texto,
+    parsear_estado_cuenta_pdf,
     parsear_estado_cuenta_texto,
     reanalizar_importacion,
+    _rol_documento,
 )
 from configuracion.models import Banco, Producto
+from departamentos.models import Departamento
+from gastos.services import resumen_gastos
+from pendientes.models import AsignacionPagoPendiente, OcurrenciaPendiente, ReglaPendiente
 
 
 class ParserEstadosCuentaTest(TestCase):
+    def test_normaliza_rol_municipal_con_formato_visible(self):
+        self.assertEqual(_rol_documento("681-236"), "6810236")
+        self.assertEqual(_rol_documento("006810236"), "6810236")
+
+    def test_reconoce_orden_y_certificado_municipal_por_texto_ocr(self):
+        orden = parsear_documento_aseo_texto(
+            """
+            MUNICIPALIDAD DE CONCEPCION
+            DERECHOS DE ASEO DOMICILIARIO
+            ROL: 006810315
+            FECHA DE EMISION: 30.03.2024
+            FECHA DE VENCIMIENTO: 30.06.2024
+            CUOTA 1/4
+            ASEO EXTRACCION DOMICILIARIA $ 17.974
+            TOTAL A PAGAR $ 22.969
+            """,
+            "Orden_de_Ingreso_-_006810315.pdf",
+        )
+        pago = parsear_documento_aseo_texto(
+            """
+            MUNICIPALIDAD DE CONCEPCION
+            CERTIFICADO DE PAGO
+            DERECHOS DE ASEO DOMICILIARIO
+            ROL: 006810315
+            MONTO PAGADO $ 22.969
+            FECHA DE PAGO: 14.09.2026
+            """,
+            "681315_pago.pdf",
+        )
+
+        self.assertIsInstance(orden, DocumentoAseoParseado)
+        self.assertEqual(orden.tipo_documento, "ORDEN_ASEO")
+        self.assertEqual(orden.roles, ["6810315"])
+        self.assertEqual(orden.fecha_vencimiento, date(2024, 6, 30))
+        self.assertEqual(orden.monto_total, Decimal("22969"))
+        self.assertEqual(pago.tipo_documento, "PAGO_ASEO")
+        self.assertEqual(pago.fecha_pago, date(2026, 9, 14))
+
+    @patch(
+        "banca.services.estados_cuenta._extraer_texto_pdf",
+        return_value="Certificado de Pago\nhttps://ccp2bpago.smc.cl/bcoresultado/ExitoWPws.ashx",
+    )
+    def test_certificado_municipal_se_deriva_al_registro_manual(self, extraer):
+        with self.assertRaisesMessage(
+            EstadoCuentaParseError,
+            "se registran manualmente en Pendientes",
+        ):
+            parsear_estado_cuenta_pdf(
+                b"pdf municipal",
+                "Aseo_ROL_006810236_00_General_Certificado_Pago_2026-09-14.pdf",
+            )
+
+        self.assertEqual(extraer.call_count, 1)
+
+    @patch(
+        "banca.services.estados_cuenta._extraer_texto_pdf",
+        return_value="Digitally signed by Municipalidad\nDate: 2026.09.14",
+    )
+    def test_orden_municipal_se_deriva_al_registro_manual(self, extraer):
+        with self.assertRaisesMessage(
+            EstadoCuentaParseError,
+            "se registran manualmente en Pendientes",
+        ):
+            parsear_estado_cuenta_pdf(
+                b"pdf municipal",
+                "Aseo_ROL_006810236_07_Periodo_3ra-2025_Cuota_3-4_Vence_2025-10-31_Orden_de_Ingreso.pdf",
+            )
+
+        self.assertEqual(extraer.call_count, 1)
+
     def test_parsea_cartolas_de_cuenta_corriente_con_signo_y_saldo(self):
         santander = """
         B A N C O S A N T A N D E R C H I L E
@@ -388,6 +465,127 @@ class ImportacionEstadosCuentaTest(TestCase):
             cupo_avance_disponible_clp=cupo_avance,
         )
 
+    @patch("banca.services.estados_cuenta.parsear_estado_cuenta_pdf")
+    def test_importa_aseo_cruza_orden_con_pago_sin_duplicar_gasto(self, parsear):
+        departamento = Departamento.objects.create(
+            user=self.user,
+            codigo="E107",
+            piso="10",
+            metros_cuadrados=Decimal("55.5"),
+            valor_compra_uf=Decimal("3000"),
+            valor_actual_uf=Decimal("3300"),
+            rol_sii="006810315",
+        )
+        otro_usuario = User.objects.create_user(username="otro-aseo", password="x")
+        Departamento.objects.create(
+            user=otro_usuario,
+            codigo="E107",
+            piso="10",
+            metros_cuadrados=Decimal("55.5"),
+            valor_compra_uf=Decimal("3000"),
+            valor_actual_uf=Decimal("3300"),
+            rol_sii="006810315",
+        )
+        orden = DocumentoAseoParseado(
+            tipo_documento="ORDEN_ASEO",
+            municipalidad="MUNICIPALIDAD DE CONCEPCION",
+            comuna="Concepcion",
+            roles=["6810315"],
+            fecha_emision=date(2024, 3, 30),
+            fecha_vencimiento=date(2024, 6, 30),
+            monto_base=Decimal("17974"),
+            monto_total=Decimal("22969"),
+        )
+        pago = DocumentoAseoParseado(
+            tipo_documento="PAGO_ASEO",
+            municipalidad="MUNICIPALIDAD DE CONCEPCION",
+            comuna="Concepcion",
+            roles=["6810315"],
+            fecha_pago=date(2026, 9, 14),
+            monto_total=Decimal("22969"),
+        )
+        parsear.side_effect = [orden, pago]
+
+        orden_importada = importar_estado_cuenta(
+            self.user,
+            SimpleUploadedFile("Orden_de_Ingreso_-_006810315.pdf", b"orden", content_type="application/pdf"),
+        )
+        pago_importado = importar_estado_cuenta(
+            self.user,
+            SimpleUploadedFile("681315_pago.pdf", b"pago", content_type="application/pdf"),
+        )
+
+        regla = ReglaPendiente.objects.get(user=self.user, departamento=departamento)
+        ocurrencia = OcurrenciaPendiente.objects.get(regla=regla, fecha_vencimiento=date(2024, 6, 30))
+        departamento.refresh_from_db()
+        self.assertEqual(orden_importada.tipo_documento, "ORDEN_ASEO")
+        self.assertEqual(pago_importado.tipo_documento, "PAGO_ASEO")
+        self.assertEqual(departamento.comuna, "Concepcion")
+        self.assertEqual(ocurrencia.estado, "COMPLETADA")
+        self.assertEqual(ocurrencia.importacion_id, pago_importado.pk)
+        self.assertEqual(AsignacionPagoPendiente.objects.filter(ocurrencia=ocurrencia).count(), 1)
+        self.assertEqual(AsignacionPagoPendiente.objects.get(ocurrencia=ocurrencia).monto_asignado, Decimal("22969"))
+        gastos = resumen_gastos(self.user, date(2026, 9, 1), date(2026, 9, 1), "caja")
+        self.assertEqual(gastos["totales"]["egresos_clp"], Decimal("22969"))
+        self.assertEqual(ReglaPendiente.objects.filter(user=otro_usuario).count(), 0)
+
+    @patch("banca.services.estados_cuenta.parsear_estado_cuenta_pdf")
+    def test_pago_agrupado_no_reparte_el_total_global_a_cada_propiedad(self, parsear):
+        departamentos = []
+        for codigo, rol in (("E107", "006810315"), ("E205", "006810236")):
+            departamentos.append(
+                Departamento.objects.create(
+                    user=self.user,
+                    codigo=codigo,
+                    piso="10",
+                    metros_cuadrados=Decimal("55.5"),
+                    valor_compra_uf=Decimal("3000"),
+                    valor_actual_uf=Decimal("3300"),
+                    rol_sii=rol,
+                )
+            )
+        ordenes = [
+            DocumentoAseoParseado(
+                tipo_documento="ORDEN_ASEO",
+                municipalidad="MUNICIPALIDAD DE CONCEPCION",
+                comuna="Concepcion",
+                roles=[rol],
+                fecha_vencimiento=date(2024, 6, 30),
+                monto_total=Decimal("22969"),
+            )
+            for rol in ("6810315", "6810236")
+        ]
+        pago = DocumentoAseoParseado(
+            tipo_documento="PAGO_ASEO",
+            municipalidad="MUNICIPALIDAD DE CONCEPCION",
+            comuna="Concepcion",
+            roles=["6810315", "6810236"],
+            fecha_pago=date(2026, 9, 14),
+            monto_total=Decimal("172861"),
+        )
+        # El lote puede llegar en cualquier orden: el certificado se procesa
+        # primero y luego las órdenes completan los montos por propiedad.
+        parsear.side_effect = [pago, *ordenes]
+        for indice, nombre in enumerate(("pago-agrupado.pdf", "orden-1.pdf", "orden-2.pdf")):
+            importar_estado_cuenta(
+                self.user,
+                SimpleUploadedFile(nombre, f"contenido-{indice}".encode(), content_type="application/pdf"),
+            )
+
+        asignaciones = AsignacionPagoPendiente.objects.filter(
+            ocurrencia__regla__user=self.user,
+            importacion__tipo_documento="PAGO_ASEO",
+        )
+        self.assertEqual(asignaciones.count(), 2)
+        self.assertEqual(
+            sum(asignaciones.values_list("monto_asignado", flat=True), Decimal("0")),
+            Decimal("45938"),
+        )
+        self.assertEqual(
+            ImportacionEstadoCuenta.objects.get(nombre_archivo="pago-agrupado.pdf").monto_pagado_clp,
+            Decimal("172861"),
+        )
+
     @patch("banca.services.fuentes_externas.conciliar_eventos")
     @patch("banca.services.estados_cuenta.parsear_estado_cuenta_pdf")
     def test_cartola_crea_cuenta_y_snapshot_aislados_por_usuario(self, parsear, conciliar):
@@ -729,6 +927,14 @@ class ImportacionEstadosCuentaTest(TestCase):
         )
         self.assertRedirects(respuesta, reverse("banca_importar"))
         self.assertContains(self.client.get(reverse("banca_importar")), "Todavía no has importado")
+
+    def test_importador_municipal_redirige_al_registro_manual(self):
+        self.client.force_login(self.user)
+
+        pagina = self.client.get(reverse("departamentos_importar_documentos"))
+
+        self.assertRedirects(pagina, reverse("dashboard_pendientes"))
+        self.assertContains(self.client.get(reverse("dashboard_pendientes")), "Configurar obligación de propiedad")
 
     def test_pagina_importacion_muestra_zona_de_arrastre_y_limite(self):
         self.client.force_login(self.user)
