@@ -1,7 +1,20 @@
 from django import template
 from django.utils import timezone
+from decimal import Decimal, InvalidOperation
 
 register = template.Library()
+
+
+@register.filter
+def monto_cobro(value, moneda="CLP"):
+    """Usa el mismo formato monetario en la revisión y en el texto conservado."""
+    from patrimonio.services.cuentas_por_cobrar import formatear_monto
+
+    try:
+        monto = Decimal(str(value or "0"))
+        return formatear_monto(monto, moneda) if monto.is_finite() else ""
+    except (InvalidOperation, ValueError, TypeError):
+        return ""
 
 @register.filter
 def multiply(value, arg):

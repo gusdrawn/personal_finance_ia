@@ -414,6 +414,9 @@ class MovimientosViewTest(TestCase):
 
     def test_abono_puede_registrarse_como_pago_de_cuenta_por_cobrar(self):
         cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Loyo Anthony")
+        from patrimonio.models import DetalleCuentaPorCobrar
+        from patrimonio.services.revision_cobros import preparar_calculo, guardar_decisiones, confirmar_calculo
+        DetalleCuentaPorCobrar.objects.create(cuenta=cuenta, periodo=date(2026, 8, 1), fecha=date(2026, 8, 1), descripcion="Deuda", monto=200000)
         movimiento = self.movement(
             "Transf. LOYO ANTHONY MENDOZA",
             None,
@@ -428,10 +431,22 @@ class MovimientosViewTest(TestCase):
         self.assertContains(pendiente, "Pago de cuenta por cobrar")
         response = self.client.post(
             reverse("banca_asignar_abono_cuenta_cobrar", args=[movimiento.pk]),
-            {"cuenta_cobro": cuenta.pk},
+            {"cuenta_cobro": cuenta.pk,
+             "volver": reverse("gastos_movimientos") + "?pendientes=1&fecha_desde=&fecha_hasta="},
         )
 
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("gastos_movimientos") + "?pendientes=1&fecha_desde=&fecha_hasta=")
+        self.assertFalse(AbonoCuentaPorCobrar.objects.filter(movimiento=movimiento).exists())
+        bandeja = self.client.get(response.url)
+        self.assertContains(bandeja, "La transferencia del 10/08/2026")
+        self.assertContains(bandeja, "Revisar propuesta y conciliación")
+        self.assertContains(bandeja, "Asociado a Loyo Anthony · pendiente de validar")
+        periodo = cuenta.partidas_revision.get().periodo
+        calculo = preparar_calculo(cuenta, periodo)
+        guardar_decisiones(calculo, {str(p.pk): {"decision": "APLICAR"} for p in cuenta.partidas_revision.all()})
+        calculo.refresh_from_db()
+        confirmar_calculo(calculo, calculo.huella)
         movimiento.refresh_from_db()
         self.assertEqual(movimiento.naturaleza, "TRANSFERENCIA")
         self.assertFalse(movimiento.por_revisar)

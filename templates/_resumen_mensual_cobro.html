@@ -1,0 +1,50 @@
+{% load core_extras %}
+<div class="mt-5 rounded-xl border border-sky-500/25 bg-sky-500/5 p-5" data-resumen-mes="{{ periodo_actual_cobro }}">
+    <div class="flex flex-wrap justify-between gap-3 items-center">
+        <h3 class="font-bold text-white">Total de {{ periodo_cobro|date:"m/Y" }}</h3>
+        <span class="text-xs {% if cuenta.resumen_mensual.provisional %}text-amber-300{% else %}text-emerald-300{% endif %}">{% if cuenta.resumen_mensual.provisional %}Vista mensual provisional{% else %}Cálculo confirmado{% endif %}</span>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4 text-sm">
+        <div><p class="text-xs text-slate-400">Saldo pendiente anterior</p><strong class="text-slate-200">{{ cuenta.resumen_mensual.saldo_anterior|monto_cobro:cuenta.moneda }}</strong></div>
+        <div><p class="text-xs text-slate-400">+ Cargos del mes</p><strong class="text-slate-200">{{ cuenta.resumen_mensual.cargos|monto_cobro:cuenta.moneda }}</strong></div>
+        <div><p class="text-xs text-slate-400">− Abonos del mes</p><strong class="text-emerald-300">{{ cuenta.resumen_mensual.abonos|monto_cobro:cuenta.moneda }}</strong></div>
+        <div><p class="text-xs text-slate-400">+ Ajustes del mes</p><strong class="text-slate-200">{{ cuenta.resumen_mensual.ajustes|monto_cobro:cuenta.moneda }}</strong></div>
+        <div><p class="text-xs text-slate-400">Total pendiente</p><strong class="text-xl text-sky-300" data-total-mes="{{ periodo_actual_cobro }}">{{ cuenta.resumen_mensual.saldo_final|monto_cobro:cuenta.moneda }}</strong></div>
+    </div>
+    <p class="mt-3 text-xs text-slate-400">El siguiente mes toma este saldo. Los registros guardados recalculan la vista provisional; el patrimonio cambia al confirmar.</p>
+    {% if cuenta.resumen_mensual.saldo_final < 0 %}<p class="mt-3 text-sm text-rose-300" role="alert">Los abonos exceden el saldo. Revisa los importes antes de confirmar.</p>{% endif %}
+    {% for aviso in cuenta.resumen_mensual.avisos %}<p class="mt-2 text-xs text-amber-300">{{ aviso }}</p>{% endfor %}
+</div>
+{% if cuenta.resumen_mensual.conciliaciones_pendientes %}
+<section class="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" aria-labelledby="posibles-duplicados-{{ cuenta.id }}">
+    <h4 id="posibles-duplicados-{{ cuenta.id }}" class="text-sm font-bold text-amber-200">Abonos que podrían estar duplicados</h4>
+    <p class="mt-1 text-xs text-slate-400">La cuenta tiene un registro manual y una transferencia bancaria por el mismo monto y fecha. Revísalos juntos; aún aparecen como registros separados.</p>
+    {% for pareja in cuenta.resumen_mensual.conciliaciones_pendientes %}
+    <div class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-950/40 p-3">
+        <div class="text-xs text-slate-300"><strong>{{ pareja.fecha|date:"d/m/Y" }} · {{ pareja.monto|monto_cobro:cuenta.moneda }}</strong>
+            <span class="block mt-1">Manual: {% for abono in pareja.abonos_manuales %}{{ abono.descripcion|default:"Abono manual" }}{% if not forloop.last %}, {% endif %}{% endfor %}</span>
+            <span class="block">Bancario: {{ pareja.movimiento.descripcion|default:"Transferencia" }}</span>
+            {% if pareja.ambiguo %}<span class="block mt-1 text-amber-300">Hay más de un abono manual con esos datos; selecciona el correcto en la revisión.</span>{% endif %}
+        </div>
+        {% if pareja.propuesta %}<a class="rounded-lg bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/25" href="{{ pareja.url_revision }}">Revisar conciliación →</a>
+        {% elif pareja.url_movimientos %}<a class="rounded-lg bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/25" href="{{ pareja.url_movimientos }}">Asociar desde Movimientos →</a>{% endif %}
+    </div>
+    {% endfor %}
+</section>
+{% endif %}
+<div class="overflow-x-auto mt-4 rounded-xl border border-slate-800">
+    <table class="w-full text-left min-w-[620px]" data-periodo-visible="{{ periodo_actual_cobro }}">
+        <thead class="bg-slate-900/70 text-[10px] uppercase tracking-widest text-slate-500"><tr><th class="px-4 py-3">Descripción</th><th class="px-4 py-3">Fecha del movimiento</th><th class="px-4 py-3">Estado</th><th class="px-4 py-3 text-right">Importe</th><th class="px-4 py-3 text-right">Acción</th></tr></thead>
+        <tbody class="divide-y divide-slate-800/80">
+        {% for fila in cuenta.resumen_mensual.entradas %}
+        <tr class="text-sm" data-detalle-periodo="{{ periodo_actual_cobro }}">
+            <td class="px-4 py-3 text-slate-200">{{ fila.descripcion }}<span class="block text-[10px] text-slate-500 mt-1">{% if fila.tipo == 'CARGO' %}Cargo{% elif fila.tipo == 'ABONO' %}Abono{% else %}Ajuste{% endif %} · {{ periodo_cobro|date:"m/Y" }}</span></td>
+            <td class="px-4 py-3 text-slate-400">{{ fila.fecha|date:"d/m/Y" }}</td>
+            <td class="px-4 py-3 text-xs {% if fila.pendiente %}text-amber-300{% else %}text-slate-400{% endif %}">{% if fila.provisional %}<span class="block text-amber-300">Provisional · falta estado</span>{% endif %}{% if fila.pendiente %}Cambio pendiente{% elif fila.confirmada %}Registrado en una confirmación{% else %}Registro sin validar{% endif %}</td>
+            <td class="px-4 py-3 text-right whitespace-nowrap {% if fila.tipo == 'ABONO' %}text-emerald-300{% else %}text-slate-200{% endif %}"><strong>{{ fila.efecto|monto_cobro:cuenta.moneda }}</strong>{% if fila.monto_original %}<span class="block text-[10px] text-slate-500 mt-1">Registrado: {{ fila.monto_original|monto_cobro:cuenta.moneda }}</span>{% endif %}</td>
+            <td class="px-4 py-3 text-right">{% if cuenta.activo %}{% if fila.detalle_id and fila.tipo != 'ABONO' %}<a class="text-xs font-bold text-sky-300" href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}&editar={{ fila.detalle_id }}#cuenta-{{ cuenta.id }}">Editar</a>{% elif fila.editar_partida_id %}<a class="text-xs font-bold text-sky-300" href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}&editar_partida={{ fila.editar_partida_id }}#cuenta-{{ cuenta.id }}">Editar</a>{% endif %}{% endif %}</td>
+        </tr>
+        {% empty %}<tr><td colspan="5" class="px-4 py-6 text-sm text-center text-slate-500">Sin cargos ni abonos nuevos en este mes. Se conserva el saldo anterior.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+</div>

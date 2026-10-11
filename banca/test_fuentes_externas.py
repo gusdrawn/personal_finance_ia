@@ -88,6 +88,63 @@ class FuentesExternasTest(TestCase):
         self.assertEqual(payments[1].fecha_transferencia, date(2026, 9, 2))
         self.assertEqual(payments[0].metadata["alias"], "Luz 1024")
 
+    def test_parser_neat_id_sin_identificador_no_depende_de_fila_o_estado(self):
+        encabezado = "cuenta,monto,dia_de_pago,dia_de_deposito,status,nombre_destinatario,cuenta_destino\n"
+        pago = 'arriendo,400000,"2026-08-28T12:02:58.000Z","2026-09-01T17:30:45.061Z",Realizado,Maria,123456\n'
+        pago_reexportado = pago.replace("Realizado", "Pendiente")
+        primera = parsear_neat((encabezado + pago).encode(), "primero.csv")[0]
+        segunda = parsear_neat(
+            (encabezado + "luz,20000,2026-08-27,2026-08-28,Realizado,Ana,999999\n" + pago_reexportado).encode(),
+            "reexportado.csv",
+        )[1]
+        duplicados_en_mismo_reporte = parsear_neat(
+            (encabezado + pago + pago).encode(), "con-fila-repetida.csv"
+        )
+        mismo_instante_otro_servicio = parsear_neat(
+            (encabezado + pago + pago.replace("arriendo", "luz")).encode(),
+            "servicios-misma-hora.csv",
+        )
+
+        self.assertEqual(primera.external_id, segunda.external_id)
+        self.assertEqual(duplicados_en_mismo_reporte[0].external_id, primera.external_id)
+        self.assertNotEqual(duplicados_en_mismo_reporte[0].external_id, duplicados_en_mismo_reporte[1].external_id)
+        self.assertNotEqual(
+            mismo_instante_otro_servicio[0].external_id,
+            mismo_instante_otro_servicio[1].external_id,
+        )
+
+    def test_reimportacion_reutiliza_evento_legacy_sin_id_estable(self):
+        contenido = (
+            "cuenta,monto,dia_de_pago,nombre_destinatario\n"
+            "arriendo,400000,2026-08-28,MARIA DE LOS ANGELES PALAVECINO\n"
+        ).encode()
+        pago = parsear_neat(contenido, "reporte.csv")[0]
+        legacy = EventoFinancieroExterno.objects.create(
+            user=self.user,
+            fuente="neat",
+            tipo="PAGO",
+            external_id="archivo-id-de-fila-antiguo",
+            estado="CONFIRMADO",
+            moneda=pago.moneda,
+            monto_bruto=pago.monto_pagado,
+            monto_neto=pago.total_cargado,
+            metadata=pago.metadata,
+        )
+        from banca.models import PagoNeat
+        PagoNeat.objects.create(
+            evento=legacy,
+            cuenta=pago.cuenta,
+            destinatario=pago.destinatario,
+            monto_pagado=pago.monto_pagado,
+            total_cargado=pago.total_cargado,
+        )
+
+        resultado = ingestar_pagos_neat(self.user, [pago], credential=self.neat)
+
+        self.assertEqual(EventoFinancieroExterno.objects.filter(user=self.user, fuente="neat").count(), 1)
+        self.assertEqual(resultado, {"nuevos": 0, "actualizados": 1})
+        self.assertEqual(EventoFinancieroExterno.objects.get(pk=legacy.pk).external_id, "archivo-id-de-fila-antiguo")
+
     def test_parser_neat_acepta_correo_de_comprobante(self):
         content = (
             "ID del pago: NP-EMAIL-1 Estado: Exitoso Monto pagado: $100.000 "
@@ -399,6 +456,13 @@ class FuentesExternasTest(TestCase):
             {"cuenta_cobro": cuenta.pk},
         )
         self.assertEqual(response.status_code, 302)
+        from patrimonio.services.revision_cobros import preparar_calculo, guardar_decisiones, confirmar_calculo
+        self.assertFalse(DetalleCuentaPorCobrar.objects.filter(evento_externo=evento_recuperable).exists())
+        periodo_revision = cuenta.partidas_revision.get().periodo
+        calculo_revision = preparar_calculo(cuenta, periodo_revision)
+        guardar_decisiones(calculo_revision, {str(p.pk): {"decision": "APLICAR"} for p in cuenta.partidas_revision.all()})
+        calculo_revision.refresh_from_db()
+        confirmar_calculo(calculo_revision, calculo_revision.huella)
         self.assertTrue(
             DetalleCuentaPorCobrar.objects.filter(
                 cuenta=cuenta, evento_externo=evento_recuperable, monto=Decimal("100")

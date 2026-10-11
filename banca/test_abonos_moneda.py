@@ -12,6 +12,7 @@ from django.urls import reverse
 from banca.models import MovimientoBancario
 from configuracion.models import Banco, Producto
 from patrimonio.models import AbonoCuentaPorCobrar, CuentaPorCobrar, DetalleCuentaPorCobrar
+from patrimonio.services.revision_cobros import preparar_calculo, guardar_decisiones, confirmar_calculo
 
 
 class AbonosMonedaTest(TestCase):
@@ -38,7 +39,14 @@ class AbonosMonedaTest(TestCase):
     def test_usd_usa_importe_original_y_reintento_no_duplica(self):
         movimiento = self.movimiento("usd-con-tasa")
         self.assertEqual(self.asignar(movimiento).status_code, 302)
+        partida = self.cuenta.partidas_revision.get(movimiento=movimiento)
+        partida.decision = "RESPALDO"
+        partida.save()
         self.assertEqual(self.asignar(movimiento).status_code, 302)
+        partida.refresh_from_db()
+        self.assertEqual(partida.decision, "RESPALDO")
+        self.assertFalse(AbonoCuentaPorCobrar.objects.filter(movimiento=movimiento).exists())
+        self.confirmar_pendientes()
         abono = AbonoCuentaPorCobrar.objects.get(movimiento=movimiento)
         self.assertEqual(abono.monto, Decimal("50"))
         self.assertEqual(self.cuenta.saldo_pendiente, Decimal("50"))
@@ -48,7 +56,15 @@ class AbonosMonedaTest(TestCase):
     def test_usd_sin_conversion_clp_puede_abonar_en_usd(self):
         movimiento = self.movimiento("usd-sin-tasa", clp="0", tasa=None)
         self.assertEqual(self.asignar(movimiento).status_code, 302)
+        self.confirmar_pendientes()
         self.assertEqual(AbonoCuentaPorCobrar.objects.get(movimiento=movimiento).monto, Decimal("50"))
+
+    def confirmar_pendientes(self):
+        periodo = self.cuenta.partidas_revision.filter(resuelta_en__isnull=True).latest("periodo").periodo
+        calculo = preparar_calculo(self.cuenta, periodo)
+        guardar_decisiones(calculo, {str(p.pk): {"decision": "APLICAR"} for p in self.cuenta.partidas_revision.filter(resuelta_en__isnull=True)})
+        calculo.refresh_from_db()
+        confirmar_calculo(calculo, calculo.huella)
 
     def test_moneda_distinta_o_cuenta_ajena_no_modifican_movimiento(self):
         movimiento = self.movimiento("usd-invalido")

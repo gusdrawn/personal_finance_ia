@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+{% load core_extras %}
+{% block title %}Preparar cobro · {{ cuenta.nombre }}{% endblock %}
+{% block extra_css %}
+.field-label { display: block; margin-bottom: .3rem; color: #94a3b8; font-size: .75rem; }
+.field-input { width: 100%; border: 1px solid #334155; border-radius: .6rem; background: #1e293b; padding: .6rem .8rem; color: #e2e8f0; }
+{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+    <a href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}&gestionar={{ cuenta.id }}#cuenta-{{ cuenta.id }}" class="text-sm text-sky-300 hover:text-white">← Volver a {{ cuenta.nombre }}</a>
+    <div>
+        <h1 class="text-3xl font-bold text-white">Preparar propuesta · {{ periodo_cobro|date:'m/Y' }}</h1>
+        <p class="mt-2 text-slate-400">{{ cuenta.nombre }} · {{ cuenta.moneda }}. Revisa los movimientos asignados a esta cuenta y decide cuáles corresponden al cobro.</p>
+    </div>
+    <section class="glass rounded-2xl border border-slate-800 p-6">
+        <h2 class="text-lg font-bold text-white">Movimientos asignados a {{ cuenta.nombre }}</h2>
+        <p class="mt-2 text-sm text-slate-400">Las asociaciones desde Banca y los registros manuales aparecen aquí. Después de preparar podrás aplicar cada partida, marcarla como ya incluida o ignorarla por pertenecer al pasado.</p>
+        <div class="mt-4 space-y-3">
+        {% for fila in preparacion.asignaciones %}
+            <div class="rounded-xl border border-slate-700 bg-slate-900/50 p-4" data-asignacion="{{ fila.partida_id|default:'' }}">
+                <div class="flex flex-wrap justify-between gap-3"><strong class="text-sm text-white">{{ fila.descripcion }}</strong><strong class="text-sm text-slate-200">{{ fila.monto|monto_cobro:cuenta.moneda }}</strong></div>
+                <p class="mt-1 text-xs text-slate-400">{{ fila.tipo }} · {{ fila.origen }} · {{ fila.fecha|date:'d/m/Y' }} · Mes asignado {{ fila.periodo|date:'m/Y' }}</p>
+                <p class="mt-2 text-xs {% if fila.anterior %}text-amber-300{% else %}text-sky-300{% endif %}">{% if fila.anterior %}Movimiento anterior: revisa si ya se cobró o pagó antes de aplicarlo.{% else %}Pendiente de revisar.{% endif %}</p>
+                {% if fila.trasladable %}<label class="mt-3 flex items-start gap-2 text-sm text-slate-300"><input type="checkbox" name="trasladar_ids" value="{{ fila.partida_id }}" form="preparar-propuesta" class="mt-1"><span>Revisar en {{ periodo_cobro|date:'m/Y' }}. Actualmente está asignado a {{ fila.periodo|date:'m/Y' }}.</span></label>
+                {% elif fila.otro_periodo %}<p class="mt-2 text-xs text-slate-500">Se conserva para su mes de aplicación.</p>{% endif %}
+            </div>
+        {% empty %}<p class="rounded-xl bg-slate-900/50 p-4 text-sm text-slate-400">No hay movimientos nuevos asignados. En Banca → Movimientos, selecciona {{ cuenta.nombre }} como cuenta por cobrar o registra una línea desde Gestionar.</p>{% endfor %}
+        </div>
+        {% if preparacion.contabilizados %}<details class="mt-4 rounded-xl border border-slate-700 p-4"><summary class="cursor-pointer text-sm font-bold text-slate-300">Ya contabilizados en el saldo anterior · {{ preparacion.contabilizados|length }}</summary><div class="mt-3 space-y-2">{% for fila in preparacion.contabilizados %}<p class="text-xs text-slate-400">{{ fila.descripcion }} · {{ fila.fecha|date:'d/m/Y' }} · {{ fila.monto|monto_cobro:cuenta.moneda }} · Ya incluido; no se vuelve a sumar ni descontar.</p>{% endfor %}</div></details>{% endif %}
+        {% if preparacion.excluidos %}<details class="mt-4 rounded-xl border border-slate-700 p-4"><summary class="cursor-pointer text-sm font-bold text-slate-300">Ignorados anteriormente · {{ preparacion.excluidos|length }}</summary><div class="mt-3 space-y-2">{% for partida in preparacion.excluidos %}<p class="text-xs text-slate-400">{{ partida.descripcion }} · {{ partida.fecha|date:'d/m/Y' }} · {{ partida.motivo|default:'Excluido de esta cuenta' }}</p>{% endfor %}</div></details>{% endif %}
+    </section>
+
+    <section class="glass rounded-2xl border border-slate-800 p-6">
+        <h2 class="text-lg font-bold text-white">Saldo de partida</h2>
+        {% if anterior %}
+        <p class="mt-2 text-sm text-slate-300">{{ anterior.get_estado_display }} del {{ anterior.fecha_calculo|date:'d/m/Y' }}: <strong class="text-white">{{ anterior.saldo_final|monto_cobro:cuenta.moneda }}</strong>.</p>
+        {% else %}<p class="mt-2 text-sm text-slate-400">{% if referencia_seleccionada == 'sin_saldo' %}Sin saldo inicial: revisa las partidas que quieras incluir en el primer cálculo.{% else %}Los registros vigentes se conservarán como punto de partida; las asociaciones pendientes se revisan por separado.{% endif %}</p>{% endif %}
+        {% if anterior.estado != 'CONFIRMADO' %}
+        <p class="mt-2 text-xs text-slate-400">La referencia histórica es opcional. Puedes continuar con el saldo registrado o revisar las partidas desde cero antes de la primera confirmación.</p>
+        <form method="get" class="mt-4 flex flex-wrap items-end gap-3"><input type="hidden" name="periodo" value="{{ periodo_actual_cobro }}"><div class="flex-1"><label class="field-label" for="referencia-preparar">Punto de partida</label><select id="referencia-preparar" name="referencia_id" class="field-input">
+            <option value="" {% if not referencia_seleccionada %}selected{% endif %}>Saldo registrado de la cuenta</option>
+            {% for referencia in referencias %}<option value="{{ referencia.id }}" {% if anterior.id == referencia.id %}selected{% endif %}>{{ referencia.fecha_calculo|date:'d/m/Y' }} · {{ referencia.saldo_final|monto_cobro:cuenta.moneda }} · {% if referencia.referencia_usuario %}referencia histórica opcional{% else %}registros sin validar{% endif %}</option>{% endfor %}
+            <option value="sin_saldo" {% if referencia_seleccionada == 'sin_saldo' %}selected{% endif %}>Sin saldo inicial · revisar las partidas desde cero</option>
+        </select></div><button class="rounded-lg bg-slate-700 px-4 py-2.5 text-sm text-white">Ver con este saldo</button></form>{% endif %}
+        {% if preparacion.evidencia %}{% include '_evidencia_cobro.html' with evidencia=preparacion.evidencia %}{% endif %}
+    </section>
+
+    <details class="glass rounded-2xl border border-slate-800 p-6">
+        <summary class="cursor-pointer text-lg font-bold text-white">Documentos y fuentes complementarias · opcional</summary>
+        <p class="mt-3 text-sm text-slate-400">Si faltan movimientos, carga estados de cuenta, cartolas o comprobantes NeatPagos. Puedes preparar con las transacciones ya asignadas. Los archivos importados se reutilizan.</p>
+        <p class="mt-2 text-xs text-slate-500">Los cargos pueden ocurrir entre {{ preparacion.inicio|date:'d/m/Y' }} y {{ preparacion.fin|date:'d/m/Y' }}, incluidos los pagos adelantados. El mes de la cartola se verifica por su fecha de cierre; subir una cartola antigua hoy no la convierte en una del mes.</p>
+        <div class="grid md:grid-cols-3 gap-3 mt-5">
+        {% for documento in preparacion.documentos %}
+            <div class="rounded-xl border {% if documento.completo %}border-emerald-500/30{% else %}border-amber-500/25{% endif %} bg-slate-900/50 p-4" data-documento="{{ documento.tipo }}">
+                <h3 class="text-sm font-bold text-white">{{ documento.titulo }}</h3>
+                <p class="mt-2 text-xs {% if documento.disponibles %}text-emerald-300{% else %}text-slate-400{% endif %}">{% if documento.disponibles %}Documentos disponibles{% else %}Sin documento de este mes · carga opcional{% endif %}</p>
+                {% for registro in documento.disponibles %}
+                <p class="mt-2 text-xs text-slate-400 break-words">{% if documento.tipo == 'NEAT' %}{{ registro.pago_neat.cuenta|default:'NeatPagos' }} · {{ registro.fecha_cargo|default:registro.fecha_evento|date:'d/m/Y' }}{% else %}{{ registro.producto.nombre }} · Cierre {{ registro.fecha_estado|default:registro.periodo_fin|date:'d/m/Y' }}{% endif %}</p>
+                {% empty %}{% if documento.ultimo %}<p class="mt-2 text-xs text-slate-500">Último importado: {{ documento.ultimo.producto.nombre }} · Cierre {{ documento.ultimo.fecha_estado|default:documento.ultimo.periodo_fin|date:'d/m/Y' }}.</p>{% endif %}{% endfor %}
+                {% if documento.faltan_productos %}<p class="mt-3 text-xs text-amber-300">Respaldo adicional sugerido: {% for producto in documento.faltan_productos %}{{ producto.nombre }}{% if not forloop.last %}, {% endif %}{% endfor %}. Puedes revisar sus movimientos sin subir otra cartola.</p>{% endif %}
+            </div>
+        {% endfor %}
+        </div>
+        <form method="post" enctype="multipart/form-data" action="{% url 'renovar_cuenta_por_cobrar' cuenta.id %}" class="mt-5 space-y-4">
+            {% csrf_token %}<input type="hidden" name="accion" value="importar"><input type="hidden" name="periodo" value="{{ periodo_actual_cobro }}">
+            <input type="hidden" name="referencia_id" value="{{ referencia_seleccionada }}">
+            <input type="hidden" name="incluir_registros_guardados" value="1">
+            <div class="grid md:grid-cols-2 gap-4">
+                <div><label class="field-label" for="estados-cobro">Estados de cuenta y cartolas bancarias · PDF</label><input id="estados-cobro" name="estados" type="file" accept=".pdf" multiple class="field-input"></div>
+                <div><label class="field-label" for="neat-cobro">Reporte o comprobantes NeatPagos</label><input id="neat-cobro" name="neat" type="file" accept=".csv,.xlsx,.json,.pdf,.eml,.txt" multiple class="field-input"></div>
+            </div>
+            <p class="text-xs text-slate-500">Hasta 15 MB por archivo. Importar agrega evidencia para revisar y conserva el saldo publicado.</p>
+            <button class="rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-bold text-sm px-4 py-2.5">Subir y revisar documentos</button>
+        </form>
+    </details>
+
+    <section class="glass rounded-2xl border border-slate-800 p-6">
+        <details><summary class="cursor-pointer text-lg font-bold text-white">Sugerencias según el historial</summary>
+        <p class="mt-2 text-sm text-slate-400">El historial sugiere conceptos y contrapartes. Cada importe nuevo necesita su fuente o un registro manual. Una transferencia coincidente se propone para revisión.</p>
+        <div class="overflow-x-auto mt-4">
+            <table class="w-full text-left text-sm"><thead class="text-xs text-slate-500"><tr><th class="py-3 pr-4">Concepto habitual</th><th class="py-3 pr-4">Último importe</th><th class="py-3 pr-4">Importe del mes</th><th class="py-3">Fuente</th></tr></thead><tbody class="divide-y divide-slate-800">
+            {% for patron in preparacion.patrones %}<tr><td class="py-3 pr-4 text-white">{{ patron.descripcion }}</td><td class="py-3 pr-4 text-slate-400">{{ patron.ultimo_monto|monto_cobro:cuenta.moneda }}<span class="block text-xs">{{ patron.periodo|date:'m/Y' }}</span></td><td class="py-3 pr-4 {% if patron.respaldado and not patron.advertencia %}text-emerald-300{% else %}text-amber-300{% endif %}">{% if patron.respaldado %}{{ patron.nuevo_monto|monto_cobro:cuenta.moneda }}{% else %}Falta importe actual{% endif %}</td><td class="py-3 text-xs text-slate-400">{% if patron.respaldado %}{{ patron.origen }} · {{ patron.fecha|date:'d/m/Y' }}{% else %}Carga el documento o registra la línea{% endif %}{% if patron.advertencia %}<span class="block mt-1 text-amber-300">{{ patron.advertencia }}</span>{% endif %}</td></tr>
+            {% empty %}<tr><td colspan="4" class="py-4 text-slate-400">Aún no hay un patrón de cobro para esta cuenta. Selecciona sus fuentes al revisar.</td></tr>{% endfor %}
+            </tbody></table>
+        </div>
+        </details>
+        <form id="preparar-propuesta" method="post" action="{% url 'renovar_cuenta_por_cobrar' cuenta.id %}" class="mt-5 space-y-4">
+            {% csrf_token %}<input type="hidden" name="accion" value="preparar"><input type="hidden" name="periodo" value="{{ periodo_actual_cobro }}">
+            <input type="hidden" name="referencia_id" value="{{ referencia_seleccionada }}">
+            <button class="rounded-lg bg-sky-500 hover:bg-sky-600 text-white font-bold px-5 py-2.5">Preparar borrador con estas fuentes</button>
+            <p class="text-xs text-slate-500">Los registros manuales que guardaste se incorporan al borrador. Las fuentes bancarias, sugerencias y posibles duplicados esperan revisión. Después podrás ajustar las decisiones y confirmar.</p>
+        </form>
+    </section>
+</div>
+{% endblock %}

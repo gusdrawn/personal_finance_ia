@@ -79,7 +79,8 @@ class FuentesSolapadasTest(TestCase):
         response = self.client.post(reverse("agregar_detalle_cuenta_por_cobrar"), {"cuenta_id": self.account.pk, "fuente": f"neat:{event.pk}", "descripcion": "No duplicar", "periodo": "2026-08"}, follow=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.account.detalles.count(), 1)
-        self.assertContains(response, "Este pago ya está asignado")
+        self.assertTrue(self.account.partidas_revision.filter(tipo="CARGO", decision="PENDIENTE").exists())
+        self.assertContains(response, "pendiente")
 
     def test_edicion_incompatible_conserva_la_linea_y_su_importe(self):
         event = self.evento()

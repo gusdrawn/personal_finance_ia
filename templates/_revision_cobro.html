@@ -1,0 +1,74 @@
+{% load humanize core_extras %}
+<div class="mt-5 rounded-xl border border-sky-500/25 bg-sky-500/5 p-5">
+    <div class="flex flex-col md:flex-row justify-between gap-4">
+        <div>
+            <h3 class="text-lg font-bold text-white">Preparar {{ periodo_cobro|date:"m/Y" }}</h3>
+            <p class="text-xs text-slate-400 mt-1">Revisa los cargos, abonos y posibles duplicados. El saldo publicado cambia al confirmar.</p>
+        </div>
+        <a href="{{ cuenta.url_preparacion_mensual }}" class="self-start px-4 py-2 rounded-lg bg-sky-500 text-white text-sm font-bold hover:bg-sky-600">{% if cuenta.borrador %}Revisar movimientos y actualizar{% else %}Preparar propuesta{% endif %}</a>
+    </div>
+
+    {% if cuenta.borrador %}
+    <div class="mt-5 rounded-lg border border-slate-700 bg-slate-950/50 p-4" data-calculo="{{ cuenta.borrador.id }}">
+        <p class="text-xs font-bold uppercase tracking-wider text-sky-300">Borrador · {{ cuenta.borrador.periodo|date:"m/Y" }}</p>
+        {% if cuenta.borrador.anterior.estado == 'REFERENCIA' %}<p class="text-xs text-amber-300 mt-2">El saldo anterior es una referencia sin validar. Al confirmar aceptas este punto de partida y las partidas revisadas.</p>{% endif %}
+        <div class="flex flex-wrap items-center gap-3 mt-3 text-sm text-slate-300">
+            <span>Saldo anterior <strong class="text-white">{{ cuenta.borrador.saldo_anterior|monto_cobro:cuenta.moneda }}</strong></span>
+            <span>+ Cargos <strong>{{ cuenta.borrador.cargos|monto_cobro:cuenta.moneda }}</strong></span>
+            <span>− Abonos <strong>{{ cuenta.borrador.abonos|monto_cobro:cuenta.moneda }}</strong></span>
+            <span>+ Ajustes <strong>{{ cuenta.borrador.ajustes|monto_cobro:cuenta.moneda }}</strong></span>
+            <span class="text-lg font-bold text-sky-300">= {{ cuenta.borrador.saldo_final|monto_cobro:cuenta.moneda }}</span>
+        </div>
+        {% if cuenta.borrador.saldo_final < 0 %}<p class="mt-3 text-sm text-rose-300" role="alert">Los abonos exceden el saldo. Revisa su aplicación antes de confirmar.</p>{% endif %}
+        {% if cuenta.faltantes_revision %}<p class="mt-3 text-xs text-slate-400">Puedes agregar respaldos: {{ cuenta.faltantes_revision|join:', ' }}. La revisión utiliza los movimientos asignados y los documentos disponibles.</p>{% endif %}
+    </div>
+    {% if cuenta.evidencia_base %}{% include '_evidencia_cobro.html' with evidencia=cuenta.evidencia_base %}{% endif %}
+    {% if cuenta.patrones_revision %}<details class="mt-4 rounded-xl border border-slate-700 p-4"><summary class="cursor-pointer text-sm text-slate-200 font-bold">Conceptos históricos · fuentes del mes</summary><div class="mt-3 space-y-2">{% for patron in cuenta.patrones_revision %}<p class="text-xs text-slate-400">{{ patron.descripcion }} · último importe {{ patron.ultimo_monto|monto_cobro:cuenta.moneda }} · {% if patron.respaldado %}<span class="text-emerald-300">Importe disponible {{ patron.nuevo_monto|monto_cobro:cuenta.moneda }}</span>{% else %}<span class="text-amber-300">Falta importe actual; carga su fuente o registra la línea.</span>{% endif %}{% if patron.advertencia %}<span class="block mt-1 text-amber-300">{{ patron.advertencia }}</span>{% endif %}</p>{% endfor %}</div></details>{% endif %}
+    <form method="post" action="{% url 'guardar_revision_cobro' cuenta.borrador.id %}" class="mt-5 space-y-3">
+        {% csrf_token %}
+        {% for partida in cuenta.partidas_pendientes %}
+        <div id="partida-{{ partida.id }}" class="rounded-xl border border-slate-700 bg-slate-900/50 p-4 scroll-mt-6" data-partida="{{ partida.id }}">
+            <div class="flex flex-wrap justify-between gap-3">
+                <div><strong class="text-sm text-white">{{ partida.descripcion }}</strong><p class="text-xs text-slate-400 mt-1">{{ partida.get_tipo_display }} · Fecha original {{ partida.fecha|date:"d/m/Y" }} · Mes de revisión patrimonial {{ partida.periodo|date:"m/Y" }}{% if partida.periodo_mensual and partida.periodo_mensual != partida.periodo %} · Reconstrucción de {{ partida.periodo_mensual|date:"m/Y" }}{% endif %}{% if partida.movimiento %} · Transferencia / movimiento bancario{% elif partida.evento_externo %} · NeatPagos{% else %} · Registro manual{% endif %}</p></div>
+                <strong class="text-sm text-slate-200">{{ partida.monto|monto_cobro:cuenta.moneda }}</strong>
+            </div>
+            {% if partida.tipo == 'EDITAR' %}<p class="mt-2 text-xs text-amber-300">Cambio pendiente · Registrado: {{ partida.detalle.monto|monto_cobro:cuenta.moneda }} · Diferencia sobre el saldo anterior: {{ partida.efecto_propuesto|monto_cobro:cuenta.moneda }} · Mes original {{ partida.detalle.periodo|date:"m/Y" }}.</p>{% endif %}
+            {% if partida.conciliar_con %}<p class="mt-2 text-xs text-amber-300">Posible duplicado: abono de {{ partida.conciliar_con.fecha|date:"d/m/Y" }} por el mismo importe. Concílialos si son el mismo pago.</p>{% endif %}
+            {% if partida.ya_contabilizada %}<p class="mt-2 text-xs text-sky-300">Ya contabilizado en el saldo anterior. Conserva como respaldo o revisa una conciliación; no se vuelve a aplicar.</p>{% endif %}
+            {% if partida.pago_adelantado_neat %}<p class="mt-2 text-xs text-violet-300">Pago adelantado de NeatPagos. Puede corresponder a este mes aunque aparezca después en la cartola; revisa el mes de aplicación.</p>{% elif partida.fecha < periodo_cobro %}<p class="mt-2 text-xs text-amber-300">Movimiento anterior al mes. Puede estar incluido en el saldo previo; revisa su respaldo antes de aplicar un ajuste.</p>{% endif %}
+            {% if partida.cargos_respaldados %}<p class="mt-2 text-xs text-sky-300">La cartola respalda: {% for cargo in partida.cargos_respaldados %}{{ cargo.descripcion }}{% if not forloop.last %}, {% endif %}{% endfor %}. Vincula como respaldo para conservar una sola obligación.</p>{% endif %}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                <div><label class="field-label" for="decision-{{ partida.id }}">Decisión</label><select id="decision-{{ partida.id }}" name="decision_{{ partida.id }}" class="field-input">
+                    <option value="PENDIENTE" {% if partida.decision == 'PENDIENTE' %}selected{% endif %}>Dejar pendiente</option>
+                    <option value="APLICAR" {% if partida.decision == 'APLICAR' %}selected{% endif %}>Aplicar al cálculo</option>
+                    {% if partida.tipo == 'CARGO' or partida.tipo == 'ABONO' %}<option value="RESPALDO" {% if partida.decision == 'RESPALDO' %}selected{% endif %}>Ya incluido · sólo respaldo</option>{% endif %}
+                    {% if partida.tipo == 'ABONO' and partida.movimiento %}<option value="CONCILIAR" {% if partida.decision == 'CONCILIAR' %}selected{% endif %}>Conciliar con abono existente</option>{% endif %}
+                    <option value="EXCLUIR" {% if partida.decision == 'EXCLUIR' %}selected{% endif %}>Ignorar · pasado o no corresponde</option>
+                </select></div>
+                <div><label class="field-label" for="periodo-{{ partida.id }}">Mes de aplicación</label><input id="periodo-{{ partida.id }}" type="month" name="periodo_{{ partida.id }}" value="{{ periodo_actual_cobro }}" class="field-input" min="{{ periodo_actual_cobro }}"></div>
+                <div><label class="field-label" for="motivo-{{ partida.id }}">Motivo / nota</label><input id="motivo-{{ partida.id }}" name="motivo_{{ partida.id }}" value="{{ partida.motivo }}" maxlength="255" class="field-input" placeholder="Ej. Ya incluido en el saldo anterior"></div>
+            </div>
+            {% if partida.tipo == 'ABONO' and partida.movimiento %}
+            <div class="mt-3"><label class="field-label" for="conciliar-{{ partida.id }}">Abono que respalda esta transferencia</label><select id="conciliar-{{ partida.id }}" name="conciliar_{{ partida.id }}" class="field-input"><option value="">Selecciona sólo si vas a conciliar</option>{% for abono in cuenta.abonos_conciliables %}<option value="{{ abono.id }}" {% if partida.conciliar_con_id == abono.id %}selected{% endif %}>{{ abono.fecha|date:"d/m/Y" }} · {{ abono.monto|monto_cobro:cuenta.moneda }} · {{ abono.descripcion|default:"Abono manual" }}</option>{% endfor %}</select></div>
+            {% endif %}
+        </div>
+        {% empty %}<p class="text-sm text-slate-400">No hay partidas nuevas. Agrega un cargo, abono o ajuste si corresponde.</p>{% endfor %}
+        {% if cuenta.partidas_pendientes %}<button class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold">Guardar decisiones y recalcular</button>{% endif %}
+    </form>
+    <details class="mt-4 text-sm text-slate-300"><summary class="cursor-pointer">Vista previa del texto · borrador</summary><textarea readonly rows="7" class="field-input mt-3 font-mono">{{ cuenta.borrador.texto }}</textarea></details>
+    <form method="post" action="{% url 'confirmar_revision_cobro' cuenta.borrador.id %}" class="mt-5 flex flex-wrap items-center gap-3" data-confirmar-calculo>
+        {% csrf_token %}<input type="hidden" name="huella" value="{{ cuenta.borrador.huella }}">
+        <button class="px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm" {% if cuenta.borrador.saldo_final < 0 %}disabled{% endif %}>Confirmar cálculo revisado</button>
+        <span class="text-xs text-slate-400">Se aplican las decisiones guardadas; lo pendiente se conserva para revisión.</span>
+    </form>
+    {% elif cuenta.partidas_pendientes %}
+    <p class="mt-4 text-sm text-amber-300">{{ cuenta.partidas_pendientes|length }} partida(s) pendiente(s). Prepara la propuesta para revisar su aplicación.</p>
+    {% for partida in cuenta.partidas_pendientes %}{% if partida.tipo == 'EDITAR' %}
+    <div id="partida-{{ partida.id }}" class="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4" data-partida="{{ partida.id }}">
+        <p class="text-sm text-slate-200">{{ partida.descripcion }} · <strong class="text-amber-300">{{ partida.monto|monto_cobro:cuenta.moneda }}</strong> · Cambio pendiente</p>
+        <p class="mt-2 text-xs text-slate-400">Registrado: {{ partida.detalle.monto|monto_cobro:cuenta.moneda }} · Diferencia sobre el saldo anterior: {{ partida.efecto_propuesto|monto_cobro:cuenta.moneda }}. El saldo cambia al confirmar.</p>
+        <a class="inline-block mt-3 text-xs font-bold text-sky-300" href="{{ partida.url_revision }}">Revisar en {{ partida.periodo_revision|date:"m/Y" }} →</a>
+    </div>
+    {% endif %}{% endfor %}
+    {% endif %}
+</div>

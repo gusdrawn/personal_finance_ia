@@ -112,6 +112,66 @@ def _serializable_row(row: dict) -> dict:
     return result
 
 
+def huella_pago_neat(metadata: dict) -> str:
+    """Identidad de una fila Neat sin ID, anclada en dia_de_pago.
+
+    Ese timestamp no es único por sí solo: una misma corrida puede pagar varias
+    cuentas. Se combina con monto y cuenta, más la contraparte/destino si existe.
+    El estado y el número de fila se omiten porque cambian entre reportes.
+    """
+    if not isinstance(metadata, dict):
+        return ""
+    datos = {_key(nombre): valor for nombre, valor in metadata.items()}
+    if any(
+        str(datos.get(clave) or "").strip()
+        for clave in ("id_pago", "identificador_de_pago", "payment_id", "external_id", "id")
+    ):
+        return ""
+    dia_de_pago = " ".join(str(datos.get("dia_de_pago") or "").split()).casefold()
+    try:
+        instante_pago = datetime.fromisoformat(dia_de_pago.replace("z", "+00:00"))
+        if instante_pago.tzinfo:
+            instante_pago = instante_pago.astimezone(datetime_timezone.utc)
+        dia_de_pago = instante_pago.isoformat(timespec="microseconds")
+    except ValueError:
+        # Algunos CSV antiguos traen la hora con formato local. Se conserva el
+        # valor para no inventar una conversión, pero se exige que incluya hora.
+        pass
+    cuenta = " ".join(str(_first(datos, "cuenta", "empresa", "account")).split()).casefold()
+    destinatario = " ".join(
+        str(_first(datos, "nombre_destinatario", "destinatario", "beneficiario", "recipient")).split()
+    ).casefold()
+    monto_raw = _first(datos, "monto", "importe", "amount", "monto_pagado", "valor")
+    if not monto_raw:
+        monto_raw = _first(datos, "monto_total", "total", "total_cargado", "cargo_total")
+    monto = _decimal(monto_raw)
+    if (
+        not dia_de_pago
+        or not re.search(r"\d{1,2}:\d{2}", dia_de_pago)
+        or not monto.is_finite()
+        or monto <= 0
+        or not cuenta
+    ):
+        return ""
+    valores = {
+        "dia_de_pago": dia_de_pago,
+        "monto": format(monto.normalize(), "f"),
+        "cuenta": cuenta,
+        "destinatario": destinatario,
+        "cuenta_destino": " ".join(str(datos.get("cuenta_destino") or "").split()).casefold(),
+        "banco_destino": " ".join(str(datos.get("banco_destino") or "").split()).casefold(),
+        "tarjeta_ultimos4": " ".join(str(_first(datos, "tarjeta_ultimos4", "ultimos_4", "card_last4")).split()),
+        "comprobante": " ".join(str(_first(datos, "comprobante", "receipt", "receipt_id")).split()).casefold(),
+        "moneda": " ".join(str(_first(datos, "moneda", "currency", default="CLP")).split()).casefold(),
+    }
+    total_raw = _first(datos, "monto_total", "total", "total_cargado", "cargo_total")
+    if total_raw:
+        total = _decimal(total_raw)
+        valores["total"] = format(total.normalize(), "f") if total.is_finite() else str(total)
+    contenido = json.dumps(valores, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(contenido.encode("utf-8")).hexdigest()
+
+
 def _proof_row(text: str) -> dict:
     """Extrae campos frecuentes de un comprobante/correo Neat sin depender del HTML."""
     plain = re.sub(r"<[^>]+>", " ", text or "")
@@ -193,6 +253,7 @@ def _tabular_rows(content: bytes, name: str) -> list[dict]:
 def parsear_neat(content: bytes, name: str) -> list[PagoExternoNormalizado]:
     rows = _tabular_rows(content, name)
     pagos = []
+    huellas_vistas = defaultdict(int)
     for index, row in enumerate(rows, start=1):
         amount = _decimal(_first(row, "monto", "importe", "amount", "monto_pagado", "valor"))
         fee = _decimal(_first(row, "comision", "fee", "commission"))
@@ -203,9 +264,16 @@ def parsear_neat(content: bytes, name: str) -> list[PagoExternoNormalizado]:
         event_date = _date(_first(row, "fecha", "fecha_pago", "dia_de_pago", "created_at"))
         payment_date = _date(_first(row, "fecha_cargo", "charge_date", "dia_de_pago")) or event_date
         deposit_date = _date(_first(row, "fecha_transferencia", "transfer_date", "dia_de_deposito"))
+        metadata = _serializable_row(row)
         if not external_id:
-            seed = f"{event_date}|{amount}|{_first(row, 'empresa', 'destinatario', 'cuenta')}|{index}"
-            external_id = "archivo-" + hashlib.sha256(seed.encode()).hexdigest()[:24]
+            huella = huella_pago_neat(metadata)
+            if huella:
+                huellas_vistas[huella] += 1
+                sufijo = f"-dup-{huellas_vistas[huella]}" if huellas_vistas[huella] > 1 else ""
+                external_id = f"archivo-{huella[:24]}{sufijo}"
+            else:
+                seed = f"{event_date}|{amount}|{_first(row, 'empresa', 'destinatario', 'cuenta')}|{index}"
+                external_id = "archivo-" + hashlib.sha256(seed.encode()).hexdigest()[:24]
         status = _key(_first(row, "estado", "status", default="en_proceso"))
         status_map = {
             "pagado": "CONFIRMADO", "exitoso": "CONFIRMADO", "realizado": "CONFIRMADO",
@@ -228,7 +296,7 @@ def parsear_neat(content: bytes, name: str) -> list[PagoExternoNormalizado]:
                 fecha_transferencia_esperada=_date(_first(row, "fecha_esperada", "expected_transfer_date")),
                 fecha_transferencia=deposit_date,
                 comprobante_referencia=str(_first(row, "comprobante", "receipt", "receipt_id")),
-                metadata=_serializable_row(row),
+                metadata=metadata,
             )
         )
     return pagos
@@ -484,7 +552,22 @@ def vincular_propiedad(user, property_id, departamento):
 
 @transaction.atomic
 def ingestar_pagos_neat(user, payments, import_record=None, credential=None):
+    payments = list(payments)
     created_count = updated_count = 0
+    eventos_legacy_consumidos = set()
+    huellas_entrantes = {
+        huella_pago_neat(payment.metadata)
+        for payment in payments
+        if payment.external_id.startswith("archivo-")
+    }
+    legacy_por_huella = defaultdict(list)
+    if huellas_entrantes:
+        for candidato in EventoFinancieroExterno.objects.filter(
+            user=user, fuente="neat", external_id__startswith="archivo-",
+        ).only("pk", "external_id", "metadata").order_by("pk"):
+            huella = huella_pago_neat(candidato.metadata)
+            if huella in huellas_entrantes:
+                legacy_por_huella[huella].append(candidato)
     for payment in payments:
         defaults = {
             "credencial": credential or _credential(user, "neat"),
@@ -498,9 +581,30 @@ def ingestar_pagos_neat(user, payments, import_record=None, credential=None):
             "comision": payment.comision, "descuentos": payment.descuentos,
             "monto_neto": payment.total_cargado, "metadata": payment.metadata,
         }
-        event, created = EventoFinancieroExterno.objects.update_or_create(
-            user=user, fuente="neat", external_id=payment.external_id, defaults=defaults
-        )
+        event = EventoFinancieroExterno.objects.filter(
+            user=user, fuente="neat", external_id=payment.external_id,
+        ).first()
+        created = False
+        if event is None and payment.external_id.startswith("archivo-"):
+            huella = huella_pago_neat(payment.metadata)
+            # Los archivos anteriores usaban el número de fila para crear el
+            # ID. Al importar de nuevo, reutilizamos un registro antiguo con
+            # la misma evidencia para no generar otra copia durante la mejora.
+            if huella:
+                event = next(
+                    (candidato for candidato in legacy_por_huella.get(huella, [])
+                     if candidato.pk not in eventos_legacy_consumidos),
+                    None,
+                )
+        if event is not None:
+            eventos_legacy_consumidos.add(event.pk)
+            for campo, valor in defaults.items():
+                setattr(event, campo, valor)
+            event.save()
+        else:
+            event, created = EventoFinancieroExterno.objects.update_or_create(
+                user=user, fuente="neat", external_id=payment.external_id, defaults=defaults
+            )
         PagoNeat.objects.update_or_create(
             evento=event,
             defaults={"cuenta": payment.cuenta, "tipo_cuenta": payment.tipo_cuenta,

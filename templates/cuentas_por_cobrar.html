@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load humanize %}
+{% load humanize core_extras l10n %}
 
 {% block title %}Cuentas por cobrar - FinanzasPersonalesIA{% endblock %}
 {% block page_title %}Cuentas por cobrar{% endblock %}
@@ -8,6 +8,9 @@
 .field-label { display: block; margin-bottom: .3rem; color: #94a3b8; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
 .field-input { width: 100%; border: 1px solid rgba(51, 65, 85, .9); border-radius: .6rem; background: rgba(30, 41, 59, .65); padding: .58rem .8rem; color: #e2e8f0; outline: none; }
 .field-input:focus { border-color: #10b981; box-shadow: 0 0 0 2px rgba(16, 185, 129, .12); }
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details[open] > summary .cobro-chevron { transform: rotate(180deg); }
 {% endblock %}
 
 {% block content %}
@@ -31,26 +34,27 @@
         <p class="text-xs text-slate-500 mt-1">Activas y archivadas</p>
     </div>
     <div class="glass p-5 rounded-2xl border-t-4 border-sky-500">
-        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Pendiente CLP</p>
-        <p class="text-3xl font-bold text-white mt-2">${{ resumen_cobro_clp|floatformat:0|intcomma }}</p>
-        <p class="text-xs text-slate-500 mt-1">Se refleja en Activos</p>
+        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Pendiente CLP · {{ periodo_cobro|date:"m/Y" }}</p>
+        <p class="text-3xl font-bold text-white mt-2">{{ resumen_cobro_clp|monto_cobro:"CLP" }}</p>
+        <p class="text-xs text-slate-500 mt-1">Total de las vistas mensuales</p>
     </div>
     <div class="glass p-5 rounded-2xl border-t-4 border-violet-500">
-        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Pendiente USD</p>
-        <p class="text-3xl font-bold text-white mt-2">US${{ resumen_cobro_usd|floatformat:2|intcomma }}</p>
+        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Pendiente USD · {{ periodo_cobro|date:"m/Y" }}</p>
+        <p class="text-3xl font-bold text-white mt-2">{{ resumen_cobro_usd|monto_cobro:"USD" }}</p>
         <p class="text-xs text-slate-500 mt-1">Sin conversión inventada</p>
     </div>
 </div>
 
-<section class="glass rounded-2xl p-6 mt-8 border border-emerald-500/20">
-    <div class="flex items-center gap-3 mb-5">
+<details id="crear-cuenta" class="glass rounded-2xl p-6 mt-8 border border-emerald-500/20" {% if request.GET.crear %}open{% endif %}>
+    <summary class="flex items-center gap-3 cursor-pointer">
         <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center"><i class="fas fa-folder-plus"></i></div>
         <div>
             <h2 class="text-lg font-bold text-white">Crear cuenta</h2>
             <p class="text-xs text-slate-500">Ejemplos: “Gastos compartidos Juan” o “Viaje familiar”.</p>
         </div>
-    </div>
-    <form method="post" action="{% url 'crear_cuenta_por_cobrar' %}" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <i class="fas fa-chevron-down cobro-chevron ml-auto text-slate-400"></i>
+    </summary>
+    <form method="post" action="{% url 'crear_cuenta_por_cobrar' %}" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mt-5">
         {% csrf_token %}
         <div>
             <label class="field-label">Nombre</label>
@@ -69,7 +73,7 @@
         </div>
         <button class="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl px-4 py-2.5 font-bold text-sm"><i class="fas fa-plus mr-2"></i>Crear cuenta</button>
     </form>
-</section>
+</details>
 
 <div class="space-y-7 mt-8">
 {% for cuenta in cuentas_por_cobrar %}
@@ -83,59 +87,53 @@
             </div>
             {% if cuenta.descripcion %}<p class="text-sm text-slate-400 mt-2">{{ cuenta.descripcion }}</p>{% endif %}
             <div class="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs text-slate-500">
-                <span>Cargado: <strong class="text-slate-300">{% if cuenta.moneda == 'USD' %}US${{ cuenta.total_cargado|floatformat:2|intcomma }}{% else %}${{ cuenta.total_cargado|floatformat:0|intcomma }}{% endif %}</strong></span>
-                <span>Abonado: <strong class="text-emerald-300">{% if cuenta.moneda == 'USD' %}US${{ cuenta.total_abonado|floatformat:2|intcomma }}{% else %}${{ cuenta.total_abonado|floatformat:0|intcomma }}{% endif %}</strong></span>
-                <span>Pendiente: <strong class="text-white">{% if cuenta.moneda == 'USD' %}US${{ cuenta.saldo_pendiente|floatformat:2|intcomma }}{% else %}${{ cuenta.saldo_pendiente|floatformat:0|intcomma }}{% endif %}</strong></span>
+                <span>Saldo publicado en Activos{% if cuenta.ultimo_confirmado %} · {{ cuenta.ultimo_confirmado.periodo|date:"m/Y" }}{% endif %}: <strong class="text-white">{{ cuenta.saldo_pendiente|monto_cobro:cuenta.moneda }}</strong></span>
+                <span class="{% if cuenta.confirmado_mes %}text-emerald-300{% elif cuenta.borrador %}text-sky-300{% else %}text-amber-300{% endif %}">{{ periodo_cobro|date:"m/Y" }} · {% if cuenta.confirmado_mes %}Con cálculo confirmado{% elif cuenta.borrador %}Borrador por revisar{% else %}Pendiente de preparar{% endif %}</span>
             </div>
         </div>
         <div class="flex flex-wrap gap-2">
             {% if cuenta.activo %}
             <form method="get" action="{% url 'cuentas_por_cobrar' %}" class="flex items-center gap-2">
                 {% csrf_token %}
-                <input type="month" name="periodo" value="{{ periodo_actual_cobro }}" class="field-input !w-auto !py-2" aria-label="Mes a renovar">
+                <input type="month" name="periodo" value="{{ periodo_actual_cobro }}" class="field-input !w-auto !py-2" aria-label="Mes a revisar">
+                {% if cuenta.gestionar %}<input type="hidden" name="gestionar" value="{{ cuenta.id }}">{% endif %}
                 <button type="submit" class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 hover:text-white text-xs font-bold" title="Ver solo las líneas del mes seleccionado"><i class="fas fa-calendar-day mr-1"></i>Ver mes</button>
-                <button type="submit" formmethod="post" formaction="{% url 'renovar_cuenta_por_cobrar' cuenta.id %}" class="px-3 py-2 rounded-lg bg-sky-500/10 text-sky-300 border border-sky-500/20 hover:bg-sky-500 hover:text-white text-xs font-bold" title="Proponer transacciones similares del mes seleccionado"><i class="fas fa-rotate mr-1"></i>Proponer mes</button>
             </form>
+            <a class="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300" href="?periodo={{ periodo_anterior_cobro }}{% if cuenta.gestionar %}&gestionar={{ cuenta.id }}{% endif %}#cuenta-{{ cuenta.id }}" aria-label="Mes anterior">← Mes anterior</a>
+            <a class="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300" href="?periodo={{ periodo_siguiente_cobro }}{% if cuenta.gestionar %}&gestionar={{ cuenta.id }}{% endif %}#cuenta-{{ cuenta.id }}" aria-label="Mes siguiente">Mes siguiente →</a>
             {% endif %}
-            <form method="post" action="{% url 'alternar_cuenta_por_cobrar' cuenta.id %}">
-                {% csrf_token %}
-                <button class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold">{% if cuenta.activo %}<i class="fas fa-box-archive mr-1"></i>Archivar{% else %}<i class="fas fa-box-open mr-1"></i>Reactivar{% endif %}</button>
-            </form>
         </div>
     </div>
 
-    <div class="overflow-x-auto mt-6 rounded-xl border border-slate-800">
-        <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800 text-xs text-slate-400">Mostrando únicamente las líneas de <strong class="text-slate-200">{{ periodo_cobro|date:"m/Y" }}</strong>. El saldo superior conserva los meses pendientes anteriores.</div>
-        <table class="w-full text-left min-w-[720px]" data-periodo-visible="{{ periodo_actual_cobro }}">
-            <thead class="bg-slate-900/70">
-                <tr class="text-[10px] uppercase tracking-widest text-slate-500">
-                    <th class="px-4 py-3">Mes</th><th class="px-4 py-3">Descripción</th><th class="px-4 py-3">Origen</th><th class="px-4 py-3 text-right">Monto</th><th class="px-4 py-3 text-right">Abonos</th><th class="px-4 py-3 text-right">Pendiente</th><th class="px-4 py-3 text-right">Acción</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-800/80">
-            {% for detalle in cuenta.detalles_visibles %}
-                <tr class="text-sm" data-detalle-periodo="{{ detalle.periodo|date:'Y-m' }}">
-                    <td class="px-4 py-3 text-slate-400 whitespace-nowrap">{{ detalle.periodo|date:"m/Y" }}</td>
-                    <td class="px-4 py-3 text-slate-200 font-medium">{{ detalle.descripcion }}<div class="text-[10px] text-slate-600 mt-1">{{ detalle.fecha|date:"d/m/Y" }}</div></td>
-                    <td class="px-4 py-3"><span class="text-[10px] font-bold uppercase {% if detalle.provisional %}text-amber-300{% elif detalle.origen == 'MANUAL' %}text-amber-400{% elif detalle.origen == 'NEAT' %}text-violet-300{% else %}text-sky-300{% endif %}">{% if detalle.provisional %}Provisional · falta estado{% else %}{{ detalle.get_origen_display }}{% endif %}</span></td>
-                    <td class="px-4 py-3 text-right text-slate-300 whitespace-nowrap">{% if cuenta.moneda == 'USD' %}US${{ detalle.monto|floatformat:2|intcomma }}{% else %}${{ detalle.monto|floatformat:0|intcomma }}{% endif %}</td>
-                    <td class="px-4 py-3 text-right text-emerald-300 whitespace-nowrap">{% if cuenta.moneda == 'USD' %}US${{ detalle.total_abonado|floatformat:2|intcomma }}{% else %}${{ detalle.total_abonado|floatformat:0|intcomma }}{% endif %}</td>
-                    <td class="px-4 py-3 text-right font-bold text-white whitespace-nowrap">{% if cuenta.moneda == 'USD' %}US${{ detalle.saldo_pendiente|floatformat:2|intcomma }}{% else %}${{ detalle.saldo_pendiente|floatformat:0|intcomma }}{% endif %}</td>
-                    <td class="px-4 py-3 text-right whitespace-nowrap">{% if cuenta.activo %}<a href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}&editar={{ detalle.id }}#cuenta-{{ cuenta.id }}" class="text-xs font-bold text-sky-300 hover:text-white">Editar</a>{% endif %}</td>
-                </tr>
-            {% empty %}
-                <tr><td colspan="7" class="px-4 py-8 text-center text-sm text-slate-500">Todavía no hay líneas. Agrega un cargo manual o asócialo a una transacción.</td></tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
+    {% if cuenta.referencia_aportada and not cuenta.ultimo_confirmado %}
+    <details class="mt-4 rounded-lg border border-slate-700 px-4 py-3 text-sm text-slate-400">
+        <summary class="cursor-pointer">Referencia histórica opcional · {{ cuenta.referencia_aportada.fecha_calculo|date:"d/m/Y" }}</summary>
+        <p class="mt-2">{{ cuenta.referencia_aportada.saldo_final|monto_cobro:cuenta.moneda }} · Conservada para consultar o elegir como punto de partida.</p>
+        <a class="block mt-2 font-bold text-sky-300" href="{% url 'renovar_cuenta_por_cobrar' cuenta.id %}?periodo={{ cuenta.referencia_aportada.periodo|date:'Y-m' }}&referencia_id={{ cuenta.referencia_aportada.id }}">Revisar esta referencia con sus fuentes →</a>
+    </details>
+    {% endif %}
+
+    {% include '_resumen_mensual_cobro.html' %}
+
+    <details id="gestion-cuenta-{{ cuenta.id }}" class="mt-5" {% if cuenta.gestionar %}open{% endif %}>
+    <summary class="inline-flex cursor-pointer items-center gap-3 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-sm font-bold text-sky-300"><i class="fas fa-sliders"></i>Gestionar{% if cuenta.partidas_pendientes %}<span class="text-xs text-amber-300">{{ cuenta.partidas_pendientes|length }} por revisar</span>{% endif %}<i class="fas fa-chevron-down cobro-chevron"></i></summary>
+    {% if cuenta.activo %}{% include '_revision_cobro.html' %}{% endif %}
+    <details class="mt-4 rounded-xl border border-slate-800 p-4">
+        <summary class="cursor-pointer text-sm text-slate-300 font-bold">Líneas de {{ periodo_cobro|date:"m/Y" }} · proponer corrección</summary>
+        <div class="mt-3 space-y-2">{% for detalle in cuenta.detalles_visibles %}<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400"><span>{{ detalle.descripcion }} · {{ detalle.monto|monto_cobro:cuenta.moneda }}{% if detalle.edicion_pendiente %}<a class="block mt-1 text-amber-300" href="{{ detalle.edicion_pendiente.url_revision }}">Cambio pendiente: {{ detalle.edicion_pendiente.monto|monto_cobro:cuenta.moneda }} · Revisar en {{ detalle.edicion_pendiente.periodo_revision|date:"m/Y" }} →</a>{% endif %}</span>{% if cuenta.activo %}<a class="text-sky-300 font-bold" href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}&editar={{ detalle.id }}#cuenta-{{ cuenta.id }}">Editar</a>{% endif %}</div>{% empty %}<p class="text-xs text-slate-500">Sin líneas registradas en este mes.</p>{% endfor %}</div>
+    </details>
+    <form method="post" action="{% url 'alternar_cuenta_por_cobrar' cuenta.id %}" class="mt-4">
+        {% csrf_token %}<button class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-xs font-bold">{% if cuenta.activo %}Archivar cuenta{% else %}Reactivar cuenta{% endif %}</button>
+    </form>
 
     {% if cuenta.detalle_edicion and cuenta.activo %}
     <form method="post" action="{% url 'editar_detalle_cuenta_por_cobrar' cuenta.detalle_edicion.id %}" class="mt-5 rounded-xl bg-amber-500/5 border border-amber-500/20 p-5 space-y-3">
         {% csrf_token %}
         <div>
             <h3 class="font-bold text-white"><i class="fas fa-pen-to-square text-amber-300 mr-2"></i>Editar línea</h3>
-            <p class="text-xs text-slate-400 mt-1">Puedes reemplazar el cargo manual por una transacción de tarjeta o NeatPagos. Se incluyen cargos del mes y hasta 10 días antes; al asociarla, el monto se toma automáticamente.</p>
+            <p class="text-xs text-slate-400 mt-1">Guardar recalcula el mes elegido y los saldos siguientes. Si existe una confirmación posterior, su diferencia se revisa desde ese mes. El historial conserva los cálculos confirmados.</p>
+            {% if cuenta.detalle_edicion.edicion_pendiente %}<p class="text-xs text-amber-300 mt-2">Estás editando el cambio pendiente. Registrado: {{ cuenta.detalle_edicion.monto|monto_cobro:cuenta.moneda }} · Diferencia sobre el saldo anterior: {{ cuenta.detalle_edicion.edicion_pendiente.efecto_propuesto|monto_cobro:cuenta.moneda }}.</p>{% endif %}
+            {% if cuenta.periodo_edicion != periodo_cobro %}<p class="text-xs text-sky-300 mt-2">La corrección se revisará en {{ cuenta.periodo_edicion|date:"m/Y" }}, desde el saldo vigente. La línea conserva su mes original {{ cuenta.detalle_edicion.periodo|date:"m/Y" }}.</p>{% endif %}
         </div>
         <div class="relative cobro-combobox" data-target="editar-{{ cuenta.detalle_edicion.id }}">
             <label class="field-label" for="cobro-source-edit-{{ cuenta.detalle_edicion.id }}">Buscar transacción</label>
@@ -151,66 +149,27 @@
             </div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div><label class="field-label">Mes</label><input type="month" name="periodo" value="{{ cuenta.detalle_edicion.periodo|date:'Y-m' }}" class="field-input"></div>
-            <div><label class="field-label">Fecha</label><input type="date" name="fecha" value="{{ cuenta.detalle_edicion.fecha|date:'Y-m-d' }}" class="field-input cobro-date-editar-{{ cuenta.detalle_edicion.id }}"></div>
-            <div><label class="field-label">Descripción</label><input required name="descripcion" maxlength="255" value="{{ cuenta.detalle_edicion.descripcion }}" class="field-input cobro-description-editar-{{ cuenta.detalle_edicion.id }}"></div>
+            <div><label class="field-label">Mes de aplicación</label><input type="month" name="periodo" value="{{ cuenta.periodo_edicion|date:'Y-m' }}" class="field-input"></div>
+            <div><label class="field-label">Fecha</label><input type="date" name="fecha" value="{{ cuenta.valores_edicion.fecha|date:'Y-m-d' }}" class="field-input cobro-date-editar-{{ cuenta.detalle_edicion.id }}"></div>
+            <div><label class="field-label">Descripción</label><input required name="descripcion" maxlength="255" value="{{ cuenta.valores_edicion.descripcion }}" class="field-input cobro-description-editar-{{ cuenta.detalle_edicion.id }}"></div>
         </div>
-        <div><label class="field-label">Monto ({{ cuenta.moneda }})</label><input required type="number" min="0.01" step="0.01" name="monto" value="{{ cuenta.detalle_edicion.monto }}" class="field-input cobro-amount-editar-{{ cuenta.detalle_edicion.id }}"><p class="cobro-amount-hint mt-1 text-[11px] text-slate-500">Ingresa el monto cuando el cargo sea manual.</p></div>
-        <label class="flex items-start gap-2 text-xs text-slate-400"><input type="checkbox" name="provisional" value="1" {% if cuenta.detalle_edicion.provisional %}checked{% endif %} class="mt-0.5 rounded border-slate-600 bg-slate-900 text-amber-500"><span><strong class="text-amber-300">Aún no aparece en el estado de cuenta.</strong> Mantener esta línea como provisional hasta reemplazarla por el movimiento real.</span></label>
+        <div><label class="field-label">Monto ({{ cuenta.moneda }})</label><input required type="number" min="0.01" step="0.01" name="monto" value="{{ cuenta.valores_edicion.monto|unlocalize }}" class="field-input cobro-amount-editar-{{ cuenta.detalle_edicion.id }}"><p class="cobro-amount-hint mt-1 text-[11px] text-slate-500">Ingresa el monto cuando el cargo sea manual.</p></div>
+        <label class="flex items-start gap-2 text-xs text-slate-400"><input type="checkbox" name="provisional" value="1" {% if cuenta.valores_edicion.provisional %}checked{% endif %} class="mt-0.5 rounded border-slate-600 bg-slate-900 text-amber-500"><span><strong class="text-amber-300">Aún no aparece en el estado de cuenta.</strong> Mantener esta línea como provisional hasta reemplazarla por el movimiento real.</span></label>
         <div class="flex flex-wrap gap-2">
-            <button class="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold"><i class="fas fa-save mr-2"></i>Guardar cambios</button>
+            <button class="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold"><i class="fas fa-save mr-2"></i>Proponer cambio</button>
             <a href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}#cuenta-{{ cuenta.id }}" class="px-4 py-2.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-sm font-bold">Cancelar</a>
         </div>
     </form>
     {% endif %}
 
-    {% if cuenta.renovacion_propuesta %}
-    <div class="mt-5 rounded-xl bg-sky-500/5 border border-sky-500/20 p-5">
-        <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-            <div>
-                <h3 class="font-bold text-white"><i class="fas fa-wand-magic-sparkles text-sky-300 mr-2"></i>Propuesta para {{ cuenta.renovacion_propuesta.periodo|date:"m/Y" }}</h3>
-                <p class="text-xs text-slate-400 mt-1">Revisa las transacciones encontradas. Todavía no se ha agregado ninguna línea.</p>
-            </div>
-            {% if cuenta.renovacion_propuesta.propuestas %}
-            <form method="post" action="{% url 'renovar_cuenta_por_cobrar' cuenta.id %}">
-                {% csrf_token %}
-                <input type="hidden" name="periodo" value="{{ cuenta.renovacion_propuesta.periodo|date:'Y-m' }}">
-                <input type="hidden" name="confirmar" value="1">
-                <button class="px-3 py-2 rounded-lg bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold"><i class="fas fa-check mr-1"></i>Confirmar y agregar</button>
-            </form>
-            {% endif %}
-        </div>
-        {% if cuenta.renovacion_propuesta.propuestas %}
-        <div class="overflow-x-auto mt-4 rounded-lg border border-slate-800">
-            <table class="w-full text-left min-w-[560px]">
-                <thead class="bg-slate-900/60"><tr class="text-[10px] uppercase tracking-widest text-slate-500"><th class="px-3 py-2">Descripción</th><th class="px-3 py-2">Transacción detectada</th><th class="px-3 py-2">Origen</th><th class="px-3 py-2 text-right">Monto</th></tr></thead>
-                <tbody class="divide-y divide-slate-800/80">
-                {% for propuesta in cuenta.renovacion_propuesta.propuestas %}
-                    <tr class="text-sm">
-                        <td class="px-3 py-2 text-slate-200">{{ propuesta.descripcion }}</td>
-                        <td class="px-3 py-2 text-slate-400">{{ propuesta.fecha|date:"d/m/Y" }} · {{ propuesta.referencia }}</td>
-                        <td class="px-3 py-2 text-[10px] font-bold uppercase text-violet-300">{{ propuesta.origen }}</td>
-                        <td class="px-3 py-2 text-right text-slate-200 whitespace-nowrap">{% if cuenta.moneda == 'USD' %}US${{ propuesta.monto|floatformat:2|intcomma }}{% else %}${{ propuesta.monto|floatformat:0|intcomma }}{% endif %}</td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="mt-4 text-sm text-slate-500">No se encontraron transacciones similares para este mes.</p>
-        {% endif %}
-        {% if cuenta.renovacion_propuesta.no_encontrados %}
-        <p class="mt-3 text-xs text-amber-300">Sin coincidencia: {{ cuenta.renovacion_propuesta.no_encontrados|join:", " }}.</p>
-        {% endif %}
-    </div>
-    {% endif %}
+    {% if cuenta.partida_edicion and cuenta.activo %}{% include '_editar_partida_cobro.html' %}{% endif %}
 
     {% if cuenta.activo %}
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-6">
         <form method="post" action="{% url 'agregar_detalle_cuenta_por_cobrar' %}" class="rounded-xl bg-slate-900/40 border border-slate-800 p-5 space-y-3">
             {% csrf_token %}<input type="hidden" name="cuenta_id" value="{{ cuenta.id }}">
             <h3 class="font-bold text-white"><i class="fas fa-receipt text-sky-400 mr-2"></i>Agregar línea</h3>
-            <p class="text-xs text-slate-500">Si el cargo todavía no aparece en un estado, regístralo ahora como provisional. Cuando llegue el PDF podrás editar esta misma línea y reemplazarla por la transacción real, sin duplicar el saldo.</p>
+            <p class="text-xs text-slate-500">Registra el cargo conocido aunque falte la cartola. Si ya está respaldado por NeatPagos, relaciona después el movimiento bancario como respaldo del mismo pago. Las líneas manuales provisionales se pueden editar para vincular su fuente real.</p>
             <div class="relative cobro-combobox" data-target="{{ cuenta.id }}">
                 <label class="field-label" for="cobro-source-search-{{ cuenta.id }}">Buscar transacción</label>
                 <div class="flex gap-2">
@@ -235,47 +194,71 @@
                 <p class="cobro-amount-hint mt-1 text-[11px] text-slate-500">Ingresa el monto cuando el cargo sea manual.</p>
             </div>
             <label class="flex items-start gap-2 text-xs text-slate-400"><input type="checkbox" name="provisional" value="1" class="mt-0.5 rounded border-slate-600 bg-slate-900 text-amber-500"><span><strong class="text-amber-300">Aún no aparece en el estado de cuenta.</strong> Crea el cobro ahora y deja pendiente su vinculación bancaria.</span></label>
-            <button class="w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-600 text-white text-sm font-bold"><i class="fas fa-plus mr-2"></i>Agregar línea</button>
+            <button class="w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-600 text-white text-sm font-bold"><i class="fas fa-plus mr-2"></i>Proponer línea</button>
         </form>
 
         <form method="post" action="{% url 'registrar_abono_cuenta_por_cobrar' %}" class="rounded-xl bg-slate-900/40 border border-slate-800 p-5 space-y-3">
-            {% csrf_token %}<input type="hidden" name="cuenta_id" value="{{ cuenta.id }}">
+            {% csrf_token %}<input type="hidden" name="cuenta_id" value="{{ cuenta.id }}"><input type="hidden" name="periodo" value="{{ periodo_actual_cobro }}">
             <h3 class="font-bold text-white"><i class="fas fa-hand-holding-dollar text-emerald-400 mr-2"></i>Registrar abono</h3>
             <p class="text-xs text-slate-500">Puedes aplicarlo a una línea o dejarlo como abono general. El selector incluye meses pendientes anteriores.</p>
             <select name="detalle_id" class="field-input">
                 <option value="">Abono general</option>
-                {% for detalle in cuenta.detalles_abono %}<option value="{{ detalle.id }}">{{ detalle.periodo|date:"m/Y" }} · {{ detalle.descripcion }} · pendiente {% if cuenta.moneda == 'USD' %}US${{ detalle.saldo_pendiente|floatformat:2|intcomma }}{% else %}${{ detalle.saldo_pendiente|floatformat:0|intcomma }}{% endif %}</option>{% endfor %}
+                {% for detalle in cuenta.detalles_abono %}<option value="{{ detalle.id }}">{{ detalle.periodo|date:"m/Y" }} · {{ detalle.descripcion }} · pendiente {{ detalle.saldo_pendiente|monto_cobro:cuenta.moneda }}</option>{% endfor %}
             </select>
             <div class="grid grid-cols-2 gap-3">
                 <div><label class="field-label">Fecha</label><input type="date" name="fecha" value="{{ fecha_actual_cobro }}" class="field-input"></div>
                 <div><label class="field-label">Monto ({{ cuenta.moneda }})</label><input required type="number" min="0.01" step="0.01" name="monto" class="field-input" placeholder="0"></div>
             </div>
             <div><label class="field-label">Nota (opcional)</label><input name="descripcion" maxlength="255" class="field-input" placeholder="Ej. Transferencia recibida"></div>
-            <button class="w-full py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold"><i class="fas fa-check mr-2"></i>Guardar abono</button>
+            <button class="w-full py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold"><i class="fas fa-check mr-2"></i>Proponer abono</button>
         </form>
     </div>
     {% endif %}
 
-    {% if cuenta.abonos.all %}
+    {% if cuenta.abonos_mes %}
     <div class="mt-5 rounded-xl bg-slate-900/30 border border-slate-800 p-4">
-        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Historial de abonos</p>
+        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Abonos de {{ periodo_cobro|date:"m/Y" }}</p>
         <div class="flex flex-wrap gap-x-5 gap-y-2">
-            {% for abono in cuenta.abonos.all %}
+            {% for abono in cuenta.abonos_mes %}
             <span class="inline-flex items-center gap-2 text-xs text-slate-400">
-                <span>{{ abono.fecha|date:"d/m/Y" }} · <strong class="text-emerald-300">{% if cuenta.moneda == 'USD' %}US${{ abono.monto|floatformat:2|intcomma }}{% else %}${{ abono.monto|floatformat:0|intcomma }}{% endif %}</strong>{% if abono.detalle %} · {{ abono.detalle.descripcion }}{% elif abono.descripcion %} · {{ abono.descripcion }}{% endif %}</span>
-                <form method="post" action="{% url 'borrar_abono_cuenta_por_cobrar' abono.id %}" class="inline" onsubmit="return confirm('¿Quitar este abono? El saldo pendiente de la cuenta aumentará nuevamente.');">
-                    {% csrf_token %}
-                    <button type="submit" class="rounded-md px-1.5 py-1 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300" title="Quitar abono" aria-label="Quitar abono"><i class="fas fa-trash-can"></i></button>
+                <span>{{ abono.fecha|date:"d/m/Y" }} · <strong class="text-emerald-300">{{ abono.monto|monto_cobro:cuenta.moneda }}</strong>{% if abono.detalle %} · {{ abono.detalle.descripcion }}{% elif abono.descripcion %} · {{ abono.descripcion }}{% endif %}</span>
+                {% if abono.vigente and cuenta.activo %}<form method="post" action="{% url 'borrar_abono_cuenta_por_cobrar' abono.id %}" class="inline">
+                    {% csrf_token %}<input type="hidden" name="periodo" value="{{ periodo_actual_cobro }}">
+                    <button type="submit" class="rounded-md px-1.5 py-1 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300" title="Proponer retiro del abono" aria-label="Proponer retiro del abono"><i class="fas fa-trash-can"></i></button>
                 </form>
+                {% else %}<span class="text-[10px] text-slate-500">Retirado / conciliado</span>{% endif %}
             </span>
             {% endfor %}
         </div>
     </div>
     {% endif %}
 
+    {% if cuenta.activo %}
+    <form method="post" action="{% url 'agregar_ajuste_cobro' cuenta.id %}" class="mt-5 rounded-xl border border-slate-800 p-5 space-y-3">
+        {% csrf_token %}<input type="hidden" name="periodo" value="{{ periodo_actual_cobro }}">
+        <h3 class="font-bold text-white">Proponer ajuste histórico</h3><p class="text-xs text-slate-400">Conserva el cálculo anterior y registra la diferencia en el mes abierto. Un importe negativo reduce la deuda.</p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3"><div><label class="field-label">Fecha original</label><input type="date" name="fecha" value="{{ fecha_actual_cobro }}" class="field-input" required></div><div><label class="field-label">Descripción</label><input name="descripcion" class="field-input" maxlength="255" required></div><div><label class="field-label">Importe con signo ({{ cuenta.moneda }})</label><input type="number" step="0.01" name="monto" class="field-input" required></div></div>
+        <div><label class="field-label">Motivo</label><input name="motivo" class="field-input" maxlength="255" required></div><button class="px-4 py-2 rounded-lg bg-slate-700 text-white text-sm font-bold">Guardar ajuste para revisión</button>
+    </form>
+    {% endif %}
+    </details>
+
+    {% if cuenta.historial %}
+    <details class="mt-5 rounded-xl border border-slate-800 p-4">
+        <summary class="cursor-pointer text-sm font-bold text-slate-300">Historial de cálculos · {{ cuenta.historial|length }} registro(s)</summary>
+        <div class="space-y-4 mt-4">{% for calculo in cuenta.historial %}
+            <details class="rounded-lg border border-slate-700 bg-slate-900/40 p-4" data-historial-calculo="{{ calculo.id }}"><summary class="cursor-pointer flex flex-wrap justify-between gap-2 text-sm text-slate-300"><span>{{ calculo.periodo|date:"m/Y" }} · {{ calculo.fecha_calculo|date:"d/m/Y" }} · {{ calculo.get_estado_display }} · versión {{ calculo.revision }}</span><strong>{{ calculo.saldo_final|monto_cobro:cuenta.moneda }}</strong></summary>
+                <p class="text-xs text-slate-400 mt-3">Saldo anterior {{ calculo.saldo_anterior }} + cargos {{ calculo.cargos }} − abonos {{ calculo.abonos }} + ajustes {{ calculo.ajustes }} {{ cuenta.moneda }}{% if calculo.confirmado_at %} · Confirmado {{ calculo.confirmado_at|date:"d/m/Y H:i" }}{% endif %}</p>
+                <ul class="mt-3 text-xs text-slate-400 space-y-2">{% for entrada in calculo.entradas_visibles %}<li>{{ entrada.fecha|date:"d/m/Y" }} · {{ entrada.descripcion }} · {{ entrada.monto|monto_cobro:cuenta.moneda }} · {{ entrada.decision_label }}{% if entrada.motivo %} · {{ entrada.motivo }}{% endif %}</li>{% endfor %}</ul>
+                <textarea id="texto-historial-{{ calculo.id }}" readonly rows="7" class="field-input mt-4 font-mono">{{ calculo.texto }}</textarea><button type="button" class="copy-cobro mt-3 text-xs font-bold text-emerald-300" data-target="texto-historial-{{ calculo.id }}">Copiar este cálculo</button>
+            </details>
+        {% endfor %}</div>
+    </details>
+    {% endif %}
+
     <div class="mt-6 rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-5">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-            <div><h3 class="font-bold text-white"><i class="fab fa-whatsapp text-emerald-400 mr-2"></i>Texto para cobrar</h3><p class="text-xs text-slate-500 mt-1">Copia esta tabla y pégala directamente en WhatsApp.</p></div>
+            <div><h3 class="font-bold text-white"><i class="fab fa-whatsapp text-emerald-400 mr-2"></i>Texto para cobrar · {{ periodo_cobro|date:"m/Y" }}</h3><p class="text-xs text-slate-500 mt-1">{% if cuenta.resumen_mensual.provisional %}Vista mensual provisional · incluye los registros guardados de este mes y el saldo anterior.{% else %}Cálculo confirmado de este mes · texto conservado.{% endif %}</p></div>
             <button type="button" class="copy-cobro px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500 hover:text-white text-xs font-bold" data-target="texto-cobro-{{ cuenta.id }}"><i class="fas fa-copy mr-1"></i>Copiar texto</button>
         </div>
         <textarea id="texto-cobro-{{ cuenta.id }}" readonly rows="7" class="w-full bg-slate-950/70 border border-slate-800 rounded-lg px-4 py-3 text-sm text-slate-300 font-mono resize-y">{{ cuenta.texto_para_compartir }}</textarea>
@@ -409,6 +392,17 @@ document.querySelectorAll('.copy-cobro').forEach(function(button) {
         this.innerHTML = '<i class="fas fa-check mr-1"></i>Copiado';
         setTimeout(() => this.innerHTML = original, 1800);
     });
+});
+document.querySelectorAll('[data-confirmar-calculo]').forEach(function(form) {
+    form.addEventListener('submit', function(event) {
+        if (form.closest('details').dataset.decisionesPendientes === 'true') {
+            event.preventDefault();
+            window.alert('Guarda las decisiones para recalcular antes de confirmar.');
+        }
+    });
+});
+document.querySelectorAll('select[name^="decision_"], select[name^="conciliar_"], input[name^="periodo_"], input[name^="motivo_"]').forEach(function(input) {
+    input.addEventListener('change', function() { input.closest('details').dataset.decisionesPendientes = 'true'; });
 });
 </script>
 {% endblock %}

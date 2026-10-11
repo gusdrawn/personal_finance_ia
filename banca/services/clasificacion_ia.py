@@ -174,7 +174,11 @@ class OpenAICompatibleClasificador(ClasificadorIA):
                     "max_tokens": 4096,
                     "response_format": {"type": "json_object"},
                 }
-                if self.modelo.lower().startswith("glm-") and not self._es_opencode_go():
+                if self.modelo.lower() == "strata":
+                    # Strata defaults to high reasoning, which is excessive for these
+                    # short classification requests and can exceed our 60s timeout.
+                    payload["reasoning_effort"] = "none"
+                elif self.modelo.lower().startswith("glm-") and not self._es_opencode_go():
                     payload["reasoning_effort"] = "low"
                 resp = requests.post(
                     f"{self.base_url}/chat/completions",
@@ -217,8 +221,15 @@ class OpenAICompatibleClasificador(ClasificadorIA):
                             )
                             if isinstance(data.get(clave), list)
                         ),
-                        [],
+                        None,
                     )
+                    if filas is None:
+                        filas = (
+                            [data]
+                            if isinstance(data.get("glosa"), str)
+                            and isinstance(data.get("categoria"), str)
+                            else []
+                        )
                 else:
                     filas = []
                 esperadas = {normalizar_glosa(glosa) for glosa in lote}

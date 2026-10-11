@@ -18,6 +18,7 @@
     </div>
     <div class="flex flex-wrap gap-3 items-center">
         <a href="{% url 'banca_movimientos' %}" class="text-emerald-400 hover:text-emerald-300 text-sm whitespace-nowrap">Revisar todos los movimientos →</a>
+        <a href="{% url 'cuentas_por_cobrar' %}" class="px-4 py-2 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-300 text-sm font-bold">Revisar cuentas por cobrar →</a>
     </div>
 </div>
 
@@ -43,6 +44,7 @@
         </button>
     </div>
     <p class="text-xs text-slate-600 mt-3">Los PDFs quedan vinculados a tu usuario para poder auditar el origen de cada movimiento. Si vuelves a subir uno existente, se aplica el lector actual sin duplicar movimientos. Los documentos escaneados requieren Tesseract OCR instalado en el equipo.</p>
+    <p class="text-xs text-violet-300 mt-2">Después de importar, prepara la propuesta desde Gestionar en Cuentas por cobrar. Los saldos confirmados se conservan hasta que apruebes el nuevo cálculo.</p>
 </form>
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -136,12 +136,12 @@ def validar_fuente_no_solapada(fuente, cuenta, detalle_id=None):
         eventos = ConciliacionEventoExterno.objects.filter(
             movimiento=fuente, evento__user=fuente.user, evento__fuente="neat", rol="CARGO",
         ).values("evento_id")
-        solapados = DetalleCuentaPorCobrar.objects.filter(cuenta__user=fuente.user, evento_externo_id__in=eventos)
+        solapados = DetalleCuentaPorCobrar.objects.filter(cuenta__user=fuente.user, vigente=True, evento_externo_id__in=eventos)
     else:
         cargos = list(ConciliacionEventoExterno.objects.filter(
             evento=fuente, movimiento__user=fuente.user, rol="CARGO",
         ).values_list("movimiento_id", flat=True))
-        solapados = DetalleCuentaPorCobrar.objects.filter(cuenta__user=fuente.user, movimiento_id__in=cargos)
+        solapados = DetalleCuentaPorCobrar.objects.filter(cuenta__user=fuente.user, vigente=True, movimiento_id__in=cargos)
     if transaction.get_connection().in_atomic_block:
         list(MovimientoBancario.objects.select_for_update().filter(pk__in=cargos).order_by("pk"))
     if detalle_id:
@@ -151,7 +151,7 @@ def validar_fuente_no_solapada(fuente, cuenta, detalle_id=None):
 
 
 @transaction.atomic
-def asignar_fuente_a_cuenta(fuente, cuenta: CuentaPorCobrar | None):
+def asignar_fuente_a_cuenta(fuente, cuenta: CuentaPorCobrar | None, detalle_base=None):
     """Vincula una transacción a una sola cuenta por cobrar o la libera.
 
     La fuente es la clasificación financiera: la categoría temática puede
@@ -165,7 +165,7 @@ def asignar_fuente_a_cuenta(fuente, cuenta: CuentaPorCobrar | None):
         raise ValueError("La fuente y la cuenta deben pertenecer al mismo usuario.")
     fuente = type(fuente).objects.select_for_update().get(pk=fuente.pk)
     if cuenta is not None:
-        validar_fuente_no_solapada(fuente, cuenta)
+        validar_fuente_no_solapada(fuente, cuenta, detalle_base.pk if detalle_base else None)
 
     filtro = (
         {"movimiento": fuente}
@@ -217,7 +217,7 @@ def asignar_fuente_a_cuenta(fuente, cuenta: CuentaPorCobrar | None):
         campos_fuente.append("clasificado_at")
     fuente.save(update_fields=campos_fuente)
 
-    detalle = next(
+    detalle = detalle_base or next(
         (item for item in detalles if item.cuenta_id == cuenta.pk),
         detalles[0] if detalles else None,
     )
@@ -232,6 +232,9 @@ def asignar_fuente_a_cuenta(fuente, cuenta: CuentaPorCobrar | None):
         # consistente el saldo de ambas cuentas.
         detalle.abonos.update(cuenta=cuenta)
     detalle.cuenta = cuenta
+    detalle.movimiento = fuente if isinstance(fuente, MovimientoBancario) else None
+    detalle.evento_externo = fuente if isinstance(fuente, EventoFinancieroExterno) else None
+    detalle.vigente = True
     detalle.descripcion = info["descripcion"]
     detalle.periodo = primer_dia_mes(info["fecha"] or date.today())
     detalle.fecha = info["fecha"] or date.today()
@@ -273,7 +276,7 @@ def _buscar_fuente_similar(cuenta, detalle, periodo, usados):
             monto__gt=0,
             moneda=cuenta.moneda,
         ).exclude(estado="DESCARTADO_CIERRE")
-        candidatos = [mov for mov in queryset if mov.id not in usados]
+        candidatos = [mov for mov in queryset if ("movimiento", mov.id) not in usados]
     elif detalle.evento_externo_id:
         queryset = EventoFinancieroExterno.objects.filter(
             user=cuenta.user,
@@ -285,10 +288,10 @@ def _buscar_fuente_similar(cuenta, detalle, periodo, usados):
             | Q(fecha_evento__range=(inicio, fin))
             | Q(periodo=periodo)
             | Q(fecha_cargo__isnull=True, fecha_evento__isnull=True, periodo__isnull=True)
-        ).select_related("pago_neat")
+        ).exclude(estado__in=["FALLIDO", "REVERSADO"]).select_related("pago_neat")
         candidatos = []
         for evento in queryset:
-            if evento.id in usados:
+            if ("neat", evento.id) in usados:
                 continue
             fecha = informacion_fuente(evento)["fecha"]
             if fecha and inicio <= fecha <= fin:
@@ -340,7 +343,7 @@ def proponer_renovacion(cuenta: CuentaPorCobrar, periodo: date) -> dict:
     """
     periodo = primer_dia_mes(periodo)
     detalles = list(
-        cuenta.detalles.filter(periodo__lt=periodo)
+        cuenta.detalles.filter(periodo__lt=periodo, vigente=True)
         .select_related("movimiento", "movimiento__producto", "evento_externo")
         .order_by("-periodo", "-id")
     )
@@ -350,16 +353,21 @@ def proponer_renovacion(cuenta: CuentaPorCobrar, periodo: date) -> dict:
             continue
         ultimos_por_clave.setdefault(detalle.clave_similitud, detalle)
 
-    usados = set(
-        cuenta.detalles.filter(periodo=periodo, movimiento__isnull=False).values_list(
-            "movimiento_id", flat=True
-        )
-    )
-    usados.update(
-        cuenta.detalles.filter(periodo=periodo, evento_externo__isnull=False).values_list(
-            "evento_externo_id", flat=True
-        )
-    )
+    # Un pago del final del mes puede estar en la ventana del siguiente. Su
+    # período ya elegido prevalece: no se reutiliza para otro cobro mensual.
+    existentes = DetalleCuentaPorCobrar.objects.filter(cuenta__user=cuenta.user, vigente=True)
+    usados = {("movimiento", pk) for pk in existentes.filter(movimiento__isnull=False)
+              .values_list("movimiento_id", flat=True)}
+    usados.update(("neat", pk) for pk in existentes.filter(evento_externo__isnull=False)
+                  .values_list("evento_externo_id", flat=True))
+    from patrimonio.models import PartidaRevisionCobro
+    revisadas = PartidaRevisionCobro.objects.filter(
+        cuenta__user_id=cuenta.user_id,
+    ).filter(Q(cuenta=cuenta) | Q(resuelta_en__isnull=True) | ~Q(decision="EXCLUIR"))
+    usados.update(("movimiento", pk) for pk in revisadas.filter(movimiento__isnull=False)
+                  .values_list("movimiento_id", flat=True))
+    usados.update(("neat", pk) for pk in revisadas.filter(evento_externo__isnull=False)
+                  .values_list("evento_externo_id", flat=True))
     propuestas = []
     no_encontrados = []
     for detalle in ultimos_por_clave.values():
@@ -381,7 +389,7 @@ def proponer_renovacion(cuenta: CuentaPorCobrar, periodo: date) -> dict:
                 "fuente": fuente,
             }
         )
-        usados.add(fuente.id)
+        usados.add(("movimiento" if hasattr(fuente, "producto_id") else "neat", fuente.id))
     return {
         "periodo": periodo,
         "propuestas": propuestas,
@@ -433,7 +441,13 @@ def texto_cobro(cuenta: CuentaPorCobrar, periodo: date | None = None) -> str:
     duplicado al copiar el cobro en WhatsApp. Las fechas se conservan en la
     tabla de la aplicación, pero no se incluyen en el texto compartible.
     """
-    detalles = list(cuenta.detalles.all())
+    confirmado = cuenta.calculos.filter(estado="CONFIRMADO")
+    if periodo is not None:
+        confirmado = confirmado.filter(periodo__lte=periodo)
+    calculo = confirmado.first()
+    if calculo:
+        return calculo.texto
+    detalles = [d for d in cuenta.detalles.all() if d.vigente]
     if periodo is None:
         periodo = max((detalle.periodo for detalle in detalles), default=None)
     lineas = [f"Detalle pendiente: {cuenta.nombre}"]
@@ -469,7 +483,7 @@ def texto_cobro(cuenta: CuentaPorCobrar, periodo: date | None = None) -> str:
         (
             abono.monto
             for abono in cuenta.abonos.all()
-            if abono.detalle_id is None
+            if abono.detalle_id is None and abono.vigente
         ),
         Decimal("0"),
     )

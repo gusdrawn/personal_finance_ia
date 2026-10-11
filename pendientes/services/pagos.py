@@ -34,7 +34,7 @@ def vincular_pago_aseo(importacion, movimiento):
         raise ValueError("El cargo debe coincidir con el importe total del certificado en CLP.")
     if movimiento.por_revisar or movimiento.estado == "DESCARTADO_CIERRE" or movimiento.naturaleza != "OPERACIONAL":
         raise ValueError("Confirma primero que el movimiento es un pago operacional vigente.")
-    if movimiento.prestamo_id or movimiento.detalles_cuentas_por_cobrar.exists():
+    if movimiento.prestamo_id or movimiento.detalles_cuentas_por_cobrar.filter(vigente=True).exists():
         raise ValueError("El cargo ya corresponde a otra fuente financiera.")
     if ImportacionEstadoCuenta.objects.filter(movimiento_pago=movimiento).exclude(pk=importacion.pk).exists():
         raise ValueError("Este cargo ya respalda otro certificado.")

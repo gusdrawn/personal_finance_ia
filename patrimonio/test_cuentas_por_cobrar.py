@@ -8,7 +8,12 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
 
-from banca.models import EventoFinancieroExterno, MovimientoBancario, PagoNeat
+from banca.models import (
+    EventoFinancieroExterno,
+    ImportacionFuenteExterna,
+    MovimientoBancario,
+    PagoNeat,
+)
 from configuracion.models import Banco, Producto
 from patrimonio.models import (
     AbonoCuentaPorCobrar,
@@ -25,6 +30,19 @@ from patrimonio.services.cuentas_por_cobrar import (
 
 
 class CuentaPorCobrarTest(TestCase):
+    def _confirmar_pendientes(self, cuenta, periodo=None):
+        from patrimonio.services.revision_cobros import preparar_calculo
+        from patrimonio.models import PartidaRevisionCobro
+        periodo = periodo or cuenta.partidas_revision.filter(resuelta_en__isnull=True).latest("periodo").periodo
+        calculo = preparar_calculo(cuenta, periodo)
+        decisiones = {f"decision_{p.pk}": "APLICAR" for p in cuenta.partidas_revision.filter(resuelta_en__isnull=True, periodo__lte=periodo)}
+        self.client.post(reverse("guardar_revision_cobro", args=[calculo.pk]), decisiones)
+        calculo.refresh_from_db()
+        self.client.post(reverse("confirmar_revision_cobro", args=[calculo.pk]), {"huella": calculo.huella})
+        calculo.refresh_from_db()
+        self.assertEqual(calculo.estado, "CONFIRMADO")
+        cuenta.refresh_from_db()
+
     def setUp(self):
         self.user = User.objects.create_user(username="cobros", password="secret")
         self.other_user = User.objects.create_user(username="cobros_other", password="secret")
@@ -244,18 +262,20 @@ class CuentaPorCobrarTest(TestCase):
             clave_similitud="movimiento:%s:supermercado nunoa" % self.producto.id,
         )
 
-        response = self.client.post(
+        response = self.client.get(
             reverse("renovar_cuenta_por_cobrar", args=[cuenta.id]),
             {"periodo": "2026-09"},
         )
 
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Documentos y fuentes complementarias · opcional")
         self.assertEqual(cuenta.detalles.filter(periodo=date(2026, 9, 1)).count(), 0)
         response = self.client.post(
             reverse("renovar_cuenta_por_cobrar", args=[cuenta.id]),
-            {"periodo": "2026-09", "confirmar": "1"},
+            {"periodo": "2026-09", "documentos_revisados": "1", "permitir_incompleta": "1"},
         )
         self.assertEqual(response.status_code, 302)
+        self._confirmar_pendientes(cuenta, date(2026, 9, 1))
         renovado = cuenta.detalles.get(periodo=date(2026, 9, 1))
         self.assertEqual(renovado.movimiento_id, nuevo.id)
         self.assertEqual(renovado.monto, Decimal("125000"))
@@ -291,6 +311,8 @@ class CuentaPorCobrarTest(TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
+        self.assertFalse(cuenta.detalles.exists())
+        self._confirmar_pendientes(cuenta, date(2026, 8, 1))
         detalle = cuenta.detalles.get()
         self.assertEqual(detalle.origen, "NEAT")
         self.assertEqual(detalle.monto, Decimal("88000"))
@@ -340,6 +362,7 @@ class CuentaPorCobrarTest(TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
+        self._confirmar_pendientes(cuenta, date(2026, 9, 1))
         detalle.refresh_from_db()
         self.assertEqual(detalle.evento_externo_id, evento.id)
         self.assertEqual(detalle.monto, Decimal("405000"))
@@ -361,6 +384,7 @@ class CuentaPorCobrarTest(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+        self._confirmar_pendientes(cuenta, date(2026, 9, 1))
         detalle = cuenta.detalles.get()
         self.assertTrue(detalle.provisional)
         self.assertTrue(detalle.monto_manual)
@@ -386,6 +410,7 @@ class CuentaPorCobrarTest(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+        self._confirmar_pendientes(cuenta, date(2026, 9, 1))
         detalle.refresh_from_db()
         self.assertEqual(cuenta.detalles.count(), 1)
         self.assertFalse(detalle.provisional)
@@ -625,7 +650,7 @@ class CuentaPorCobrarTest(TestCase):
 
         self.assertContains(cobros, "Texto para cobrar")
         self.assertContains(cobros, "Total pendiente: $42.000")
-        self.assertContains(cobros, "Proponer mes")
+        self.assertContains(cobros, "Preparar propuesta")
         self.assertContains(cobros, 'type="search"')
         self.assertContains(cobros, "cobro-source-search")
         self.assertNotContains(cobros, '<select name="fuente"')
@@ -635,6 +660,136 @@ class CuentaPorCobrarTest(TestCase):
         self.assertContains(cobros, "Editar")
         self.assertContains(activos, "Casa")
         self.assertContains(activos, "Cuenta por cobrar")
+
+    def test_busqueda_neat_agrupa_importaciones_identicas_y_aisla_usuario(self):
+        cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Wilder")
+        metadata = {
+            "cuenta": "arriendo",
+            "monto": "400000",
+            "dia_de_pago": "2026-08-28T12:02:58.000Z",
+            "dia_de_deposito": "2026-09-01T17:30:45.061Z",
+            "status": "Realizado",
+            "nombre_destinatario": "MARIA DE LOS ANGELES PALAVECINO",
+            "cuenta_destino": "001593247805",
+        }
+        eventos = []
+        for indice, nombre in enumerate(("reporte-septiembre.csv", "reporte-octubre.csv"), start=1):
+            importacion = ImportacionFuenteExterna.objects.create(
+                user=self.user,
+                fuente="neat",
+                nombre_archivo=nombre,
+                hash_archivo=f"hash-neat-duplicado-{indice}",
+            )
+            evento = EventoFinancieroExterno.objects.create(
+                user=self.user,
+                fuente="neat",
+                tipo="PAGO",
+                external_id=f"archivo-antiguo-{indice}",
+                importacion=importacion,
+                estado="CONFIRMADO",
+                fecha_evento=date(2026, 8, 28),
+                fecha_cargo=date(2026, 8, 28),
+                periodo=date(2026, 8, 1),
+                monto_bruto=Decimal("400000"),
+                monto_neto=Decimal("400000"),
+                metadata=metadata,
+            )
+            PagoNeat.objects.create(
+                evento=evento,
+                cuenta="arriendo",
+                destinatario="MARIA DE LOS ANGELES PALAVECINO",
+                monto_pagado=Decimal("400000"),
+                total_cargado=Decimal("400000"),
+            )
+            eventos.append(evento)
+        importacion_sin_detalle = ImportacionFuenteExterna.objects.create(
+            user=self.user,
+            fuente="neat",
+            nombre_archivo="reporte-septiembre-inicial.csv",
+            hash_archivo="hash-neat-duplicado-sin-detalle",
+        )
+        evento_sin_detalle = EventoFinancieroExterno.objects.create(
+            user=self.user,
+            fuente="neat",
+            tipo="PAGO",
+            external_id="archivo-antiguo-sin-detalle",
+            importacion=importacion_sin_detalle,
+            estado="CONFIRMADO",
+            monto_bruto=Decimal("400000"),
+            monto_neto=Decimal("400000"),
+            metadata=metadata,
+        )
+        EventoFinancieroExterno.objects.create(
+            user=self.user,
+            fuente="neat",
+            tipo="PAGO",
+            external_id="archivo-repetido-en-mismo-csv",
+            importacion=importacion_sin_detalle,
+            estado="CONFIRMADO",
+            fecha_evento=date(2026, 8, 28),
+            fecha_cargo=date(2026, 8, 28),
+            periodo=date(2026, 8, 1),
+            monto_bruto=Decimal("400000"),
+            monto_neto=Decimal("400000"),
+            metadata=metadata,
+        )
+        metadata_otro_servicio = {**metadata, "cuenta": "luz"}
+        evento_misma_hora_otro_servicio = EventoFinancieroExterno.objects.create(
+            user=self.user,
+            fuente="neat",
+            tipo="PAGO",
+            external_id="archivo-misma-hora-otro-servicio",
+            importacion=importacion_sin_detalle,
+            estado="CONFIRMADO",
+            fecha_evento=date(2026, 8, 28),
+            fecha_cargo=date(2026, 8, 28),
+            periodo=date(2026, 8, 1),
+            monto_bruto=Decimal("400000"),
+            monto_neto=Decimal("400000"),
+            metadata=metadata_otro_servicio,
+        )
+
+        evento_ajeno = EventoFinancieroExterno.objects.create(
+            user=self.other_user,
+            fuente="neat",
+            tipo="PAGO",
+            external_id="evento-de-otro-usuario",
+            estado="CONFIRMADO",
+            fecha_evento=date(2026, 8, 28),
+            fecha_cargo=date(2026, 8, 28),
+            periodo=date(2026, 8, 1),
+            monto_bruto=Decimal("400000"),
+            monto_neto=Decimal("400000"),
+            metadata=metadata,
+        )
+        PagoNeat.objects.create(
+            evento=evento_ajeno,
+            cuenta="arriendo",
+            destinatario="MARIA DE LOS ANGELES PALAVECINO",
+            monto_pagado=Decimal("400000"),
+            total_cargado=Decimal("400000"),
+        )
+
+        pagina = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-09"})
+
+        fuentes = pagina.context["fuentes_cobro"]
+        neat = [fuente for fuente in fuentes if fuente["value"].startswith("neat:")]
+        self.assertEqual(len(neat), 3)
+        self.assertIn("MARIA DE LOS ANGELES PALAVECINO", neat[0]["label"])
+        grupo_coincidente = next(
+            fuente for fuente in neat if "Fila coincidente en 3 importaciones" in fuente["label"]
+        )
+        self.assertIn("(dia_de_pago, cuenta y monto)", grupo_coincidente["label"])
+        self.assertIn(
+            grupo_coincidente["value"],
+            {f"neat:{evento.pk}" for evento in [*eventos, evento_sin_detalle]},
+        )
+        self.assertIn(
+            f"neat:{evento_misma_hora_otro_servicio.pk}",
+            {fuente["value"] for fuente in neat},
+            "Un pago del mismo instante y monto, pero de otra cuenta, debe seguir separado.",
+        )
+        self.assertNotContains(pagina, "evento-de-otro-usuario")
 
     def test_texto_cobro_resume_meses_anteriores_en_una_linea(self):
         cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Wilder")
@@ -718,24 +873,27 @@ class CuentaPorCobrarTest(TestCase):
             clave_similitud=clave_fuente(anterior),
         )
 
-        response = self.client.post(
+        response = self.client.get(
             reverse("renovar_cuenta_por_cobrar", args=[cuenta.id]),
             {"periodo": "2026-10"},
         )
 
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(cuenta.detalles.count(), 1)
-        propuesta = self.client.get(response.url)
-        self.assertContains(propuesta, "Propuesta para 10/2026")
-        self.assertContains(propuesta, "Confirmar y agregar")
-        self.assertContains(propuesta, 'data-periodo-visible="2026-10"')
+        self.assertContains(response, "Preparar propuesta")
+        self.assertContains(response, "Documentos y fuentes complementarias · opcional")
 
         confirmado = self.client.post(
             reverse("renovar_cuenta_por_cobrar", args=[cuenta.id]),
-            {"periodo": "2026-10", "confirmar": "1"},
+            {"periodo": "2026-10", "documentos_revisados": "1", "permitir_incompleta": "1"},
         )
 
         self.assertEqual(confirmado.status_code, 302)
+        propuesta = self.client.get(confirmado.url)
+        self.assertContains(propuesta, "Preparar 10/2026")
+        self.assertContains(propuesta, "Confirmar cálculo revisado")
+        self.assertContains(propuesta, 'data-periodo-visible="2026-10"')
+        self._confirmar_pendientes(cuenta, date(2026, 10, 1))
         renovado = cuenta.detalles.get(periodo=date(2026, 10, 1))
         self.assertEqual(renovado.movimiento_id, futuro.id)
         self.assertEqual(renovado.monto, Decimal("410000"))
@@ -767,6 +925,7 @@ class CuentaPorCobrarTest(TestCase):
                 "periodo": "2026-09",
             },
         )
+        self._confirmar_pendientes(cuenta, date(2026, 9, 1))
         detalle = cuenta.detalles.get()
         self.client.post(
             reverse("registrar_abono_cuenta_por_cobrar"),
@@ -778,9 +937,10 @@ class CuentaPorCobrarTest(TestCase):
                 "descripcion": "Abono recibido",
             },
         )
+        self._confirmar_pendientes(cuenta)
         abono = cuenta.abonos.get()
         pagina = self.client.get(reverse("cuentas_por_cobrar"))
-        self.assertContains(pagina, "Quitar abono")
+        self.assertContains(pagina, "Proponer retiro del abono")
         self.assertContains(pagina, reverse("borrar_abono_cuenta_por_cobrar", args=[abono.id]))
         cuenta.refresh_from_db()
         self.assertEqual(cuenta.saldo_pendiente, Decimal("13000"))
@@ -790,7 +950,8 @@ class CuentaPorCobrarTest(TestCase):
             reverse("borrar_abono_cuenta_por_cobrar", args=[abono.id])
         )
         self.assertEqual(response.status_code, 302)
-        self.assertFalse(AbonoCuentaPorCobrar.objects.filter(pk=abono.id).exists())
+        self._confirmar_pendientes(cuenta)
+        self.assertFalse(AbonoCuentaPorCobrar.objects.get(pk=abono.id).vigente)
         cuenta.refresh_from_db()
         self.assertEqual(cuenta.saldo_pendiente, Decimal("18000"))
         self.assertEqual(cuenta.activo_patrimonial.monto_clp, Decimal("18000"))

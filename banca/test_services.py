@@ -773,6 +773,37 @@ class ClasificacionServiceTest(BancaServiceTestCase):
             )
         )
 
+    def test_clasificador_strata_acepta_objeto_y_desactiva_razonamiento_largo(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "glosa": "cafeteria",
+                                "categoria": "EGRESO: Alimentacion",
+                                "confianza": 0.9,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+        clasificador = clasificacion_ia.OpenAICompatibleClasificador(
+            modelo="strata", api_key="secret", base_url="http://local.test/v1"
+        )
+
+        with patch("requests.post", return_value=response) as post:
+            resultado = clasificador.clasificar(
+                ["cafeteria"], ["EGRESO: Alimentacion"]
+            )
+
+        self.assertEqual(resultado[0]["categoria"], "EGRESO: Alimentacion")
+        self.assertEqual(post.call_args.kwargs["json"]["reasoning_effort"], "none")
+        self.assertEqual(clasificador.ultimo_error, "")
+
     def test_opencode_go_envia_sesion_estable_y_user_agent_en_todos_los_lotes(self):
         def responder(*args, **kwargs):
             payload_usuario = json.loads(kwargs["json"]["messages"][1]["content"])

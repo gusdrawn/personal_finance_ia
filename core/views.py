@@ -20,8 +20,10 @@ from patrimonio.models import (
     AbonoCuentaPorCobrar,
     Activo,
     CuentaPorCobrar,
+    CalculoCuentaPorCobrar,
     DetalleCuentaPorCobrar,
     HistorialActivo,
+    PartidaRevisionCobro,
     normalizar_monto,
     Pasivo,
     SnapshotPatrimonio,
@@ -46,6 +48,7 @@ from banca.models import (
     VinculoPropiedadExterna,
 )
 from banca.services.analisis import cupos_tdc, vencimientos_tdc
+from banca.services.fuentes_externas import huella_pago_neat
 from banca.services.notificador import probar_telegram
 from banca.services.houm_analytics import resumen_houm_departamentos
 from core.models import PreferenciaDashboard
@@ -54,6 +57,9 @@ from patrimonio.services.cuentas_por_cobrar import (
     primer_dia_mes,
     ventana_fuentes_cobro,
 )
+from patrimonio.services import revision_cobros
+from patrimonio.services import preparacion_cobros
+from patrimonio.services.proyeccion_cobros import resumen_mensual
 
 DASHBOARD_WIDGETS = (
     "patrimonio", "activos", "pasivos", "liquidez_resumen", "cupos",
@@ -448,9 +454,9 @@ def _cobro_decimal(valor):
         if "," in texto:
             texto = texto.replace(".", "").replace(",", ".")
         monto = Decimal(texto)
+        return monto if monto.is_finite() and monto > 0 else None
     except (InvalidOperation, ValueError):
         return None
-    return monto if monto > 0 else None
 
 
 def _fuentes_cobro_disponibles(user, periodo=None):
@@ -501,15 +507,52 @@ def _fuentes_cobro_disponibles(user, periodo=None):
             | Q(periodo=periodo)
             | Q(fecha_cargo__isnull=True, fecha_evento__isnull=True, periodo__isnull=True)
         )
-    eventos = (
+    eventos = list(
         eventos_query
         .exclude(estado="FALLIDO")
-        .select_related("pago_neat")
+        .select_related("pago_neat", "importacion")
         .order_by("-fecha_cargo", "-fecha_evento", "-periodo", "-id")[:300]
     )
+    grupos_eventos = {}
+    ocurrencias_por_importacion = {}
     for evento in eventos:
+        fecha = fecha_evento_neat(evento)
+        monto = evento.monto_neto or evento.monto_bruto
+        huella = huella_pago_neat(evento.metadata or {})
+        if huella and evento.importacion_id:
+            identidad = (huella, evento.moneda, fecha, monto)
+            clave_ocurrencia = (evento.importacion_id, *identidad)
+            ocurrencia = ocurrencias_por_importacion.get(clave_ocurrencia, 0)
+            ocurrencias_por_importacion[clave_ocurrencia] = ocurrencia + 1
+            # La misma fila entre distintos archivos es una repetición de
+            # reporte. Dos filas idénticas dentro de un solo CSV conservan
+            # ordinales distintos y nunca se colapsan entre sí.
+            clave = (*identidad, ocurrencia)
+        else:
+            clave = ("evento", evento.pk)
+        grupos_eventos.setdefault(clave, []).append(evento)
+
+    for grupo in grupos_eventos.values():
+        evento = max(
+            grupo,
+            key=lambda item: (
+                bool(getattr(item, "pago_neat", None)),
+                bool(item.fecha_cargo or item.fecha_evento or item.periodo),
+                bool(item.importacion_id),
+                item.pk,
+            ),
+        )
         pago = getattr(evento, "pago_neat", None)
-        descripcion = ((pago.destinatario or pago.cuenta) if pago else "") or "NeatPagos"
+        metadata = evento.metadata or {}
+        descripcion = (
+            (pago.destinatario if pago else "")
+            or metadata.get("nombre_destinatario")
+            or metadata.get("destinatario")
+            or metadata.get("beneficiario")
+            or (pago.cuenta if pago else "")
+            or metadata.get("cuenta")
+            or "NeatPagos"
+        )
         monto = evento.monto_neto or evento.monto_bruto
         fecha = fecha_evento_neat(evento)
         if not fecha:
@@ -518,14 +561,21 @@ def _fuentes_cobro_disponibles(user, periodo=None):
             continue
         if periodo and not (inicio <= fecha <= fin):
             continue
-        alias = str((evento.metadata or {}).get("alias") or "").strip()
+        alias = str(metadata.get("alias") or "").strip()
         if alias and alias.casefold() not in descripcion.casefold():
             descripcion = f"{descripcion} · {alias}"
         monto_label = f"US${monto:,.2f}" if evento.moneda == "USD" else f"${monto:,.0f}"
+        etiqueta_duplicado = ""
+        importaciones = {item.importacion_id for item in grupo if item.importacion_id}
+        if len(importaciones) > 1:
+            etiqueta_duplicado = (
+                f" · Fila coincidente en {len(importaciones)} importaciones "
+                "(dia_de_pago, cuenta y monto)"
+            )
         fuentes.append(
             {
                 "value": f"neat:{evento.id}",
-                "label": f"NeatPagos · {fecha:%d/%m/%Y} · {descripcion} · {monto_label}",
+                "label": f"NeatPagos · {fecha:%d/%m/%Y} · {descripcion} · {monto_label}{etiqueta_duplicado}",
                 "monto": abs(monto),
                 "fecha": fecha,
                 "descripcion": descripcion,
@@ -574,35 +624,111 @@ def cuentas_por_cobrar_view(request):
         .prefetch_related(
             Prefetch("detalles", queryset=detalle_qs),
             "abonos",
+            "calculos",
         )
     )
-    from patrimonio.services.cuentas_por_cobrar import texto_cobro
-    from patrimonio.services.cuentas_por_cobrar import proponer_renovacion
     fuentes_cobro = _fuentes_cobro_disponibles(request.user, periodo_cobro)
     fuentes_por_valor = {fuente["value"]: fuente for fuente in fuentes_cobro}
 
     for cuenta in cuentas:
-        cuenta.texto_para_compartir = texto_cobro(cuenta, periodo_cobro)
+        cuenta.resumen_mensual = resumen_mensual(cuenta, periodo_cobro)
+        calculos = list(cuenta.calculos.all())
+        etiquetas = dict(PartidaRevisionCobro.DECISIONES)
+        etiquetas["REFERENCIA"] = "Referencia sin validar"
+        for calculo in calculos:
+            calculo.entradas_visibles = []
+            for entrada in calculo.desglose.get("entradas", []):
+                visible = dict(entrada)
+                visible["fecha"] = date.fromisoformat(entrada["fecha"])
+                visible["monto"] = Decimal(entrada["monto"])
+                visible["efecto"] = Decimal(entrada.get("efecto", "0"))
+                visible["decision_label"] = etiquetas.get(entrada.get("decision"), "Referencia sin validar")
+                calculo.entradas_visibles.append(visible)
+        cuenta.ultimo_confirmado = next((c for c in calculos if c.estado == "CONFIRMADO"), None)
+        periodo_preparacion = max(periodo_cobro, cuenta.ultimo_confirmado.periodo) if cuenta.ultimo_confirmado else periodo_cobro
+        cuenta.url_preparacion_mensual = (reverse("renovar_cuenta_por_cobrar", args=[cuenta.pk]) +
+                                         f"?periodo={periodo_preparacion:%Y-%m}" +
+                                         ("&referencia_id=sin_saldo" if not cuenta.ultimo_confirmado else ""))
+        cuenta.confirmado_mes = next((c for c in calculos if c.estado == "CONFIRMADO" and c.periodo == periodo_cobro), None)
+        cuenta.borrador = next((c for c in calculos if c.estado == "BORRADOR" and c.periodo == periodo_cobro), None)
+        cuenta.referencias = [c for c in calculos if c.estado == "REFERENCIA"]
+        cuenta.historial = [c for c in calculos if c.estado != "BORRADOR"]
+        referencia_usuario = next((c for c in cuenta.referencias if c.referencia_usuario), None)
+        cuenta.referencia_aportada = referencia_usuario
+        cuenta.base_revision = cuenta.borrador.anterior if cuenta.borrador else cuenta.ultimo_confirmado or revision_cobros.calculo_anterior(cuenta, periodo_cobro)
+        cuenta.evidencia_base = preparacion_cobros.evidencia_calculo(cuenta, cuenta.base_revision)
+        cuenta.patrones_revision = cuenta.borrador.desglose.get("preparacion", {}).get("patrones", []) if cuenta.borrador else []
+        cuenta.calculo_para_copiar = cuenta.confirmado_mes or cuenta.ultimo_confirmado or revision_cobros.calculo_anterior(cuenta, periodo_cobro)
+        cuenta.texto_para_compartir = cuenta.resumen_mensual.texto
+        partidas_revision = list(cuenta.partidas_revision.filter(resuelta_en__isnull=True)
+                                 .select_related("conciliar_con", "movimiento", "evento_externo", "detalle"))
+        cuenta.partidas_pendientes = [p for p in partidas_revision if p.periodo_vista <= periodo_cobro]
+        ediciones_pendientes = {}
+        for partida in partidas_revision:
+            if partida.tipo != "EDITAR" or not partida.detalle_id:
+                continue
+            partida.periodo_revision = revision_cobros.periodo_correccion(
+                cuenta, partida.periodo, reconstruir=partida.registrada_por_usuario,
+            )
+            borrador_edicion = next((c for c in calculos if c.estado == "BORRADOR" and c.periodo == partida.periodo_revision), None)
+            base_edicion = borrador_edicion.anterior if borrador_edicion else revision_cobros.calculo_anterior(cuenta, partida.periodo_revision)
+            contabilizados_edicion = base_edicion.desglose.get("contabilizados", {}) if base_edicion else {}
+            partida.efecto_propuesto = partida.monto - Decimal(contabilizados_edicion.get(
+                f"detalle:{partida.detalle_id}", str(partida.detalle.monto),
+            ))
+            if borrador_edicion:
+                partida.url_revision = (reverse("cuentas_por_cobrar") +
+                                        f"?gestionar={cuenta.pk}&periodo={partida.periodo_revision:%Y-%m}#partida-{partida.pk}")
+            else:
+                partida.url_revision = (reverse("renovar_cuenta_por_cobrar", args=[cuenta.pk]) +
+                                        f"?periodo={partida.periodo_revision:%Y-%m}" +
+                                        ("&referencia_id=sin_saldo" if partida.registrada_por_usuario and not cuenta.ultimo_confirmado else ""))
+            ediciones_pendientes[partida.detalle_id] = partida
+        cuenta.faltantes_revision = preparacion_cobros.resumen_preparacion(cuenta, periodo_cobro, cuenta.base_revision)["faltantes"] if cuenta.borrador else []
+        incluidos = cuenta.base_revision.desglose.get("contabilizados", {}) if cuenta.base_revision else {}
+        inicio_anticipacion, _ = ventana_fuentes_cobro(periodo_cobro)
+        for partida in cuenta.partidas_pendientes:
+            claves = {partida.clave, f"movimiento:{partida.movimiento_id}", f"neat:{partida.evento_externo_id}"}
+            partida.ya_contabilizada = partida.tipo in {"CARGO", "ABONO"} and bool(claves & incluidos.keys())
+            partida.pago_adelantado_neat = (partida.tipo == "CARGO" and bool(partida.evento_externo_id)
+                                           and inicio_anticipacion <= partida.fecha < periodo_cobro)
+            partida.cargos_respaldados = preparacion_cobros.respaldos_cargo(cuenta, partida.movimiento or partida.evento_externo) if partida.tipo == "CARGO" and (partida.movimiento_id or partida.evento_externo_id) else []
+        cuenta.abonos_conciliables = [a for a in cuenta.abonos.all() if a.vigente]
+        cuenta.gestionar = str(request.GET.get("gestionar", "")) == str(cuenta.pk) or propuesta_cuenta_id == str(cuenta.pk)
+        cuenta.partida_edicion = next((p for p in partidas_revision
+            if str(p.pk) == request.GET.get("editar_partida") and p.registrada_por_usuario
+            and p.tipo in {"CARGO", "ABONO"} and not p.movimiento_id and not p.evento_externo_id
+            and not p.detalle_id and not p.abono_id), None)
+        if cuenta.partida_edicion:
+            cuenta.gestionar = True
         todos_los_detalles = list(cuenta.detalles.all())
+        for detalle in todos_los_detalles:
+            pendiente = ediciones_pendientes.get(detalle.pk)
+            detalle.edicion_pendiente = pendiente if pendiente and pendiente.periodo_vista == periodo_cobro else None
+        cuenta.abonos_mes = [a for a in cuenta.abonos.all() if (a.periodo or a.fecha.replace(day=1)) == periodo_cobro]
         cuenta.detalles_visibles = [
-            detalle for detalle in todos_los_detalles if detalle.periodo == periodo_cobro
+            detalle for detalle in todos_los_detalles if detalle.periodo == periodo_cobro and detalle.vigente
         ]
         cuenta.detalles_abono = [
-            detalle for detalle in todos_los_detalles if detalle.saldo_pendiente > 0
+            detalle for detalle in todos_los_detalles if detalle.saldo_pendiente > 0 and detalle.vigente and detalle.periodo <= periodo_cobro
         ]
-        if propuesta_cuenta_id == str(cuenta.id):
-            cuenta.renovacion_propuesta = proponer_renovacion(cuenta, periodo_cobro)
         detalle_edicion_id = str(request.GET.get("editar", "")).strip()
         if detalle_edicion_id and any(
             str(detalle.id) == detalle_edicion_id for detalle in todos_los_detalles
         ):
+            cuenta.gestionar = True
             cuenta.detalle_edicion = next(
                 detalle for detalle in todos_los_detalles if str(detalle.id) == detalle_edicion_id
             )
-            if cuenta.detalle_edicion.movimiento_id:
-                fuente_valor = f"movimiento:{cuenta.detalle_edicion.movimiento_id}"
-            elif cuenta.detalle_edicion.evento_externo_id:
-                fuente_valor = f"neat:{cuenta.detalle_edicion.evento_externo_id}"
+            edicion_guardada = ediciones_pendientes.get(cuenta.detalle_edicion.pk)
+            cuenta.valores_edicion = edicion_guardada or cuenta.detalle_edicion
+            cuenta.periodo_edicion = (edicion_guardada.periodo_vista
+                                     if edicion_guardada
+                                     else cuenta.detalle_edicion.periodo)
+            if cuenta.valores_edicion.movimiento_id:
+                fuente_valor = f"movimiento:{cuenta.valores_edicion.movimiento_id}"
+            elif cuenta.valores_edicion.evento_externo_id:
+                fuente_valor = f"neat:{cuenta.valores_edicion.evento_externo_id}"
             else:
                 fuente_valor = ""
             fuente_actual = fuentes_por_valor.get(fuente_valor)
@@ -610,12 +736,13 @@ def cuentas_por_cobrar_view(request):
             cuenta.detalle_edicion.fuente_actual_label = (
                 fuente_actual["label"] if fuente_actual else "Fuente actualmente asociada"
             )
+    cuentas.sort(key=lambda cuenta: (not cuenta.activo, -cuenta.saldo_pendiente, cuenta.nombre.casefold()))
     resumen_clp = sum(
-        (cuenta.saldo_pendiente for cuenta in cuentas if cuenta.moneda == "CLP"),
+        (cuenta.resumen_mensual.saldo_final for cuenta in cuentas if cuenta.moneda == "CLP"),
         Decimal("0"),
     )
     resumen_usd = sum(
-        (cuenta.saldo_pendiente for cuenta in cuentas if cuenta.moneda == "USD"),
+        (cuenta.resumen_mensual.saldo_final for cuenta in cuentas if cuenta.moneda == "USD"),
         Decimal("0"),
     )
     context = {
@@ -623,20 +750,24 @@ def cuentas_por_cobrar_view(request):
         "fuentes_cobro": fuentes_cobro,
         "periodo_actual_cobro": periodo_cobro.strftime("%Y-%m"),
         "periodo_cobro": periodo_cobro,
-        "fecha_actual_cobro": hoy.isoformat(),
+        "periodo_anterior_cobro": (periodo_cobro - timedelta(days=1)).strftime("%Y-%m"),
+        "periodo_siguiente_cobro": (periodo_cobro.replace(day=28) + timedelta(days=4)).replace(day=1).strftime("%Y-%m"),
+        "fecha_actual_cobro": (hoy if hoy.replace(day=1) == periodo_cobro else periodo_cobro).isoformat(),
         "resumen_cobro_clp": resumen_clp,
         "resumen_cobro_usd": resumen_usd,
     }
     return render(request, "cuentas_por_cobrar.html", context)
 
 
-def _volver_cuenta_cobro(cuenta, periodo=None, editar=None):
+def _volver_cuenta_cobro(cuenta, periodo=None, editar=None, *, editar_partida=None):
     url = reverse("cuentas_por_cobrar")
-    parametros = []
+    parametros = [f"gestionar={cuenta.pk}"]
     if periodo:
         parametros.append(f"periodo={periodo:%Y-%m}")
     if editar:
         parametros.append(f"editar={editar}")
+    if editar_partida:
+        parametros.append(f"editar_partida={editar_partida}")
     if parametros:
         url += "?" + "&".join(parametros)
     return redirect(f"{url}#cuenta-{cuenta.pk}")
@@ -649,10 +780,10 @@ def crear_cuenta_por_cobrar(request):
     moneda = request.POST.get("moneda", "CLP")
     if not nombre:
         messages.error(request, "Indica un nombre para la cuenta por cobrar.")
-        return redirect("cuentas_por_cobrar")
+        return redirect(reverse("cuentas_por_cobrar") + "?crear=1")
     if moneda not in dict(CuentaPorCobrar.MONEDA_CHOICES):
         messages.error(request, "La moneda seleccionada no es válida.")
-        return redirect("cuentas_por_cobrar")
+        return redirect(reverse("cuentas_por_cobrar") + "?crear=1")
     cuenta = CuentaPorCobrar.objects.create(
         user=request.user,
         nombre=nombre,
@@ -695,39 +826,26 @@ def agregar_detalle_cuenta_por_cobrar(request):
             return _volver_cuenta_cobro(cuenta)
         monto = info["monto"]
         fecha = info["fecha"] or timezone.localdate()
-        origen = info["origen"]
-        clave = info["clave"]
         descripcion = request.POST.get("descripcion", "").strip() or info["descripcion"]
     else:
         monto = _cobro_decimal(request.POST.get("monto"))
         fecha = _cobro_fecha(request.POST.get("fecha"), timezone.localdate())
-        origen = "MANUAL"
-        clave = ""
         descripcion = request.POST.get("descripcion", "").strip()
 
     if not monto or not descripcion:
         messages.error(request, "Para agregar una línea necesitas descripción y un monto mayor que cero.")
         return _volver_cuenta_cobro(cuenta)
     periodo = _cobro_periodo(request.POST.get("periodo"), fecha.replace(day=1))
-    detalle = DetalleCuentaPorCobrar(
-        cuenta=cuenta,
-        descripcion=descripcion,
-        periodo=periodo,
-        fecha=fecha,
-        monto=monto,
-        origen=origen,
-        monto_manual=fuente is None,
-        provisional=fuente is None and request.POST.get("provisional") == "1",
-        movimiento=fuente if origen == "MOVIMIENTO" else None,
-        evento_externo=fuente if origen == "NEAT" else None,
-        clave_similitud=clave,
-    )
     try:
-        detalle.save()
+        partida = revision_cobros.proponer_partida(
+            cuenta, "CARGO", periodo=periodo, fuente=fuente, descripcion=descripcion,
+            fecha=fecha, monto=monto, provisional=fuente is None and request.POST.get("provisional") == "1",
+            registrada_por_usuario=True,
+        )
     except ValidationError as error:
         messages.error(request, " ".join(error.messages))
         return _volver_cuenta_cobro(cuenta, periodo)
-    messages.success(request, f"Línea «{detalle.descripcion}» agregada por {monto} {cuenta.moneda}.")
+    messages.success(request, f"«{partida.descripcion}» pendiente de revisar. Prepara el cálculo y confirma su aplicación.")
     return _volver_cuenta_cobro(cuenta, periodo)
 
 
@@ -765,14 +883,10 @@ def editar_detalle_cuenta_por_cobrar(request, pk):
             return _volver_cuenta_cobro(cuenta, detalle.periodo, detalle.pk)
         monto = info["monto"]
         fecha = info["fecha"] or detalle.fecha
-        origen = info["origen"]
-        clave = info["clave"]
         descripcion = request.POST.get("descripcion", "").strip() or detalle.descripcion
     else:
         monto = _cobro_decimal(request.POST.get("monto"))
         fecha = _cobro_fecha(request.POST.get("fecha"), detalle.fecha)
-        origen = "MANUAL"
-        clave = ""
         descripcion = request.POST.get("descripcion", "").strip() or detalle.descripcion
 
     if not monto or not descripcion:
@@ -781,22 +895,53 @@ def editar_detalle_cuenta_por_cobrar(request, pk):
 
     periodo = _cobro_periodo(request.POST.get("periodo"), fecha.replace(day=1))
     periodo_anterior = detalle.periodo
-    detalle.descripcion = descripcion
-    detalle.periodo = periodo
-    detalle.fecha = fecha
-    detalle.monto = monto
-    detalle.origen = origen
-    detalle.monto_manual = fuente is None
-    detalle.provisional = fuente is None and request.POST.get("provisional") == "1"
-    detalle.movimiento = fuente if origen == "MOVIMIENTO" else None
-    detalle.evento_externo = fuente if origen == "NEAT" else None
-    detalle.clave_similitud = clave
     try:
-        detalle.save()
+        partida = revision_cobros.proponer_partida(
+            cuenta, "EDITAR", periodo=periodo, detalle=detalle, fuente=fuente,
+            descripcion=descripcion, fecha=fecha, monto=monto,
+            provisional=fuente is None and request.POST.get("provisional") == "1",
+            registrada_por_usuario=True,
+        )
     except ValidationError as error:
         messages.error(request, " ".join(error.messages))
         return _volver_cuenta_cobro(cuenta, periodo_anterior, detalle.pk)
-    messages.success(request, f"Línea «{detalle.descripcion}» actualizada por {monto} {cuenta.moneda}.")
+    messages.success(request, f"Vista mensual de {partida.periodo_vista:%m/%Y} actualizada. "
+                             f"La confirmación patrimonial se revisará en {partida.periodo:%m/%Y}.")
+    return _volver_cuenta_cobro(cuenta, partida.periodo_vista)
+
+
+@require_http_methods(["POST"])
+@login_required
+@transaction.atomic
+def editar_registro_pendiente_cobro(request, pk):
+    partida = get_object_or_404(
+        PartidaRevisionCobro, pk=pk, cuenta__user=request.user, resuelta_en__isnull=True,
+        registrada_por_usuario=True, tipo__in=["CARGO", "ABONO"], movimiento__isnull=True,
+        evento_externo__isnull=True, detalle__isnull=True, abono__isnull=True,
+    )
+    cuenta = CuentaPorCobrar.objects.select_for_update().get(pk=partida.cuenta_id)
+    partida = get_object_or_404(PartidaRevisionCobro.objects.select_for_update(), pk=pk, resuelta_en__isnull=True)
+    if not cuenta.activo:
+        messages.error(request, "La cuenta está archivada; reactívala para editar registros.")
+        return _volver_cuenta_cobro(cuenta, partida.periodo_vista)
+    monto = _cobro_decimal(request.POST.get("monto"))
+    if not monto:
+        messages.error(request, "Ingresa un monto mayor que cero.")
+        return _volver_cuenta_cobro(cuenta, partida.periodo_vista, editar_partida=partida.pk)
+    periodo = _cobro_periodo(request.POST.get("periodo"), partida.periodo_vista)
+    try:
+        periodo_revision = revision_cobros.periodo_correccion(cuenta, periodo, reconstruir=True)
+        revision_cobros.calculo_anterior(cuenta, periodo_revision)
+        partida.monto, partida.periodo = monto, periodo_revision
+        partida.periodo_mensual = periodo
+        partida.fecha = _cobro_fecha(request.POST.get("fecha"), partida.fecha)
+        partida.descripcion = request.POST.get("descripcion", "").strip() or partida.descripcion
+        partida.decision, partida.conciliar_con = "PENDIENTE", None
+        partida.save()
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+        return _volver_cuenta_cobro(cuenta, periodo, editar_partida=partida.pk)
+    messages.success(request, "Registro actualizado. El total y el texto provisional del mes se recalcularon.")
     return _volver_cuenta_cobro(cuenta, periodo)
 
 
@@ -812,16 +957,19 @@ def registrar_abono_cuenta_por_cobrar(request):
     detalle_id = request.POST.get("detalle_id")
     if detalle_id:
         detalle = get_object_or_404(DetalleCuentaPorCobrar, pk=detalle_id, cuenta=cuenta)
-    abono = AbonoCuentaPorCobrar.objects.create(
-        cuenta=cuenta,
-        detalle=detalle,
-        fecha=_cobro_fecha(request.POST.get("fecha"), timezone.localdate()),
-        monto=monto,
-        descripcion=request.POST.get("descripcion", "").strip(),
-    )
-    destino = detalle.descripcion if detalle else "la cuenta completa"
-    messages.success(request, f"Abono de {abono.monto} {cuenta.moneda} registrado para {destino}.")
-    return _volver_cuenta_cobro(cuenta)
+    periodo = _cobro_periodo(request.POST.get("periodo"), primer_dia_mes(timezone.localdate()))
+    try:
+        revision_cobros.proponer_partida(
+            cuenta, "ABONO", periodo=periodo, detalle=detalle,
+            fecha=_cobro_fecha(request.POST.get("fecha"), timezone.localdate()), monto=monto,
+            descripcion=request.POST.get("descripcion", "").strip(),
+            registrada_por_usuario=True,
+        )
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+    else:
+        messages.success(request, "Abono guardado en la vista mensual provisional. El saldo patrimonial se actualizará al confirmar.")
+    return _volver_cuenta_cobro(cuenta, periodo)
 
 
 @require_http_methods(["POST"])
@@ -833,10 +981,14 @@ def borrar_abono_cuenta_por_cobrar(request, pk):
         cuenta__user=request.user,
     )
     cuenta = abono.cuenta
-    monto = abono.monto
-    abono.delete()
-    messages.success(request, f"Abono de {monto} {cuenta.moneda} quitado correctamente.")
-    return _volver_cuenta_cobro(cuenta)
+    periodo = _cobro_periodo(request.POST.get("periodo"), primer_dia_mes(timezone.localdate()))
+    try:
+        revision_cobros.proponer_partida(cuenta, "RETIRAR_ABONO", periodo=periodo, abono=abono, registrada_por_usuario=True)
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+    else:
+        messages.success(request, "Retiro propuesto. Confirma el ajuste para actualizar el saldo; el registro se conservará.")
+    return _volver_cuenta_cobro(cuenta, periodo)
 
 
 @require_http_methods(["POST"])
@@ -850,37 +1002,119 @@ def alternar_cuenta_por_cobrar(request, pk):
     return _volver_cuenta_cobro(cuenta)
 
 
-@require_http_methods(["POST"])
+@require_http_methods(["GET", "POST"])
 @login_required
 def renovar_cuenta_por_cobrar(request, pk):
+    """Reúne las fuentes asignadas y ofrece documentos para completar la revisión."""
+    cuenta = get_object_or_404(CuentaPorCobrar, pk=pk, user=request.user)
+    datos = request.POST if request.method == "POST" else request.GET
+    periodo = _cobro_periodo(datos.get("periodo"), primer_dia_mes(timezone.localdate()))
+    if not cuenta.activo:
+        messages.error(request, "Reactiva la cuenta antes de preparar una propuesta.")
+        return _volver_cuenta_cobro(cuenta, periodo)
+    try:
+        anterior = revision_cobros.calculo_anterior(cuenta, periodo, datos.get("referencia_id"))
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+        return _volver_cuenta_cobro(cuenta, periodo)
+    if request.method == "POST" and request.POST.get("accion") == "importar":
+        from banca.services.estados_cuenta import importar_estado_cuenta
+        from banca.services.fuentes_externas import importar_archivo_externo
+        archivos = [("banco", f) for f in request.FILES.getlist("estados")]
+        archivos += [("neat", f) for f in request.FILES.getlist("neat")]
+        if not archivos:
+            messages.error(request, "Selecciona un estado de cuenta, una cartola o un reporte NeatPagos.")
+        for fuente, archivo in archivos:
+            try:
+                if archivo.size > 15 * 1024 * 1024:
+                    raise ValueError("Supera el límite de 15 MB.")
+                if fuente == "banco":
+                    if not archivo.name.lower().endswith(".pdf"):
+                        raise ValueError("Los estados de cuenta deben ser PDF.")
+                    registro = importar_estado_cuenta(request.user, archivo, nombre_archivo=archivo.name)
+                else:
+                    registro, _ = importar_archivo_externo(request.user, "neat", archivo)
+                if registro.estado != "PROCESADO":
+                    raise ValueError(registro.mensaje)
+            except Exception as error:
+                messages.error(request, f"{archivo.name}: {error}")
+            else:
+                messages.success(request, f"{archivo.name}: datos disponibles para revisar; el saldo se conserva.")
+    resumen = preparacion_cobros.resumen_preparacion(cuenta, periodo, anterior)
+    if request.method == "POST" and request.POST.get("accion") != "importar":
+        try:
+            revision_cobros.preparar_calculo(cuenta, periodo, datos.get("referencia_id"),
+                                            trasladar_ids=request.POST.getlist("trasladar_ids"),
+                                            incluir_registros_guardados=request.POST.get("incluir_registros_guardados") == "1")
+        except ValidationError as error:
+            messages.error(request, " ".join(error.messages))
+        else:
+            messages.success(request, "Borrador preparado con los movimientos asignados y las sugerencias disponibles. Elige qué aplicar, vincular como ya incluido o ignorar antes de confirmar.")
+            return _volver_cuenta_cobro(cuenta, periodo)
+    return render(request, "preparar_cobro.html", {
+        "cuenta": cuenta, "periodo_cobro": periodo, "periodo_actual_cobro": f"{periodo:%Y-%m}",
+        "anterior": anterior, "preparacion": resumen,
+        "referencia_seleccionada": datos.get("referencia_id") or (str(anterior.pk) if anterior else ""),
+        "referencias": cuenta.calculos.filter(estado="REFERENCIA", periodo__lte=periodo),
+    })
+
+
+@require_http_methods(["POST"])
+@login_required
+def guardar_revision_cobro(request, pk):
+    calculo = get_object_or_404(CalculoCuentaPorCobrar, pk=pk, cuenta__user=request.user, estado="BORRADOR")
+    decisiones = {}
+    for partida in calculo.cuenta.partidas_revision.filter(resuelta_en__isnull=True, periodo__lte=calculo.periodo):
+        campo = f"decision_{partida.pk}"
+        if campo in request.POST:
+            decisiones[str(partida.pk)] = {
+                "decision": request.POST[campo], "conciliar_con": request.POST.get(f"conciliar_{partida.pk}"),
+                "motivo": request.POST.get(f"motivo_{partida.pk}", "").strip(),
+                "periodo": _cobro_periodo(request.POST.get(f"periodo_{partida.pk}"), calculo.periodo),
+            }
+    try:
+        revision_cobros.guardar_decisiones(calculo, decisiones)
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+    else:
+        messages.success(request, "Decisiones guardadas. Revisa el resultado antes de confirmar.")
+    return _volver_cuenta_cobro(calculo.cuenta, calculo.periodo)
+
+
+@require_http_methods(["POST"])
+@login_required
+def confirmar_revision_cobro(request, pk):
+    calculo = get_object_or_404(CalculoCuentaPorCobrar, pk=pk, cuenta__user=request.user)
+    try:
+        revision_cobros.confirmar_calculo(calculo, request.POST.get("huella", ""))
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+    else:
+        messages.success(request, "Cálculo confirmado. El saldo y el texto se actualizaron; las versiones anteriores se conservan.")
+    return _volver_cuenta_cobro(calculo.cuenta, calculo.periodo)
+
+
+@require_http_methods(["POST"])
+@login_required
+def agregar_ajuste_cobro(request, pk):
     cuenta = get_object_or_404(CuentaPorCobrar, pk=pk, user=request.user)
     periodo = _cobro_periodo(request.POST.get("periodo"), primer_dia_mes(timezone.localdate()))
-    if request.POST.get("confirmar") != "1":
-        propuesta_url = (
-            f"{reverse('cuentas_por_cobrar')}?periodo={periodo:%Y-%m}"
-            f"&propuesta={cuenta.pk}#cuenta-{cuenta.pk}"
+    try:
+        monto = Decimal(request.POST.get("monto", "0"))
+        if not monto.is_finite():
+            raise InvalidOperation
+        revision_cobros.proponer_partida(
+            cuenta, "AJUSTE", periodo=periodo, monto=monto,
+            fecha=_cobro_fecha(request.POST.get("fecha"), timezone.localdate()),
+            descripcion=request.POST.get("descripcion", "Ajuste").strip(),
+            motivo=request.POST.get("motivo", "").strip(),
+            registrada_por_usuario=True,
         )
-        return redirect(propuesta_url)
-
-    from patrimonio.services.cuentas_por_cobrar import renovar_cuenta
-
-    resultado = renovar_cuenta(cuenta, periodo)
-    if resultado["creados"]:
-        messages.success(
-            request,
-            f"Se agregaron {resultado['creados']} línea(s) detectada(s) para {periodo:%m/%Y}.",
-        )
+    except (ValidationError, InvalidOperation) as error:
+        messages.error(request, " ".join(error.messages) if isinstance(error, ValidationError) else "El ajuste requiere un importe válido.")
     else:
-        messages.info(request, f"No se encontró una transacción similar nueva para {periodo:%m/%Y}.")
-    if resultado["no_encontrados"]:
-        messages.info(
-            request,
-            "Puedes cargar manualmente las líneas sin coincidencia: "
-            + ", ".join(resultado["no_encontrados"][:3]),
-        )
-    return redirect(
-        f"{reverse('cuentas_por_cobrar')}?periodo={periodo:%Y-%m}#cuenta-{cuenta.pk}"
-    )
+        messages.success(request, "Ajuste pendiente de revisión en el mes abierto.")
+    return _volver_cuenta_cobro(cuenta, periodo)
 
 
 @login_required

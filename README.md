@@ -694,7 +694,11 @@ concilia con el cargo o abono existente y nunca crea un segundo gasto o ingreso.
   incorpora al déficit y el dividendo hipotecario continúa como salida del mes.
 - **NeatPagos:** importa historial tabular, correos o comprobantes PDF con texto; conserva ID, estado, destinatario, tarjeta,
   principal, comisión, total cargado y comprobante. Admite pagos divididos conciliados con un
-  solo cargo bancario y transiciones de estado idempotentes.
+  solo cargo bancario y transiciones de estado idempotentes. Si el reporte no trae ID de pago,
+  se usa una huella que combina `dia_de_pago` (incluida la hora), monto, cuenta/servicio y,
+  cuando existen, destinatario y destino; la hora sola no identifica un pago. La búsqueda de
+  cuentas por cobrar señala filas coincidentes entre importaciones y conserva separadas las
+  filas repetidas dentro de un mismo CSV. Los registros originales se conservan para revisión.
 - **Operación:** siempre existe un botón manual por fuente y uno global. La automatización es
   opcional y configurable por usuario: Neat usa por defecto el día 1; Houm los días 2–10 y se
   detiene al capturar todas las propiedades. CAPTCHA, MFA, sesión vencida o tres errores
@@ -709,51 +713,155 @@ contrato propuesto para solicitar una API oficial.
 ## 💸 Cuentas por cobrar
 
 Desde **Activos → Cuentas por cobrar** se pueden crear cuentas con nombre y moneda,
-agregar varias líneas de cobro y describir cada una. Una línea puede asociarse a un
-movimiento positivo de una tarjeta de crédito, a un evento de **NeatPagos** o registrarse
-manualmente. Las transacciones se encuentran escribiendo comercio, fecha o monto en un
-buscador. Los abonos se ingresan por línea o como abono general y el saldo restante se actualiza
-automáticamente. Cada abono puede quitarse desde el historial si fue ingresado por error, con
-recalculo inmediato del saldo. Al asociar una transacción, el monto se toma automáticamente y
-solo se solicita cuando el cargo es manual.
+agregar cargos y registrar abonos por línea o generales. **Crear cuenta** y **Gestionar**
+comienzan colapsados. El saldo vigente, el detalle del mes, el historial mensual y el texto
+para copiar permanecen disponibles. **Editar** y los errores de validación abren el panel
+correspondiente. Las transacciones se encuentran por comercio, fecha o monto; al elegir
+una fuente bancaria o **NeatPagos**, se usa su importe y fecha originales.
 
-La misma asociación puede hacerse directamente en **Banca → Movimientos**: un cargo
-normal se vincula completo y un cargo NeatPagos conciliado ofrece una selección separada
-para cada destinatario. Una fuente sólo puede quedar asignada a una cuenta; al cambiarla,
-la obligación y sus abonos se trasladan juntos.
+**Preparar propuesta** busca primero los movimientos **asignados a esa cuenta** desde
+Banca y los registros manuales. La asociación identifica a quién cobrar; la categoría
+temática puede seguir describiendo el gasto. Se muestran las partidas pendientes, los
+movimientos anteriores, los ya contabilizados y los ignorados anteriormente. Las
+asociaciones pendientes también se ven en Banca, antes de confirmar el cálculo.
+Al asociar un abono bancario desde **Movimientos**, la pantalla conserva sus filtros y
+muestra un enlace directo a la partida de revisión. La asociación repetida conserva la
+decisión ya guardada. Al recorrer un mes, los pares con igual fecha e importe entre abono
+manual y transferencia se destacan con un acceso a conciliarlos; se mantienen separados
+hasta que confirmes la revisión.
 
-El cargo bancario y su desglose Neat son representaciones del mismo pago. Cuando una de
-ellas ya está asignada, se rechaza asignar la otra, incluso a otra cuenta por cobrar.
-Para pasar del cargo completo al desglose, quita primero la asociación del cargo y
-asigna cada destinatario. Distintos destinatarios pueden seguir siendo obligaciones
-separadas; no se impide repartir un cargo entre ellos.
+La revisión ofrece cargar estados de tarjeta, cartolas y reportes o comprobantes
+NeatPagos como **fuentes complementarias opcionales**. Se reutilizan los importadores
+y archivos existentes. La cobertura se verifica por usuario, moneda, producto y mes
+de cierre; sólo los productos de las fuentes relevantes orientan la carga. Una tarjeta
+usada en meses anteriores no obliga a subir su cartola cada mes. Los documentos
+ausentes no bloquean preparar con movimientos ya asignados; las advertencias consultan
+la evidencia actual y no mantienen una lista de faltantes obsoleta del borrador.
+
+El historial sugiere conceptos, contrapartes y fuentes recurrentes, y compara el último
+importe con el nuevo importe respaldado. Un valor antiguo sin fuente del mes permanece
+como referencia: no se copia automáticamente como un nuevo cargo. Se proponen para
+revisión las transferencias de contrapartes ya vinculadas y las coincidencias exactas
+con abonos manuales del cálculo anterior; ninguna coincidencia se aprueba por sí sola.
+
+Cada mes muestra su propio **saldo anterior + cargos − abonos + ajustes = total
+pendiente**, el desglose y el **Texto para cobrar** correspondiente. Guardar un cargo,
+una edición o un abono recalcula inmediatamente la **vista mensual provisional**;
+el siguiente mes toma ese saldo, incluso mientras reconstruyes datos pasados sin
+confirmarlos. La reconstrucción parte de los registros de cada mes; las referencias
+opcionales y los cálculos ya publicados se conservan en el historial. Los movimientos
+futuros no modifican un mes anterior. El abono conserva
+su fecha bancaria y un mes de aplicación independiente. **Mes anterior** y **Mes
+siguiente** permiten recorrer la reconstrucción; consultar no crea ni confirma cálculos.
+
+Para publicar el saldo en Activos se mantiene **Preparar propuesta**, **Guardar
+decisiones y recalcular** y **Confirmar cálculo revisado**. Hasta preparar, el estado
+**Pendiente de preparar** se refiere a la propuesta de confirmación; la vista mensual
+y su texto ya están disponibles. El acceso desde esta vista permite revisar los registros
+desde cero antes de la primera confirmación. Al preparar se incorporan los registros
+manuales guardados; las fuentes bancarias, sugerencias automáticas y posibles duplicados
+requieren revisión. Sólo confirmar cambia el patrimonio y guarda el texto confirmado.
+Después de una importación hay un acceso a **Revisar cuentas por cobrar**.
+
+Al editar una línea, el nuevo importe aparece como **Cambio pendiente** junto al
+importe registrado y vuelve a cargarse al abrir **Editar**. El acceso **Revisar en
+mes/año** lleva a la propuesta correspondiente. También se pueden editar los cargos
+y abonos manuales pendientes, sin duplicarlos. Las ediciones, cargos y abonos de agosto
+recalculan agosto y el arrastre a septiembre, aunque exista una referencia o un cálculo
+confirmado posterior. Se distinguen el mes de reconstrucción y el de revisión patrimonial:
+si ya hay un saldo confirmado posterior, la diferencia se confirma desde ese mes vigente.
+Confirmarla conserva el mes original de los registros reconstruidos.
+Varias confirmaciones del mismo mes conservan sus versiones y el texto mensual completo.
+El historial mantiene las fotos anteriores; la vista provisional identifica los registros
+que todavía no se han confirmado. Las migraciones conservan importes, relaciones y
+valoración existentes; sólo asignan los meses de los abonos y recuperan como entradas
+explícitas las propuestas manuales pendientes.
+
+Los cálculos tienen estados **Referencia sin validar**, **Borrador** y **Confirmado**.
+Cada confirmación conserva una versión inmutable con importes, desglose, decisiones,
+fecha de confirmación y texto para cobrar. Una nueva revisión del mismo mes conserva
+la versión anterior. El punto de partida es el último saldo confirmado y sólo se proponen
+efectos todavía no contabilizados; antes de la primera confirmación se puede escoger una
+referencia histórica opcional. Por defecto se conserva el saldo registrado, sin dar
+prioridad a un ejemplo aportado. Antes de la primera confirmación también se puede
+elegir **Sin saldo inicial** para revisar las partidas desde cero. Esa selección requiere
+confirmar el resultado; nunca reinicia un saldo ya confirmado. La migración congela el
+saldo vigente y preserva las relaciones y la valoración anteriores como registros sin validar.
+
+Las referencias aportadas se conservan para consulta y selección; no obligan a reconstruir
+su mes antes de preparar uno posterior. Al elegir una referencia se muestran sus importes
+conservados, fecha original, mes aplicado y evidencia de Neat, transferencias y cartolas.
+Los posibles duplicados y cargos asociados posteriormente se revisan por separado.
+Una fuente Neat de otro período se señala con su fecha real; si hay una única
+coincidencia del período aplicado, se sugiere corregir la vinculación usando ese importe
+como una decisión pendiente. Las fuentes ambiguas requieren selección manual.
+Para preparar esa reconstrucción por consola, sin confirmar cobros:
+
+```bash
+python manage.py reconstruir_cobro --user-id 123 --cuenta-id 456 --periodo 2026-09
+python manage.py reconstruir_cobro --user-id 123 --cuenta-id 456 --periodo 2026-09 --apply
+```
+
+El comando simula por defecto; `--apply` conserva un borrador y decisiones pendientes.
+Los saldos publicados, referencias y cálculos confirmados permanecen conservados.
+
+Cada partida puede **aplicarse**, **vincularse como respaldo ya incluido**, **conciliarse
+con un abono existente** o **excluirse**. La coincidencia de fecha, moneda e importe
+entre un abono manual y una transferencia sugiere conciliación, pero nunca la aprueba.
+**Ignorar · pasado o no corresponde** conserva la decisión y evita volver a proponer
+automáticamente esa fuente. Una fuente pendiente no puede asignarse a dos cuentas.
+Al confirmarla se conserva un solo pago vigente y se mantienen ambos registros cuando
+ya existían. Si el saldo anterior ya descontaba ambos, la corrección aparece como ajuste;
+si sólo incluía el manual, conciliar tiene efecto cero. Los reportes de caja cuentan una
+sola recuperación y el consumo no la interpreta como ingreso económico.
+
+Las transferencias antiguas requieren revisión: **respaldo** tiene efecto cero sobre la
+deuda; aplicarlas explícitamente propone un ajuste en el mes abierto. Las correcciones y
+retiros conservan el registro original y su fecha, sin reescribir meses cerrados. Se puede
+corregir el mes de aplicación y registrar ajustes con motivo. La fecha de edición o
+importación nunca determina por sí sola el descuento. Al asociar desde Banca se sugiere
+el período del movimiento o de su facturación, respetando el último mes confirmado.
+Si una asociación quedó en un mes posterior, se puede seleccionar explícitamente para
+revisarla en el mes elegido; consultar la pantalla no la traslada. Las partidas sin aprobar
+permanecen pendientes. El borrador muestra el exceso de abonos y no permite confirmar un saldo negativo.
+
+El cargo bancario y su desglose Neat son representaciones del mismo pago. Un pago Neat
+adelantado puede corresponder a septiembre aunque haya ocurrido a finales de agosto y
+recién figure en la cartola de septiembre. Al llegar la cartola se propone **respaldo**
+de las obligaciones Neat ya incluidas, con efecto cero sobre la deuda y sin reemplazar
+el desglose original. Esto también cubre un cargo bancario que agrupa varios pagos Neat.
+Se rechaza aplicarlo como otro cargo, incluso a otra cuenta por cobrar. La fecha original,
+el período del cobro y el cierre de la cartola se muestran por separado. Un pago ya
+asignado al final de un mes tampoco se reutiliza para el siguiente por caer en su ventana.
+Distintos destinatarios pueden seguir siendo obligaciones separadas. La confirmación es
+atómica e idempotente, impide reutilizar fuentes y rechaza propuestas cuyos datos hayan
+cambiado; en ese caso hay que actualizar la propuesta y revisar las decisiones.
 
 Si el cargo ya ocurrió pero todavía no aparece en un estado importado, la línea se
 registra como **Provisional · falta estado** con el período, fecha y monto conocidos. No
 se reutiliza el movimiento facturado del mes anterior. Cuando llega el nuevo PDF, se
-edita esa misma línea y se reemplaza la fuente provisional por el movimiento real; el
-saldo del activo se actualiza y nunca se crea una segunda obligación.
+propone editar esa misma línea para vincular la fuente real. La diferencia se aplica
+únicamente al confirmar y nunca crea una segunda obligación.
 
 Cada cuenta se refleja como un activo de tipo **Cuenta por cobrar**, por lo que el saldo
-pendiente entra en Dashboard, Patrimonio y Activos; no se convierte en gasto adicional ni
-duplica el movimiento bancario original. La tabla muestra solo el mes seleccionado, mientras
-el saldo y el texto de cobro siguen acumulando los meses anteriores que aún estén pendientes.
-El botón **Proponer mes** busca en el mes elegido una transacción futura de la misma tarjeta o
-contraparte Neat con glosa similar y toma su nuevo monto detectado. La propuesta se muestra
-antes de guardar y requiere confirmación explícita; si no hay una coincidencia segura, la línea
-queda para registro manual. Así, por ejemplo, el arriendo NeatPagos de septiembre puede
-proponer el evento distinto de octubre, sin reutilizar la transacción anterior.
+confirmado entra en Dashboard, Patrimonio y Activos sin duplicar el movimiento original.
+Preparar reutiliza la búsqueda de cargos recurrentes de la misma tarjeta o contraparte
+Neat y la ventana de hasta 10 días anteriores al mes. Las coincidencias inciertas requieren
+selección o registro manual. CLP y USD permanecen separados; cuentas, fuentes, períodos,
+decisiones y abonos están aislados por usuario.
 
-La pantalla genera un detalle copiable como texto, con las líneas pendientes del mes seleccionado,
-una única línea **Saldo pendiente anterior** para la deuda de meses previos, abonos generales y
-total, sin fechas para que el mensaje sea más limpio y listo para pegar en WhatsApp. Desde **Editar** se puede reemplazar un cargo manual por
-una transacción de tarjeta o NeatPagos; el monto, fecha, origen y clave de renovación se toman
-de la fuente elegida. **Ver mes** permite volver a agosto u otro período para corregir sus líneas;
-el buscador ofrece fuentes del mes visible y de hasta 10 días anteriores —para cargos automáticos
-antes del día 1— y avisa si una transacción ya está asociada a otra línea. CLP y USD se mantienen
-separados y todas las cuentas, fuentes y abonos están aislados por
-usuario. Los reportes CSV de Neat conservan el día de pago y el día de
-depósito, evitando que transacciones históricas aparezcan como si fueran de hoy.
+Para incorporar un cálculo aportado como referencia histórica, sin restaurarlo ni confirmarlo:
+
+```bash
+python manage.py registrar_referencia_cobro --user-id 123 --cuenta-id 456 --archivo referencia.json
+python manage.py registrar_referencia_cobro --user-id 123 --cuenta-id 456 --archivo referencia.json --apply
+```
+
+El JSON incluye `periodo` y `fecha` en formato ISO, `saldo_anterior`, `saldo_final`,
+`detalle_ids`, `abono_ids` y `texto`. `cargos` permite separar un saldo arrastrado que
+ya estaba registrado como línea. El comando valida cuenta, usuario y total, simula por
+defecto y conserva las referencias repetidas sin duplicarlas. La primera revisión resuelve
+las diferencias frente a los registros actuales; la referencia nunca cambia por una importación.
 
 Un abono bancario vinculado a una cuenta USD conserva el importe original en USD,
 aunque aún no exista conversión CLP. Para revisar abonos anteriores que pudieran haber
@@ -767,8 +875,9 @@ python manage.py corregir_abonos_usd --user-id 123 --apply
 
 La reparación solo cambia los casos cuyo abono coincide exactamente con el equivalente
 CLP y supera el importe original USD de su movimiento entrante. Conserva los abonos
-parciales, comprueba que cuenta y movimiento pertenezcan al mismo usuario y recalcula
-el activo por cobrar. Los demás importes requieren revisión individual.
+parciales y comprueba que cuenta y movimiento pertenezcan al mismo usuario. Un cálculo
+histórico conserva su saldo y texto; si ya incluía el abono reparado, registra la diferencia
+como ajuste en la revisión del mes abierto. Los demás importes requieren revisión individual.
 
 ## 📱 POC Apple Pay vía Atajo
 

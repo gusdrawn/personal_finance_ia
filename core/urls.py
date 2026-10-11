@@ -29,8 +29,12 @@ urlpatterns = [
     path('cuentas-por-cobrar/detalle/agregar/', views.agregar_detalle_cuenta_por_cobrar, name='agregar_detalle_cuenta_por_cobrar'),
     path('cuentas-por-cobrar/detalle/<int:pk>/editar/', views.editar_detalle_cuenta_por_cobrar, name='editar_detalle_cuenta_por_cobrar'),
     path('cuentas-por-cobrar/abono/agregar/', views.registrar_abono_cuenta_por_cobrar, name='registrar_abono_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/pendiente/<int:pk>/editar/', views.editar_registro_pendiente_cobro, name='editar_registro_pendiente_cobro'),
     path('cuentas-por-cobrar/abono/<int:pk>/borrar/', views.borrar_abono_cuenta_por_cobrar, name='borrar_abono_cuenta_por_cobrar'),
     path('cuentas-por-cobrar/<int:pk>/renovar/', views.renovar_cuenta_por_cobrar, name='renovar_cuenta_por_cobrar'),
+    path('cuentas-por-cobrar/calculo/<int:pk>/revisar/', views.guardar_revision_cobro, name='guardar_revision_cobro'),
+    path('cuentas-por-cobrar/calculo/<int:pk>/confirmar/', views.confirmar_revision_cobro, name='confirmar_revision_cobro'),
+    path('cuentas-por-cobrar/<int:pk>/ajuste/', views.agregar_ajuste_cobro, name='agregar_ajuste_cobro'),
     path('cuentas-por-cobrar/<int:pk>/alternar/', views.alternar_cuenta_por_cobrar, name='alternar_cuenta_por_cobrar'),
     
     # Pasivos CRUD

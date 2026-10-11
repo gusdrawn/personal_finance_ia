@@ -1,0 +1,14 @@
+{% load l10n %}
+<form method="post" action="{% url 'editar_registro_pendiente_cobro' cuenta.partida_edicion.id %}" class="mt-5 rounded-xl bg-amber-500/5 border border-amber-500/20 p-5 space-y-3">
+    {% csrf_token %}
+    <h3 class="font-bold text-white">Editar {{ cuenta.partida_edicion.get_tipo_display|lower }} pendiente</h3>
+    <p class="text-xs text-slate-400">Guardar recalcula la vista mensual y los saldos siguientes. El patrimonio se actualiza al confirmar.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div><label class="field-label">Mes de aplicación</label><input type="month" name="periodo" value="{{ cuenta.partida_edicion.periodo_vista|date:'Y-m' }}" class="field-input" required></div>
+        <div><label class="field-label">Fecha del movimiento</label><input type="date" name="fecha" value="{{ cuenta.partida_edicion.fecha|date:'Y-m-d' }}" class="field-input" required></div>
+        <div><label class="field-label">Monto ({{ cuenta.moneda }})</label><input type="number" name="monto" value="{{ cuenta.partida_edicion.monto|unlocalize }}" min="0.01" step="0.01" class="field-input" required></div>
+    </div>
+    <div><label class="field-label">Descripción</label><input name="descripcion" value="{{ cuenta.partida_edicion.descripcion }}" maxlength="255" class="field-input" required></div>
+    <button class="px-4 py-2.5 rounded-lg bg-amber-500 text-white text-sm font-bold">Guardar cambio del mes</button>
+    <a class="ml-3 text-sm text-slate-400" href="?periodo={{ periodo_actual_cobro }}&gestionar={{ cuenta.id }}#cuenta-{{ cuenta.id }}">Cancelar</a>
+</form>

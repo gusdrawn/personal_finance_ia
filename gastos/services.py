@@ -145,7 +145,7 @@ def _lineas_movimiento(movimiento, *, periodo_caja=None, desglosar_neat=True):
     """Desglosa Neat cuando existe; el cargo padre deja de asignarse a categorías."""
     banco = movimiento.producto.banco
     comprobante = next((item for item in movimiento.comprobantes_pago.all() if item.user_id == movimiento.user_id and item.tipo_documento == "PAGO_ASEO" and item.estado == "PROCESADO"), None)
-    if comprobante and movimiento.naturaleza == "OPERACIONAL" and not movimiento.prestamo_id and not movimiento.detalles_cuentas_por_cobrar.exists():
+    if comprobante and movimiento.naturaleza == "OPERACIONAL" and not movimiento.prestamo_id and not movimiento.detalles_cuentas_por_cobrar.filter(vigente=True).exists():
         asignaciones = [item for item in comprobante.asignaciones_pendientes.all() if item.ocurrencia.regla.user_id == movimiento.user_id and item.ocurrencia.estado == "COMPLETADA"]
         lineas, asignado = [], ZERO
         for asignacion in asignaciones:
@@ -171,7 +171,7 @@ def _lineas_movimiento(movimiento, *, periodo_caja=None, desglosar_neat=True):
     eventos_neat = _neat_para_movimiento(movimiento) if movimiento.es_cargo else []
     movimiento_es_activo = bool(
         movimiento.prestamo_id
-        or movimiento.detalles_cuentas_por_cobrar.exists()
+        or movimiento.detalles_cuentas_por_cobrar.filter(vigente=True).exists()
     )
     if eventos_neat and desglosar_neat:
         lineas = []
@@ -180,7 +180,7 @@ def _lineas_movimiento(movimiento, *, periodo_caja=None, desglosar_neat=True):
             pago = getattr(evento, "pago_neat", None)
             monto = evento.monto_neto or evento.monto_bruto
             asignado += monto
-            evento_es_activo = movimiento_es_activo or evento.detalles_cuentas_por_cobrar.exists()
+            evento_es_activo = movimiento_es_activo or evento.detalles_cuentas_por_cobrar.filter(vigente=True).exists()
             lineas.append(
                 _linea(
                     key=f"neat:{evento.pk}",
@@ -381,7 +381,7 @@ def _lineas_caja(user, desde, hasta):
             if estado.producto.tipo == "CUENTA" and not (desde <= movimiento.fecha < siguiente_mes(hasta)):
                 continue
             vistos.add(movimiento.pk)
-            if estado.producto.tipo == "CUENTA" and movimiento.abonos_cuentas_por_cobrar.exists():
+            if estado.producto.tipo == "CUENTA" and movimiento.abonos_cuentas_por_cobrar.filter(vigente=True).exists():
                 continue
             detalles.extend(_lineas_movimiento(
                 movimiento,
@@ -447,7 +447,7 @@ def _lineas_caja(user, desde, hasta):
     for movimiento in cuentas_sin_estado:
         if movimiento.naturaleza != "OPERACIONAL" and not _entrada_identificada(movimiento, user):
             continue
-        if not movimiento.abonos_cuentas_por_cobrar.exists():
+        if not movimiento.abonos_cuentas_por_cobrar.filter(vigente=True).exists():
             lineas.extend(_lineas_movimiento(movimiento, desglosar_neat=False))
 
     manuales = (
@@ -494,6 +494,7 @@ def _lineas_caja(user, desde, hasta):
     abonos_cuentas = (
         AbonoCuentaPorCobrar.objects.filter(
             cuenta__user=user,
+            vigente=True,
             fecha__gte=desde,
             fecha__lt=siguiente_mes(hasta),
         )
@@ -598,9 +599,9 @@ def _lineas_consumo(user, desde, hasta):
         )
     )
     for movimiento in movimientos:
-        if movimiento.prestamo_id or movimiento.detalles_cuentas_por_cobrar.exists():
+        if movimiento.prestamo_id or movimiento.detalles_cuentas_por_cobrar.filter(vigente=True).exists():
             continue
-        if movimiento.abonos_cuentas_por_cobrar.exists():
+        if movimiento.abonos_cuentas_por_cobrar.filter(vigente=True).exists():
             continue
         if movimiento.naturaleza != "OPERACIONAL":
             continue

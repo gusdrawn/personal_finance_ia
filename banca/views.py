@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
 import json
+from urllib.parse import urlsplit
 
 from django.contrib import messages
 from django.db import transaction
@@ -14,6 +15,9 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.core.exceptions import ValidationError
+from django.utils.html import format_html
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.csrf import csrf_exempt
@@ -76,6 +80,22 @@ def _movimientos_pendientes_de_revision(user):
 def _descripcion_pago_neat(evento):
     pago = getattr(evento, "pago_neat", None)
     return (pago.destinatario or pago.cuenta or "NeatPagos") if pago else "NeatPagos"
+
+
+def _volver_a_movimientos(request):
+    """Regresa a la bandeja de movimientos sin aceptar destinos externos."""
+    destino = request.POST.get("volver") or request.META.get("HTTP_REFERER", "")
+    permitidos = {reverse("gastos_movimientos"), reverse("banca_movimientos")}
+    partes = urlsplit(destino)
+    if (partes.path not in permitidos or not url_has_allowed_host_and_scheme(
+            destino, allowed_hosts={request.get_host()}, require_https=request.is_secure())):
+        destino = f"{reverse('gastos_movimientos')}?pendientes=1"
+    return redirect(destino)
+
+
+def _url_revision_partida(cuenta, partida):
+    return (f"{reverse('cuentas_por_cobrar')}?gestionar={cuenta.pk}"
+            f"&periodo={partida.periodo:%Y-%m}#partida-{partida.pk}")
 
 
 @login_required
@@ -336,21 +356,33 @@ def banca_movimientos(request):
         "categoria", "producto", "producto__banco", "prestamo"
     ).prefetch_related(
         "detalles_cuentas_por_cobrar__cuenta",
+        "abonos_cuentas_por_cobrar__cuenta",
+        "revisiones_cobro__cuenta",
         "conciliaciones_externas__evento__categoria",
         "conciliaciones_externas__evento__pago_neat",
         "conciliaciones_externas__evento__detalles_cuentas_por_cobrar__cuenta",
+        "conciliaciones_externas__evento__revisiones_cobro__cuenta",
     )
 
     total_movimientos = qs.count()
     movimientos = list(qs[:1] if pendientes == "1" else qs[:300])
     for movimiento in movimientos:
+        propuestas = [p for p in movimiento.revisiones_cobro.all()
+                      if p.resuelta_en_id is None and p.decision != "EXCLUIR"
+                      and p.cuenta.user_id == user.id and p.tipo in {"CARGO", "ABONO"}]
+        movimiento.asignacion_pendiente = propuestas[-1] if propuestas else None
         movimiento.cuenta_cobro_id = next(
             (
                 detalle.cuenta_id
                 for detalle in movimiento.detalles_cuentas_por_cobrar.all()
+                if detalle.vigente
             ),
             None,
         )
+        if movimiento.asignacion_pendiente:
+            movimiento.cuenta_cobro_id = movimiento.asignacion_pendiente.cuenta_id
+        elif not movimiento.cuenta_cobro_id:
+            movimiento.cuenta_cobro_id = next((a.cuenta_id for a in movimiento.abonos_cuentas_por_cobrar.all() if a.vigente), None)
         movimiento.detalles_neat = [
             {
                 "descripcion": _descripcion_pago_neat(conciliacion.evento),
@@ -358,10 +390,13 @@ def banca_movimientos(request):
                 "monto": conciliacion.monto_asignado,
                 "estado": conciliacion.evento.estado,
                 "evento_id": conciliacion.evento_id,
-                "cuenta_cobro_id": next(
+                "cuenta_cobro_id": next((p.cuenta_id for p in conciliacion.evento.revisiones_cobro.all()
+                                         if p.resuelta_en_id is None and p.decision != "EXCLUIR"
+                                         and p.cuenta.user_id == user.id and p.tipo == "CARGO"), None) or next(
                     (
                         detalle.cuenta_id
                         for detalle in conciliacion.evento.detalles_cuentas_por_cobrar.all()
+                        if detalle.vigente
                     ),
                     None,
                 ),
@@ -968,26 +1003,42 @@ def banca_asignar_prestamo(request, pk):
 
 
 def _asignar_cuenta_por_cobrar(request, fuente):
-    from patrimonio.services.cuentas_por_cobrar import asignar_fuente_a_cuenta
+    from patrimonio.services.revision_cobros import proponer_partida
+    from patrimonio.models import DetalleCuentaPorCobrar
 
     cuenta_id = request.POST.get("cuenta_cobro")
     cuenta = None
+    partida = None
     if cuenta_id:
         cuenta = get_object_or_404(
             CuentaPorCobrar, pk=cuenta_id, user=request.user, activo=True
         )
     try:
-        detalle = asignar_fuente_a_cuenta(fuente, cuenta)
-    except ValueError as exc:
-        messages.error(request, str(exc))
-    else:
-        if detalle:
-            messages.success(
-                request,
-                f"Vinculado a «{detalle.cuenta.nombre}»: queda fuera del consumo y aumenta la cuenta por cobrar.",
-            )
+        if cuenta is not None:
+            partida = proponer_partida(cuenta, "CARGO", fuente=fuente, registrada_por_usuario=True)
         else:
-            messages.success(request, "Desvinculado de cuentas por cobrar; vuelve a tratarse como consumo.")
+            filtro = {"movimiento": fuente} if isinstance(fuente, MovimientoBancario) else {"evento_externo": fuente}
+            detalle = DetalleCuentaPorCobrar.objects.filter(cuenta__user=request.user, vigente=True, **filtro).first()
+            if detalle:
+                cuenta = detalle.cuenta
+                partida = proponer_partida(cuenta, "RETIRAR_CARGO", detalle=detalle, registrada_por_usuario=True)
+            else:
+                from patrimonio.models import PartidaRevisionCobro
+                partida = PartidaRevisionCobro.objects.filter(
+                    cuenta__user=request.user, resuelta_en__isnull=True, tipo="CARGO", **filtro,
+                ).first()
+                if partida:
+                    cuenta = partida.cuenta
+                    partida.decision = "EXCLUIR"
+                    partida.motivo = "Asignación retirada desde Banca"
+                    partida.save()
+    except ValidationError as exc:
+        messages.error(request, " ".join(exc.messages))
+    else:
+        messages.success(request, "Asociación pendiente de revisión; confirma el cálculo desde Gestionar.")
+    if cuenta:
+        mes = f"&periodo={partida.periodo:%Y-%m}" if partida else ""
+        return redirect(f"{reverse('cuentas_por_cobrar')}?gestionar={cuenta.pk}{mes}#cuenta-{cuenta.pk}")
     return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
 
 
@@ -1006,7 +1057,7 @@ def banca_asignar_abono_cuenta_cobrar(request, pk):
     movimiento = get_object_or_404(MovimientoBancario, pk=pk, user=request.user)
     if movimiento.es_cargo:
         messages.error(request, "Solo un abono entrante puede pagar una cuenta por cobrar.")
-        return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+        return _volver_a_movimientos(request)
 
     cuenta = get_object_or_404(
         CuentaPorCobrar,
@@ -1016,44 +1067,36 @@ def banca_asignar_abono_cuenta_cobrar(request, pk):
     )
     if movimiento.moneda != cuenta.moneda:
         messages.error(request, "La moneda del movimiento no coincide con la cuenta por cobrar.")
-        return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+        return _volver_a_movimientos(request)
 
     monto_abono = abs(movimiento.monto) if cuenta.moneda == "USD" else abs(movimiento.monto_clp)
     if monto_abono <= 0:
         messages.error(request, "El movimiento no tiene un importe original válido para registrar el abono.")
-        return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+        return _volver_a_movimientos(request)
 
-    from patrimonio.models import AbonoCuentaPorCobrar
+    from patrimonio.models import PartidaRevisionCobro
+    from patrimonio.services.revision_cobros import proponer_partida
 
-    abono, _ = AbonoCuentaPorCobrar.objects.update_or_create(
-        movimiento=movimiento,
-        defaults={
-            "cuenta": cuenta,
-            "fecha": movimiento.fecha,
-            "monto": monto_abono,
-            "descripcion": movimiento.descripcion,
-        },
-    )
-    movimiento.naturaleza = "TRANSFERENCIA"
-    movimiento.por_revisar = False
-    movimiento.naturaleza_es_manual = True
-    movimiento.categoria = None
-    movimiento.categoria_es_manual = False
-    movimiento.fuente_clasificacion = "PENDIENTE"
-    movimiento.confianza_ia = None
-    movimiento.clasificado_at = None
-    movimiento.save(
-        update_fields=[
-            "naturaleza", "por_revisar", "naturaleza_es_manual", "categoria",
-            "categoria_es_manual", "fuente_clasificacion", "confianza_ia",
-            "clasificado_at", "updated_at",
-        ]
-    )
-    messages.success(
-        request,
-        f"Abono de ${abono.monto:,.0f} vinculado a «{cuenta.nombre}»; no se contará como ingreso.",
-    )
-    return redirect(request.META.get("HTTP_REFERER", "banca_movimientos"))
+    partida = None
+    try:
+        partida = PartidaRevisionCobro.objects.filter(
+            cuenta=cuenta, movimiento=movimiento, tipo="ABONO", resuelta_en__isnull=True,
+        ).first()
+        ya_asociada = partida is not None
+        if partida is None:
+            partida = proponer_partida(cuenta, "ABONO", fuente=movimiento, registrada_por_usuario=True)
+    except ValidationError as error:
+        messages.error(request, " ".join(error.messages))
+    else:
+        estado = "ya estaba asociada" if ya_asociada else "quedó asociada"
+        messages.success(request, format_html(
+            "La transferencia del {} por {} {} a {}. "
+            "Sigue pendiente: no se descuenta hasta revisar y confirmar. "
+            '<a class="underline font-bold" href="{}">Revisar propuesta y conciliación →</a>',
+            movimiento.fecha.strftime("%d/%m/%Y"), cuenta.moneda + " " + str(monto_abono), estado,
+            cuenta.nombre, _url_revision_partida(cuenta, partida),
+        ))
+    return _volver_a_movimientos(request)
 
 
 @login_required

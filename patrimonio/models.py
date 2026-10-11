@@ -162,14 +162,20 @@ class CuentaPorCobrar(models.Model):
 
     @property
     def total_cargado(self):
-        return sum((detalle.monto for detalle in self.detalles.all()), Decimal("0"))
+        return sum((detalle.monto for detalle in self.detalles.all() if detalle.vigente), Decimal("0"))
 
     @property
     def total_abonado(self):
-        return sum((abono.monto for abono in self.abonos.all()), Decimal("0"))
+        return sum((abono.monto for abono in self.abonos.all() if abono.vigente), Decimal("0"))
 
     @property
     def saldo_pendiente(self):
+        confirmado = self.calculos.filter(estado="CONFIRMADO").order_by("-periodo", "-revision").first()
+        if confirmado is not None:
+            return confirmado.saldo_final
+        legado = self.calculos.filter(estado="REFERENCIA", referencia_usuario=False).first()
+        if legado is not None:
+            return legado.saldo_final
         return max(self.total_cargado - self.total_abonado, Decimal("0"))
 
     def sincronizar_activo(self):
@@ -252,6 +258,7 @@ class DetalleCuentaPorCobrar(models.Model):
         default=False,
         help_text="El cargo ya ocurrió, pero su fuente bancaria aún no fue importada.",
     )
+    vigente = models.BooleanField(default=True, help_text="Conserva las líneas retiradas para auditoría.")
     movimiento = models.ForeignKey(
         "banca.MovimientoBancario",
         null=True,
@@ -318,7 +325,7 @@ class DetalleCuentaPorCobrar(models.Model):
 
     @property
     def total_abonado(self):
-        return sum((abono.monto for abono in self.abonos.all()), Decimal("0"))
+        return sum((abono.monto for abono in self.abonos.all() if abono.vigente), Decimal("0"))
 
     @property
     def saldo_pendiente(self):
@@ -346,12 +353,18 @@ class AbonoCuentaPorCobrar(models.Model):
         related_name="abonos_cuentas_por_cobrar",
     )
     fecha = models.DateField(db_index=True)
+    periodo = models.DateField(null=True, blank=True, db_index=True,
+                               help_text="Mes de aplicación del abono; puede diferir de su fecha bancaria.")
     monto = models.DecimalField(
         max_digits=15,
         decimal_places=2,
         validators=[MinValueValidator(Decimal("0.01"))],
     )
     descripcion = models.CharField(max_length=255, blank=True)
+    vigente = models.BooleanField(default=True, help_text="Un abono retirado o conciliado no se cuenta otra vez.")
+    conciliado_con = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="registros_conciliados",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -368,6 +381,8 @@ class AbonoCuentaPorCobrar(models.Model):
         ]
 
     def clean(self):
+        if self.conciliado_con_id and self.conciliado_con.cuenta_id != self.cuenta_id:
+            raise ValidationError("Los abonos conciliados deben pertenecer a esta cuenta.")
         if self.detalle_id and self.detalle.cuenta_id != self.cuenta_id:
             raise ValidationError("El abono debe apuntar a una línea de su misma cuenta.")
         if self.movimiento_id and self.movimiento.user_id != self.cuenta.user_id:
@@ -379,6 +394,104 @@ class AbonoCuentaPorCobrar(models.Model):
 
     def __str__(self):
         return f"{self.cuenta.nombre} · abono {self.monto}"
+
+
+class CalculoCuentaPorCobrar(models.Model):
+    """Versión mensual; el desglose y texto confirmados son una fotografía inmutable."""
+
+    ESTADOS = [("REFERENCIA", "Referencia sin validar"), ("BORRADOR", "Borrador"), ("CONFIRMADO", "Confirmado")]
+    cuenta = models.ForeignKey(CuentaPorCobrar, on_delete=models.CASCADE, related_name="calculos")
+    periodo = models.DateField(db_index=True)
+    revision = models.PositiveIntegerField(default=1)
+    estado = models.CharField(max_length=12, choices=ESTADOS, default="BORRADOR")
+    referencia_usuario = models.BooleanField(default=False)
+    anterior = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="posteriores")
+    fecha_calculo = models.DateField()
+    saldo_anterior = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    cargos = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    abonos = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    ajustes = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    saldo_final = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    desglose = models.JSONField(default=dict)
+    texto = models.TextField(blank=True)
+    huella = models.CharField(max_length=64, blank=True)
+    confirmado_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-periodo", "-revision"]
+        constraints = [
+            models.UniqueConstraint(fields=["cuenta", "periodo", "revision"], name="cobro_calculo_revision_unica"),
+            models.UniqueConstraint(fields=["cuenta", "periodo"], condition=models.Q(estado="BORRADOR"), name="cobro_borrador_mes_unico"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, estado__in=["CONFIRMADO", "REFERENCIA"]).exists():
+            raise ValidationError("Los cálculos históricos son inmutables; registra un ajuste en el mes abierto.")
+        if self.anterior_id and self.anterior.cuenta_id != self.cuenta_id:
+            raise ValidationError("El cálculo anterior debe pertenecer a esta cuenta.")
+        return super().save(*args, **kwargs)
+
+
+class PartidaRevisionCobro(models.Model):
+    """Decisión pendiente; sus fuentes no afectan la contabilidad hasta confirmar."""
+
+    TIPOS = [("CARGO", "Cargo"), ("ABONO", "Abono"), ("EDITAR", "Editar cargo"), ("RETIRAR_CARGO", "Retirar cargo"), ("RETIRAR_ABONO", "Retirar abono"), ("AJUSTE", "Ajuste")]
+    DECISIONES = [("PENDIENTE", "Pendiente"), ("APLICAR", "Aplicar"), ("RESPALDO", "Ya incluido · respaldo"), ("CONCILIAR", "Conciliar con abono existente"), ("EXCLUIR", "Excluir de esta cuenta")]
+    cuenta = models.ForeignKey(CuentaPorCobrar, on_delete=models.CASCADE, related_name="partidas_revision")
+    periodo = models.DateField(db_index=True)
+    periodo_mensual = models.DateField(null=True, blank=True,
+        help_text="Mes de la reconstrucción provisional, independiente del mes de confirmación.")
+    tipo = models.CharField(max_length=15, choices=TIPOS)
+    clave = models.CharField(max_length=120)
+    descripcion = models.CharField(max_length=255)
+    fecha = models.DateField()
+    monto = models.DecimalField(max_digits=15, decimal_places=2)
+    movimiento = models.ForeignKey("banca.MovimientoBancario", null=True, blank=True, on_delete=models.PROTECT, related_name="revisiones_cobro")
+    evento_externo = models.ForeignKey("banca.EventoFinancieroExterno", null=True, blank=True, on_delete=models.PROTECT, related_name="revisiones_cobro")
+    detalle = models.ForeignKey(DetalleCuentaPorCobrar, null=True, blank=True, on_delete=models.PROTECT, related_name="revisiones")
+    abono = models.ForeignKey(AbonoCuentaPorCobrar, null=True, blank=True, on_delete=models.PROTECT, related_name="revisiones")
+    conciliar_con = models.ForeignKey(AbonoCuentaPorCobrar, null=True, blank=True, on_delete=models.PROTECT, related_name="propuestas_conciliacion")
+    decision = models.CharField(max_length=10, choices=DECISIONES, default="PENDIENTE")
+    motivo = models.CharField(max_length=255, blank=True)
+    provisional = models.BooleanField(default=False)
+    registrada_por_usuario = models.BooleanField(default=False,
+        help_text="Incluye el registro guardado explícitamente en la vista mensual provisional.")
+    resuelta_en = models.ForeignKey(CalculoCuentaPorCobrar, null=True, blank=True, on_delete=models.PROTECT, related_name="partidas_resueltas")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["fecha", "id"]
+        constraints = [models.UniqueConstraint(fields=["cuenta", "clave"], condition=models.Q(resuelta_en__isnull=True), name="cobro_partida_pendiente_unica")]
+
+    @property
+    def periodo_vista(self):
+        return self.periodo_mensual or self.periodo
+
+    def clean(self):
+        if self.resuelta_en_id and self.resuelta_en.cuenta_id != self.cuenta_id:
+            raise ValidationError("La confirmación debe pertenecer a esta cuenta.")
+        for fuente in [self.movimiento, self.evento_externo]:
+            if fuente and fuente.user_id != self.cuenta.user_id:
+                raise ValidationError("La fuente debe pertenecer al usuario de la cuenta.")
+            if fuente and fuente.moneda != self.cuenta.moneda:
+                raise ValidationError("La moneda de la fuente no coincide con la cuenta.")
+        for registro in [self.detalle, self.abono, self.conciliar_con]:
+            if registro and registro.cuenta_id != self.cuenta_id:
+                raise ValidationError("Los registros deben pertenecer a esta cuenta.")
+        if self.movimiento_id and self.evento_externo_id:
+            raise ValidationError("Una partida sólo puede tener una fuente financiera.")
+        if self.tipo != "AJUSTE" and self.monto <= 0:
+            raise ValidationError("El importe debe ser positivo.")
+        if self.tipo == "AJUSTE" and (not self.motivo or self.monto == 0):
+            raise ValidationError("El ajuste requiere un importe distinto de cero y un motivo.")
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, resuelta_en__isnull=False).exists():
+            raise ValidationError("La partida ya fue confirmada.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
 
 class HistorialActivo(models.Model):

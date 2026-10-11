@@ -176,6 +176,7 @@
                 <td class="p-3 text-slate-500 whitespace-nowrap">{{ m.fecha|date:"d/m/Y" }}</td>
                 <td class="p-3 text-slate-200">
                     {{ m.descripcion|truncatechars:44 }}
+                    {% if m.asignacion_pendiente %}<a href="{% url 'cuentas_por_cobrar' %}?periodo={{ m.asignacion_pendiente.periodo|date:'Y-m' }}&gestionar={{ m.cuenta_cobro_id }}#partida-{{ m.asignacion_pendiente.id }}" class="block text-xs text-violet-300">Asociado a {{ m.asignacion_pendiente.cuenta.nombre }} · pendiente de validar · revisar cálculo →</a>{% endif %}
                     <span class="block text-[10px] text-slate-500">{{ m.producto.banco.nombre }} · {{ m.producto.nombre }}</span>
                     {% if m.detalles_neat %}
                         <span class="block mt-1 text-[10px] font-semibold uppercase tracking-wide text-sky-400">Desglosado por NeatPagos</span>
@@ -186,7 +187,8 @@
                 </td>
                 <td class="p-3">
                     {% if f_pendientes == '1' %}
-                        <span class="text-[11px] text-amber-300">{{ m.categoria.nombre|default:'Sin clasificar' }} · confirma el tipo abajo</span>
+                        {% if m.asignacion_pendiente %}<span class="text-[11px] text-violet-300">Abono vinculado a cuenta por cobrar</span><span class="block text-[10px] text-amber-300 mt-1">Confirma «Transfer.» en Más opciones para cerrar la clasificación.</span>
+                        {% else %}<span class="text-[11px] text-amber-300">{{ m.categoria.nombre|default:'Sin clasificar' }} · confirma el tipo abajo</span>{% endif %}
                     {% elif m.por_revisar %}
                         <form method="post" action="{% url 'banca_confirmar_revision' m.pk %}" class="flex gap-1 mb-1">
                             {% csrf_token %}
@@ -253,11 +255,12 @@
                         {% if not m.es_cargo and cuentas_por_cobrar %}
                         <form method="post" action="{% url 'banca_asignar_abono_cuenta_cobrar' m.pk %}" class="flex items-center gap-1 border-t border-slate-700/60 pt-2">
                             {% csrf_token %}
+                            <input type="hidden" name="volver" value="{{ request.get_full_path }}">
                             <select name="cuenta_cobro" required class="min-w-0 flex-1 bg-slate-900 border border-violet-700/60 rounded px-2 py-1.5 text-xs text-slate-200">
                                 <option value="">Pago de cuenta por cobrar…</option>
-                                {% for cuenta in cuentas_por_cobrar %}<option value="{{ cuenta.id }}">🤝 {{ cuenta.nombre }}</option>{% endfor %}
+                                {% for cuenta in cuentas_por_cobrar %}<option value="{{ cuenta.id }}" {% if m.cuenta_cobro_id == cuenta.id %}selected{% endif %}>🤝 {{ cuenta.nombre }}</option>{% endfor %}
                             </select>
-                            <button class="shrink-0 text-[11px] px-2 py-1.5 rounded bg-violet-500/20 text-violet-300" title="Registrar pago de cuenta por cobrar"><i class="fas fa-hand-holding-dollar"></i></button>
+                            <button class="shrink-0 text-[11px] px-2 py-1.5 rounded bg-violet-500/20 text-violet-300" title="Asociar abono y volver a movimientos"><i class="fas fa-hand-holding-dollar"></i></button>
                         </form>
                         {% elif not m.es_cargo %}
                         <a href="{% url 'cuentas_por_cobrar' %}" class="block text-[10px] text-violet-300 border-t border-slate-700/60 pt-2">Crea una cuenta por cobrar para registrar este pago.</a>
@@ -307,7 +310,7 @@
                                 <button class="text-[11px] px-2 py-1 rounded bg-violet-500/20 text-violet-300" title="Vincular {{ detalle.descripcion }} a cuenta por cobrar"><i class="fas fa-hand-holding-dollar"></i></button>
                             </form>
                             {% endfor %}
-                        {% else %}
+                        {% elif m.es_cargo %}
                             <form method="post" action="{% url 'banca_asignar_cuenta_cobrar_movimiento' m.pk %}" class="flex items-center gap-1 mt-1">
                                 {% csrf_token %}
                                 <select name="cuenta_cobro" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
@@ -315,6 +318,11 @@
                                     {% for cuenta in cuentas_por_cobrar %}<option value="{{ cuenta.id }}" {% if m.cuenta_cobro_id == cuenta.id %}selected{% endif %}>🤝 {{ cuenta.nombre }}</option>{% endfor %}
                                 </select>
                                 <button class="text-[11px] px-2 py-1 rounded bg-violet-500/20 text-violet-300" title="Vincular a cuenta por cobrar"><i class="fas fa-hand-holding-dollar"></i></button>
+                            </form>
+                        {% else %}
+                            <form method="post" action="{% url 'banca_asignar_abono_cuenta_cobrar' m.pk %}" class="flex items-center gap-1 mt-1">
+                                {% csrf_token %}<input type="hidden" name="volver" value="{{ request.get_full_path }}"><select name="cuenta_cobro" required class="bg-slate-900 border border-violet-700/60 rounded px-2 py-1 text-xs text-slate-200"><option value="">Pago de cuenta por cobrar…</option>{% for cuenta in cuentas_por_cobrar %}<option value="{{ cuenta.id }}" {% if m.cuenta_cobro_id == cuenta.id %}selected{% endif %}>🤝 {{ cuenta.nombre }}</option>{% endfor %}</select>
+                                <button class="text-[11px] px-2 py-1 rounded bg-violet-500/20 text-violet-300" title="Asociar abono y volver a movimientos"><i class="fas fa-hand-holding-dollar"></i></button>
                             </form>
                         {% endif %}
                     {% endif %}
