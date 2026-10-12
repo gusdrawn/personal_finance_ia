@@ -613,12 +613,33 @@ def cuentas_por_cobrar_view(request):
         request.GET.get("periodo"), primer_dia_mes(hoy)
     )
     propuesta_cuenta_id = str(request.GET.get("propuesta", "")).strip()
+    cuenta_foco_id = None
+    detalle_edicion_id = str(request.GET.get("editar", "")).strip()
+    partida_edicion_id = str(request.GET.get("editar_partida", "")).strip()
+    if detalle_edicion_id.isdecimal():
+        cuenta_foco_id = DetalleCuentaPorCobrar.objects.filter(
+            pk=detalle_edicion_id, cuenta__user=request.user
+        ).values_list("cuenta_id", flat=True).first()
+    if cuenta_foco_id is None and partida_edicion_id.isdecimal():
+        cuenta_foco_id = PartidaRevisionCobro.objects.filter(
+            pk=partida_edicion_id, cuenta__user=request.user
+        ).values_list("cuenta_id", flat=True).first()
+    if cuenta_foco_id is None:
+        for parametro in ("cuenta", "gestionar", "propuesta"):
+            cuenta_id = str(request.GET.get(parametro, "")).strip()
+            if not cuenta_id.isdecimal():
+                continue
+            cuenta_foco_id = CuentaPorCobrar.objects.filter(
+                pk=cuenta_id, user=request.user
+            ).values_list("pk", flat=True).first()
+            if cuenta_foco_id is not None:
+                break
     detalle_qs = (
         DetalleCuentaPorCobrar.objects.select_related(
             "movimiento", "evento_externo"
         ).prefetch_related("abonos")
     )
-    cuentas = list(
+    cuentas_qs = (
         CuentaPorCobrar.objects.filter(user=request.user)
         .select_related("activo_patrimonial")
         .prefetch_related(
@@ -627,10 +648,21 @@ def cuentas_por_cobrar_view(request):
             "calculos",
         )
     )
-    fuentes_cobro = _fuentes_cobro_disponibles(request.user, periodo_cobro)
+    if cuenta_foco_id is not None:
+        cuentas_qs = cuentas_qs.filter(pk=cuenta_foco_id)
+    cuentas = list(cuentas_qs)
+    fuentes_cobro = (
+        _fuentes_cobro_disponibles(request.user, periodo_cobro)
+        if cuenta_foco_id is not None
+        else []
+    )
     fuentes_por_valor = {fuente["value"]: fuente for fuente in fuentes_cobro}
 
     for cuenta in cuentas:
+        cuenta.saldo_vigente = cuenta.saldo_pendiente
+        cuenta.gestionar = str(request.GET.get("gestionar", "")) == str(cuenta.pk) or propuesta_cuenta_id == str(cuenta.pk)
+        if cuenta_foco_id is None:
+            continue
         cuenta.resumen_mensual = resumen_mensual(cuenta, periodo_cobro)
         calculos = list(cuenta.calculos.all())
         etiquetas = dict(PartidaRevisionCobro.DECISIONES)
@@ -694,7 +726,6 @@ def cuentas_por_cobrar_view(request):
                                            and inicio_anticipacion <= partida.fecha < periodo_cobro)
             partida.cargos_respaldados = preparacion_cobros.respaldos_cargo(cuenta, partida.movimiento or partida.evento_externo) if partida.tipo == "CARGO" and (partida.movimiento_id or partida.evento_externo_id) else []
         cuenta.abonos_conciliables = [a for a in cuenta.abonos.all() if a.vigente]
-        cuenta.gestionar = str(request.GET.get("gestionar", "")) == str(cuenta.pk) or propuesta_cuenta_id == str(cuenta.pk)
         cuenta.partida_edicion = next((p for p in partidas_revision
             if str(p.pk) == request.GET.get("editar_partida") and p.registrada_por_usuario
             and p.tipo in {"CARGO", "ABONO"} and not p.movimiento_id and not p.evento_externo_id
@@ -736,25 +767,26 @@ def cuentas_por_cobrar_view(request):
             cuenta.detalle_edicion.fuente_actual_label = (
                 fuente_actual["label"] if fuente_actual else "Fuente actualmente asociada"
             )
-    cuentas.sort(key=lambda cuenta: (not cuenta.activo, -cuenta.saldo_pendiente, cuenta.nombre.casefold()))
+    cuentas.sort(key=lambda cuenta: (not cuenta.activo, -cuenta.saldo_vigente, cuenta.nombre.casefold()))
     resumen_clp = sum(
-        (cuenta.resumen_mensual.saldo_final for cuenta in cuentas if cuenta.moneda == "CLP"),
+        (cuenta.saldo_vigente for cuenta in cuentas if cuenta.moneda == "CLP"),
         Decimal("0"),
     )
     resumen_usd = sum(
-        (cuenta.resumen_mensual.saldo_final for cuenta in cuentas if cuenta.moneda == "USD"),
+        (cuenta.saldo_vigente for cuenta in cuentas if cuenta.moneda == "USD"),
         Decimal("0"),
     )
     context = {
         "cuentas_por_cobrar": cuentas,
+        "cuenta_en_foco": cuentas[0] if cuenta_foco_id is not None and cuentas else None,
         "fuentes_cobro": fuentes_cobro,
         "periodo_actual_cobro": periodo_cobro.strftime("%Y-%m"),
         "periodo_cobro": periodo_cobro,
         "periodo_anterior_cobro": (periodo_cobro - timedelta(days=1)).strftime("%Y-%m"),
         "periodo_siguiente_cobro": (periodo_cobro.replace(day=28) + timedelta(days=4)).replace(day=1).strftime("%Y-%m"),
         "fecha_actual_cobro": (hoy if hoy.replace(day=1) == periodo_cobro else periodo_cobro).isoformat(),
-        "resumen_cobro_clp": resumen_clp,
-        "resumen_cobro_usd": resumen_usd,
+        "deuda_vigente_clp": resumen_clp,
+        "deuda_vigente_usd": resumen_usd,
     }
     return render(request, "cuentas_por_cobrar.html", context)
 

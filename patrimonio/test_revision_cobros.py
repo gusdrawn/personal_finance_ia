@@ -103,7 +103,10 @@ class RevisionCobrosTest(TestCase):
             descripcion="Saldo corregido de agosto", provisional=True,
         )
         anteriores = list(self.cuenta.calculos.values())
-        respuesta = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-08"})
+        respuesta = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-08", "cuenta": self.cuenta.pk},
+        )
         self.assertContains(respuesta, "Cambio pendiente")
         self.assertContains(respuesta, "$741.864")
         self.assertContains(respuesta, "Registrado: $822.561")
@@ -221,7 +224,10 @@ class RevisionCobrosTest(TestCase):
             mov = self.movimiento(monto=str(-manual.monto), fecha=manual.fecha)
             bancario = AbonoCuentaPorCobrar.objects.create(cuenta=self.cuenta, movimiento=mov, fecha=manual.fecha, monto=manual.monto)
             bancarios.append(bancario)
-        agosto = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-08"})
+        agosto = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-08", "cuenta": self.cuenta.pk},
+        )
         self.assertContains(agosto, "Abonos que podrían estar duplicados")
         self.assertContains(agosto, "Asociar desde Movimientos")
         self.assertContains(agosto, "$100.000")
@@ -229,7 +235,10 @@ class RevisionCobrosTest(TestCase):
         partidas = list(self.cuenta.partidas_revision.all())
         self.assertEqual(len(partidas), 2)
         self.assertEqual({p.conciliar_con_id for p in partidas}, {m.pk for m in manuales})
-        agosto = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-08"})
+        agosto = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-08", "cuenta": self.cuenta.pk},
+        )
         self.assertContains(agosto, "Revisar conciliación")
         self.assertContains(agosto, f"#partida-{partidas[0].pk}")
         confirmado = self.confirmar(calculo, partidas, "CONCILIAR")
@@ -340,7 +349,10 @@ class RevisionCobrosTest(TestCase):
             self.assertEqual(self.client.post(reverse(nombre, args=[calculo.pk]), {"huella": calculo.huella, f"decision_{partida.pk}": "APLICAR"}).status_code, 404)
 
     def test_get_no_prepara_mes_formularios_colapsados_y_editar_abre_gestion(self):
-        pagina = self.client.get(reverse("cuentas_por_cobrar") + "?periodo=2026-10")
+        pagina = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-10", "cuenta": self.cuenta.pk},
+        )
         self.assertContains(pagina, "Pendiente de preparar")
         self.assertContains(pagina, f'id="gestion-cuenta-{self.cuenta.pk}" class="mt-5" >')
         self.assertFalse(self.cuenta.calculos.filter(estado="BORRADOR").exists())

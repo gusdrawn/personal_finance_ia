@@ -713,11 +713,12 @@ contrato propuesto para solicitar una API oficial.
 ## 💸 Cuentas por cobrar
 
 Desde **Activos → Cuentas por cobrar** se pueden crear cuentas con nombre y moneda,
-agregar cargos y registrar abonos por línea o generales. **Crear cuenta** y **Gestionar**
-comienzan colapsados. El saldo vigente, el detalle del mes, el historial mensual y el texto
-para copiar permanecen disponibles. **Editar** y los errores de validación abren el panel
-correspondiente. Las transacciones se encuentran por comercio, fecha o monto; al elegir
-una fuente bancaria o **NeatPagos**, se usa su importe y fecha originales.
+agregar cargos y registrar abonos por línea o generales. La vista inicial muestra el saldo
+vigente de cada cuenta y los totales separados por moneda. Al abrir una cuenta se ven su
+detalle mensual, historial y herramientas de edición; **Crear cuenta** y **Gestionar**
+comienzan colapsados. **Editar** y los errores de validación abren el panel correspondiente.
+Las transacciones se encuentran por comercio, fecha o monto; al elegir una fuente bancaria
+o **NeatPagos**, se usa su importe y fecha originales.
 
 **Preparar propuesta** busca primero los movimientos **asignados a esa cuenta** desde
 Banca y los registros manuales. La asociación identifica a quién cobrar; la categoría

@@ -389,7 +389,10 @@ class CuentaPorCobrarTest(TestCase):
         self.assertTrue(detalle.provisional)
         self.assertTrue(detalle.monto_manual)
         self.assertIsNone(detalle.movimiento_id)
-        pantalla = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-09"})
+        pantalla = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-09", "cuenta": cuenta.pk},
+        )
         self.assertContains(pantalla, "Provisional · falta estado")
 
         movimiento_real = self._movimiento(
@@ -521,11 +524,20 @@ class CuentaPorCobrarTest(TestCase):
             hash_externo="other-hash",
         )
         cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Cuenta propia")
+        cuenta_ajena = CuentaPorCobrar.objects.create(
+            user=self.other_user, nombre="Cuenta privada de otra persona"
+        )
 
         response = self.client.get(reverse("cuentas_por_cobrar"))
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, other_movement.descripcion)
+        self.assertNotContains(response, cuenta_ajena.nombre)
+        vista_ajena = self.client.get(
+            reverse("cuentas_por_cobrar"), {"cuenta": cuenta_ajena.pk}
+        )
+        self.assertContains(vista_ajena, cuenta.nombre)
+        self.assertNotContains(vista_ajena, cuenta_ajena.nombre)
         forbidden = self.client.post(
             reverse("agregar_detalle_cuenta_por_cobrar"),
             {
@@ -559,10 +571,11 @@ class CuentaPorCobrarTest(TestCase):
             metadata={"alias": "Entel Fabiana"},
         )
         PagoNeat.objects.create(evento=actual, cuenta="Entel PCS")
-        CuentaPorCobrar.objects.create(user=self.user, nombre="Servicios")
+        cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Servicios")
 
         response = self.client.get(
-            reverse("cuentas_por_cobrar") + "?periodo=2026-09"
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-09", "cuenta": cuenta.pk},
         )
 
         self.assertNotContains(response, "NeatPagos · 04/06/2026 · ENEL · Luz 1024 · $53,641")
@@ -591,9 +604,12 @@ class CuentaPorCobrarTest(TestCase):
             monto_neto=Decimal("410000"),
         )
         PagoNeat.objects.create(evento=fuera, cuenta="Arriendo", total_cargado=Decimal("410000"))
-        CuentaPorCobrar.objects.create(user=self.user, nombre="Arriendos")
+        cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Arriendos")
 
-        response = self.client.get(reverse("cuentas_por_cobrar") + "?periodo=2026-09")
+        response = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-09", "cuenta": cuenta.pk},
+        )
 
         self.assertContains(response, "22/08/2026")
         self.assertNotContains(response, "21/08/2026")
@@ -634,6 +650,7 @@ class CuentaPorCobrarTest(TestCase):
 
     def test_pagina_muestra_texto_copiable_y_cuenta_en_activos(self):
         cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Casa")
+        otra_cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Otra cuenta")
         movimiento = self._movimiento(
             descripcion="Supermercado para Casa", monto="95000", fecha=date(2026, 9, 4)
         )
@@ -644,22 +661,43 @@ class CuentaPorCobrarTest(TestCase):
             fecha=date(2026, 9, 3),
             monto=Decimal("42000"),
         )
+        DetalleCuentaPorCobrar.objects.create(
+            cuenta=otra_cuenta,
+            descripcion="Compra compartida",
+            periodo=date(2026, 9, 1),
+            fecha=date(2026, 9, 5),
+            monto=Decimal("12000"),
+        )
 
         cobros = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-09"})
+        detalle = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-09", "cuenta": cuenta.pk},
+        )
         activos = self.client.get(reverse("activos"))
 
-        self.assertContains(cobros, "Texto para cobrar")
-        self.assertContains(cobros, "Total pendiente: $42.000")
-        self.assertContains(cobros, "Preparar propuesta")
-        self.assertContains(cobros, 'type="search"')
-        self.assertContains(cobros, "cobro-source-search")
-        self.assertNotContains(cobros, '<select name="fuente"')
-        self.assertContains(cobros, f'data-value="movimiento:{movimiento.id}"')
-        self.assertContains(cobros, "Monto tomado de la transacción seleccionada.")
-        self.assertContains(cobros, "amount.required = !asociado")
-        self.assertContains(cobros, "Editar")
+        self.assertContains(cobros, "Deuda vigente · CLP")
+        self.assertContains(cobros, "Casa")
+        self.assertContains(cobros, "Otra cuenta")
+        self.assertNotContains(cobros, "Texto para cobrar")
+        self.assertNotContains(cobros, "Preparar propuesta")
+        self.assertNotContains(cobros, "cobro-source-search")
+
+        self.assertContains(detalle, "Texto para cobrar")
+        self.assertContains(detalle, "Total pendiente: $42.000")
+        self.assertContains(detalle, "Preparar propuesta")
+        self.assertContains(detalle, 'type="search"')
+        self.assertContains(detalle, "cobro-source-search")
+        self.assertNotContains(detalle, '<select name="fuente"')
+        self.assertContains(detalle, f'data-value="movimiento:{movimiento.id}"')
+        self.assertContains(detalle, "Monto tomado de la transacción seleccionada.")
+        self.assertContains(detalle, "amount.required = !asociado")
+        self.assertContains(detalle, "Editar")
+        self.assertNotContains(detalle, "Deuda vigente · CLP")
+        self.assertNotContains(detalle, "Otra cuenta")
         self.assertContains(activos, "Casa")
         self.assertContains(activos, "Cuenta por cobrar")
+        self.assertContains(activos, f"?cuenta={cuenta.id}#cuenta-{cuenta.id}")
 
     def test_busqueda_neat_agrupa_importaciones_identicas_y_aisla_usuario(self):
         cuenta = CuentaPorCobrar.objects.create(user=self.user, nombre="Wilder")
@@ -770,7 +808,10 @@ class CuentaPorCobrarTest(TestCase):
             total_cargado=Decimal("400000"),
         )
 
-        pagina = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-09"})
+        pagina = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-09", "cuenta": cuenta.pk},
+        )
 
         fuentes = pagina.context["fuentes_cobro"]
         neat = [fuente for fuente in fuentes if fuente["value"].startswith("neat:")]
@@ -833,7 +874,8 @@ class CuentaPorCobrarTest(TestCase):
         )
 
         response = self.client.get(
-            reverse("cuentas_por_cobrar") + "?periodo=2026-09"
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-09", "cuenta": cuenta.pk},
         )
 
         self.assertContains(response, 'data-periodo-visible="2026-09"')
@@ -844,7 +886,8 @@ class CuentaPorCobrarTest(TestCase):
         self.assertContains(response, "$810.000")
 
         agosto = self.client.get(
-            reverse("cuentas_por_cobrar") + "?periodo=2026-08"
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-08", "cuenta": cuenta.pk},
         )
         self.assertContains(agosto, 'data-periodo-visible="2026-08"')
         self.assertContains(agosto, "Arriendo agosto")
@@ -939,7 +982,9 @@ class CuentaPorCobrarTest(TestCase):
         )
         self._confirmar_pendientes(cuenta)
         abono = cuenta.abonos.get()
-        pagina = self.client.get(reverse("cuentas_por_cobrar"))
+        pagina = self.client.get(
+            reverse("cuentas_por_cobrar"), {"cuenta": cuenta.pk}
+        )
         self.assertContains(pagina, "Proponer retiro del abono")
         self.assertContains(pagina, reverse("borrar_abono_cuenta_por_cobrar", args=[abono.id]))
         cuenta.refresh_from_db()

@@ -140,7 +140,7 @@
                     </div>
                     <div class="flex flex-wrap items-center gap-1">
                         {% if activo.tipo == 'CUENTA_COBRAR' %}
-                        <a href="{% url 'cuentas_por_cobrar' %}#cuenta-{{ activo.cuenta_por_cobrar.id }}" class="px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white text-[10px] font-bold">Administrar</a>
+                        <a href="{% url 'cuentas_por_cobrar' %}?cuenta={{ activo.cuenta_por_cobrar.id }}#cuenta-{{ activo.cuenta_por_cobrar.id }}" class="px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white text-[10px] font-bold">Administrar</a>
                         {% elif activo.prestamo_recuperable %}
                         <a href="{% url 'prestamos_index' %}" class="text-xs text-sky-300">Administrar en Bicicletas</a>
                         {% elif activo.origen_sincronizacion.externo %}

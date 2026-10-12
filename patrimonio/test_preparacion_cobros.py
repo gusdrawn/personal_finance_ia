@@ -223,7 +223,10 @@ class PreparacionCobrosTest(TestCase):
         self.assertEqual(borrador.anterior, legado)
         elegido = preparar_calculo(self.cuenta, OCT, referencia.pk)
         self.assertEqual(elegido.anterior, referencia)
-        cuenta_visible = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-10"}).context["cuentas_por_cobrar"][0]
+        cuenta_visible = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-10", "cuenta": self.cuenta.pk},
+        ).context["cuentas_por_cobrar"][0]
         self.assertEqual(cuenta_visible.calculo_para_copiar, legado)
         self.assertFalse(self.cuenta.calculos.filter(estado="CONFIRMADO").exists())
         referencia.refresh_from_db()

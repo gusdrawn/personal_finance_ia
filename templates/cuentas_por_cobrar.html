@@ -19,32 +19,37 @@ details[open] > summary .cobro-chevron { transform: rotate(180deg); }
         <p class="text-emerald-400 text-xs font-black uppercase tracking-widest">Activos · recuperación</p>
         <h1 class="text-3xl font-bold text-white mt-1">Cuentas por cobrar</h1>
         <p class="text-slate-400 mt-2 max-w-3xl">
+            {% if cuenta_en_foco %}Detalle de {{ cuenta_en_foco.nombre }}: deuda vigente, movimientos y revisión mensual.{% else %}
             Registra lo que ya pagaste por otra persona, asócialo a una transacción y lleva el saldo pendiente mes a mes.
+            {% endif %}
         </p>
     </div>
+    {% if cuenta_en_foco %}
+    <a href="{% url 'cuentas_por_cobrar' %}" class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-sm font-bold">
+        <i class="fas fa-arrow-left mr-2"></i>Todas las cuentas
+    </a>
+    {% else %}
     <a href="{% url 'activos' %}" class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-sm font-bold">
         <i class="fas fa-arrow-left mr-2"></i>Ver Activos
     </a>
+    {% endif %}
 </div>
 
-<div class="grid grid-cols-1 md:grid-cols-3 gap-5 mt-8">
-    <div class="glass p-5 rounded-2xl border-t-4 border-emerald-500">
-        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Cuentas registradas</p>
-        <p class="text-3xl font-bold text-white mt-2">{{ cuentas_por_cobrar|length }}</p>
-        <p class="text-xs text-slate-500 mt-1">Activas y archivadas</p>
-    </div>
+{% if not cuenta_en_foco %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-8">
     <div class="glass p-5 rounded-2xl border-t-4 border-sky-500">
-        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Pendiente CLP · {{ periodo_cobro|date:"m/Y" }}</p>
-        <p class="text-3xl font-bold text-white mt-2">{{ resumen_cobro_clp|monto_cobro:"CLP" }}</p>
-        <p class="text-xs text-slate-500 mt-1">Total de las vistas mensuales</p>
+        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Deuda vigente · CLP</p>
+        <p class="text-3xl font-bold text-white mt-2">{{ deuda_vigente_clp|monto_cobro:"CLP" }}</p>
     </div>
     <div class="glass p-5 rounded-2xl border-t-4 border-violet-500">
-        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Pendiente USD · {{ periodo_cobro|date:"m/Y" }}</p>
-        <p class="text-3xl font-bold text-white mt-2">{{ resumen_cobro_usd|monto_cobro:"USD" }}</p>
-        <p class="text-xs text-slate-500 mt-1">Sin conversión inventada</p>
+        <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Deuda vigente · USD</p>
+        <p class="text-3xl font-bold text-white mt-2">{{ deuda_vigente_usd|monto_cobro:"USD" }}</p>
+        <p class="text-xs text-slate-500 mt-1">Monedas separadas, sin conversión.</p>
     </div>
 </div>
+{% endif %}
 
+{% if not cuenta_en_foco %}
 <details id="crear-cuenta" class="glass rounded-2xl p-6 mt-8 border border-emerald-500/20" {% if request.GET.crear %}open{% endif %}>
     <summary class="flex items-center gap-3 cursor-pointer">
         <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center"><i class="fas fa-folder-plus"></i></div>
@@ -74,9 +79,29 @@ details[open] > summary .cobro-chevron { transform: rotate(180deg); }
         <button class="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl px-4 py-2.5 font-bold text-sm"><i class="fas fa-plus mr-2"></i>Crear cuenta</button>
     </form>
 </details>
+{% endif %}
 
 <div class="space-y-7 mt-8">
 {% for cuenta in cuentas_por_cobrar %}
+{% if not cuenta_en_foco %}
+<a id="cuenta-{{ cuenta.id }}" href="?cuenta={{ cuenta.id }}#cuenta-{{ cuenta.id }}" class="glass flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl p-5 border {% if cuenta.activo %}border-slate-800 hover:border-sky-500/40{% else %}border-slate-700/50 opacity-75{% endif %} transition-colors">
+    <div class="min-w-0">
+        <div class="flex items-center gap-3 flex-wrap">
+            <h2 class="text-lg font-bold text-white">{{ cuenta.nombre }}</h2>
+            <span class="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest {% if cuenta.activo %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20{% else %}bg-slate-700/70 text-slate-400 border border-slate-600{% endif %}">{% if cuenta.activo %}Activa{% else %}Archivada{% endif %}</span>
+            <span class="text-xs text-slate-500">{{ cuenta.get_moneda_display }}</span>
+        </div>
+        {% if cuenta.descripcion %}<p class="text-sm text-slate-400 mt-1">{{ cuenta.descripcion }}</p>{% endif %}
+    </div>
+    <div class="flex items-center justify-between sm:justify-end gap-5 shrink-0">
+        <div class="sm:text-right">
+            <p class="text-[10px] font-black uppercase tracking-widest text-slate-500">Deuda vigente</p>
+            <p class="text-xl font-bold text-white mt-1">{{ cuenta.saldo_vigente|monto_cobro:cuenta.moneda }}</p>
+        </div>
+        <span class="px-3 py-2 rounded-lg bg-sky-500/10 text-sky-300 text-xs font-bold">Ver cuenta <i class="fas fa-arrow-right ml-1"></i></span>
+    </div>
+</a>
+{% else %}
 <section id="cuenta-{{ cuenta.id }}" class="glass rounded-2xl p-6 border {% if cuenta.activo %}border-slate-800{% else %}border-slate-700/50 opacity-75{% endif %}">
     <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-5">
         <div>
@@ -87,7 +112,7 @@ details[open] > summary .cobro-chevron { transform: rotate(180deg); }
             </div>
             {% if cuenta.descripcion %}<p class="text-sm text-slate-400 mt-2">{{ cuenta.descripcion }}</p>{% endif %}
             <div class="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs text-slate-500">
-                <span>Saldo publicado en Activos{% if cuenta.ultimo_confirmado %} · {{ cuenta.ultimo_confirmado.periodo|date:"m/Y" }}{% endif %}: <strong class="text-white">{{ cuenta.saldo_pendiente|monto_cobro:cuenta.moneda }}</strong></span>
+                <span>Deuda vigente{% if cuenta.ultimo_confirmado %} · {{ cuenta.ultimo_confirmado.periodo|date:"m/Y" }}{% endif %}: <strong class="text-white">{{ cuenta.saldo_vigente|monto_cobro:cuenta.moneda }}</strong></span>
                 <span class="{% if cuenta.confirmado_mes %}text-emerald-300{% elif cuenta.borrador %}text-sky-300{% else %}text-amber-300{% endif %}">{{ periodo_cobro|date:"m/Y" }} · {% if cuenta.confirmado_mes %}Con cálculo confirmado{% elif cuenta.borrador %}Borrador por revisar{% else %}Pendiente de preparar{% endif %}</span>
             </div>
         </div>
@@ -96,11 +121,11 @@ details[open] > summary .cobro-chevron { transform: rotate(180deg); }
             <form method="get" action="{% url 'cuentas_por_cobrar' %}" class="flex items-center gap-2">
                 {% csrf_token %}
                 <input type="month" name="periodo" value="{{ periodo_actual_cobro }}" class="field-input !w-auto !py-2" aria-label="Mes a revisar">
-                {% if cuenta.gestionar %}<input type="hidden" name="gestionar" value="{{ cuenta.id }}">{% endif %}
+                {% if cuenta.gestionar %}<input type="hidden" name="gestionar" value="{{ cuenta.id }}">{% elif cuenta_en_foco %}<input type="hidden" name="cuenta" value="{{ cuenta.id }}">{% endif %}
                 <button type="submit" class="px-3 py-2 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 hover:text-white text-xs font-bold" title="Ver solo las líneas del mes seleccionado"><i class="fas fa-calendar-day mr-1"></i>Ver mes</button>
             </form>
-            <a class="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300" href="?periodo={{ periodo_anterior_cobro }}{% if cuenta.gestionar %}&gestionar={{ cuenta.id }}{% endif %}#cuenta-{{ cuenta.id }}" aria-label="Mes anterior">← Mes anterior</a>
-            <a class="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300" href="?periodo={{ periodo_siguiente_cobro }}{% if cuenta.gestionar %}&gestionar={{ cuenta.id }}{% endif %}#cuenta-{{ cuenta.id }}" aria-label="Mes siguiente">Mes siguiente →</a>
+            <a class="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300" href="?periodo={{ periodo_anterior_cobro }}{% if cuenta.gestionar %}&gestionar={{ cuenta.id }}{% elif cuenta_en_foco %}&cuenta={{ cuenta.id }}{% endif %}#cuenta-{{ cuenta.id }}" aria-label="Mes anterior">← Mes anterior</a>
+            <a class="px-3 py-2 rounded-lg bg-slate-800 text-xs text-slate-300" href="?periodo={{ periodo_siguiente_cobro }}{% if cuenta.gestionar %}&gestionar={{ cuenta.id }}{% elif cuenta_en_foco %}&cuenta={{ cuenta.id }}{% endif %}#cuenta-{{ cuenta.id }}" aria-label="Mes siguiente">Mes siguiente →</a>
             {% endif %}
         </div>
     </div>
@@ -157,7 +182,7 @@ details[open] > summary .cobro-chevron { transform: rotate(180deg); }
         <label class="flex items-start gap-2 text-xs text-slate-400"><input type="checkbox" name="provisional" value="1" {% if cuenta.valores_edicion.provisional %}checked{% endif %} class="mt-0.5 rounded border-slate-600 bg-slate-900 text-amber-500"><span><strong class="text-amber-300">Aún no aparece en el estado de cuenta.</strong> Mantener esta línea como provisional hasta reemplazarla por el movimiento real.</span></label>
         <div class="flex flex-wrap gap-2">
             <button class="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold"><i class="fas fa-save mr-2"></i>Proponer cambio</button>
-            <a href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}#cuenta-{{ cuenta.id }}" class="px-4 py-2.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-sm font-bold">Cancelar</a>
+            <a href="{% url 'cuentas_por_cobrar' %}?periodo={{ periodo_actual_cobro }}&cuenta={{ cuenta.id }}#cuenta-{{ cuenta.id }}" class="px-4 py-2.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-sm font-bold">Cancelar</a>
         </div>
     </form>
     {% endif %}
@@ -264,6 +289,7 @@ details[open] > summary .cobro-chevron { transform: rotate(180deg); }
         <textarea id="texto-cobro-{{ cuenta.id }}" readonly rows="7" class="w-full bg-slate-950/70 border border-slate-800 rounded-lg px-4 py-3 text-sm text-slate-300 font-mono resize-y">{{ cuenta.texto_para_compartir }}</textarea>
     </div>
 </section>
+{% endif %}
 {% empty %}
 <div class="glass rounded-2xl p-10 text-center border border-dashed border-slate-700">
     <i class="fas fa-hand-holding-dollar text-4xl text-slate-600 mb-4"></i>
@@ -275,6 +301,7 @@ details[open] > summary .cobro-chevron { transform: rotate(180deg); }
 {% endblock %}
 
 {% block extra_js %}
+{% if cuenta_en_foco %}
 <script>
 function normalizarBusquedaCobro(value) {
     return (value || '')
@@ -405,4 +432,5 @@ document.querySelectorAll('select[name^="decision_"], select[name^="conciliar_"]
     input.addEventListener('change', function() { input.closest('details').dataset.decisionesPendientes = 'true'; });
 });
 </script>
+{% endif %}
 {% endblock %}

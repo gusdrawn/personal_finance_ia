@@ -79,10 +79,14 @@ class ProyeccionCobrosTest(TestCase):
         self.assertEqual(resumen_mensual(self.cuenta, JUL).saldo_final, 0)
         self.assertEqual(resumen_mensual(self.cuenta, AGO).saldo_final, 700)
         self.assertEqual(resumen_mensual(self.cuenta, SEP).saldo_anterior, 700)
-        pagina = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-08"})
+        pagina = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-08", "cuenta": self.cuenta.pk},
+        )
         self.assertContains(pagina, "Total pendiente: $700")
         self.assertContains(pagina, "Total de 08/2026")
-        self.assertEqual(pagina.context["resumen_cobro_clp"], 700)
+        cuenta_visible = pagina.context["cuentas_por_cobrar"][0]
+        self.assertEqual(cuenta_visible.resumen_mensual.saldo_final, 700)
         self.assertFalse(self.cuenta.detalles.exists())
         self.assertFalse(self.cuenta.abonos.exists())
 
@@ -231,13 +235,16 @@ class ProyeccionCobrosTest(TestCase):
         resumen = resumen_mensual(self.cuenta, AGO)
         self.assertEqual(resumen.saldo_final, -1)
         self.assertIn("Abonos en exceso: US$1,00", resumen.texto)
-        pagina = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-08"})
-        self.assertEqual(pagina.context["resumen_cobro_clp"], 0)
-        self.assertEqual(pagina.context["resumen_cobro_usd"], -1)
+        pagina = self.client.get(
+            reverse("cuentas_por_cobrar"),
+            {"periodo": "2026-08", "cuenta": self.cuenta.pk},
+        )
+        cuenta_visible = pagina.context["cuentas_por_cobrar"][0]
+        self.assertEqual(cuenta_visible.resumen_mensual.saldo_final, -1)
         self.client.force_login(self.otro)
         ajena = self.client.get(reverse("cuentas_por_cobrar"), {"periodo": "2026-08"})
         self.assertNotContains(ajena, "US$10,25")
-        self.assertEqual(ajena.context["resumen_cobro_usd"], 0)
+        self.assertEqual(ajena.context["deuda_vigente_usd"], 0)
 
     def test_migracion_conserva_abonos_y_saldo_y_recupera_entrada_manual(self):
         self.cargo(1000, AGO)
