@@ -465,6 +465,41 @@ class ImportacionEstadosCuentaTest(TestCase):
             cupo_avance_disponible_clp=cupo_avance,
         )
 
+    @patch("banca.services.fuentes_externas.conciliar_eventos")
+    @patch(
+        "banca.services.estados_cuenta._extraer_texto_pdf",
+        return_value="""
+            ESTADO DE CUENTA BancoFalabella
+            N° de Contrato: 329610******2754
+            Fecha Facturación Estado de Cuenta: 19/09/2026
+            Período Facturado 20/08/2026 19/09/2026
+            Pagar Hasta 05/10/2026
+            Monto Total Facturado a Pagar 172.861
+            Concepcion 14/09/2026 Municipalidad conce T 172.861 172.861 01/01 oct-2026 172.861
+        """,
+    )
+    def test_importa_falabella_con_comercio_municipalidad(self, extraer, conciliar):
+        importacion = importar_estado_cuenta(
+            self.user,
+            SimpleUploadedFile(
+                "falabella.pdf",
+                b"pdf sintetico",
+                content_type="application/pdf",
+            ),
+        )
+
+        self.assertEqual(importacion.estado, "PROCESADO")
+        self.assertEqual(importacion.banco_detectado, "Banco Falabella")
+        self.assertEqual(importacion.tipo_producto, "TDC")
+        self.assertEqual(importacion.operaciones_detectadas, 1)
+        self.assertEqual(importacion.operaciones_nuevas, 1)
+        movimiento = importacion.movimientos.get()
+        self.assertEqual(movimiento.descripcion, "Municipalidad conce")
+        self.assertEqual(movimiento.monto, Decimal("172861"))
+        self.assertEqual(movimiento.producto.user_id, self.user.pk)
+        extraer.assert_called_once()
+        conciliar.assert_called_once_with(self.user)
+
     @patch("banca.services.estados_cuenta.parsear_estado_cuenta_pdf")
     def test_importa_aseo_cruza_orden_con_pago_sin_duplicar_gasto(self, parsear):
         departamento = Departamento.objects.create(

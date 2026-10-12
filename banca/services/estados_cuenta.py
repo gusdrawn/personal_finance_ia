@@ -1119,6 +1119,8 @@ def _parece_documento_aseo(texto: str, nombre_archivo: str = "") -> bool:
     normalizado = normalizar_texto(texto)
     if _nombre_indica_documento_aseo(nombre_archivo):
         return True
+    # "municipalidad" puede aparecer en el comercio de una compra con tarjeta;
+    # por sí sola no identifica una orden ni un comprobante municipal.
     return any(
         termino in normalizado
         for termino in (
@@ -1130,7 +1132,6 @@ def _parece_documento_aseo(texto: str, nombre_archivo: str = "") -> bool:
             "orden de ingreso",
             "certificado de pago",
             "ccp2bpago.smc.cl",
-            "municipalidad",
         )
     )
 
